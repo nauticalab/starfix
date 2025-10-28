@@ -1,0 +1,9 @@
+.trash
+.env
+Cargo.lock
+target
+lcov.info
+*.tar.gz
+*.dot
+tests/.tmp
+*.pyc

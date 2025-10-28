@@ -1,0 +1,18 @@
+{
+    "words": [
+        "datatypes",
+        "pyarrow",
+        "pythonapi",
+        "uniffi"
+    ],
+    "ignoreWords": [
+
+    ],
+    "useGitignore": false,
+    "ignorePaths": [
+        "Cargo.lock",
+        "target",
+        "*.dot",
+        "tests/.tmp"
+    ]
+}
