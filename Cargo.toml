@@ -22,3 +22,4 @@ crate-type = ["rlib", "cdylib"]
 
 [package.metadata.release]
 push-remote = "upstream"
+publish = false
