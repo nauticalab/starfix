@@ -4,6 +4,9 @@ python/starfix/*.so
 python/starfix/*.pyd
 python/starfix/*.dylib
 
+# Ignore uv lock for library
+uv.lock
+
 .trash
 .env
 Cargo.lock
