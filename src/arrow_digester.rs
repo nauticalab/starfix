@@ -438,19 +438,33 @@ impl<D: Digest> ArrowDigester<D> {
     ) {
         // Check if field is a nested type of struct
         if let DataType::Struct(fields) = field.data_type() {
+            println!(
+                "Extracting nested struct field: {} with parent: {}",
+                field.name(),
+                parent_field_name
+            );
             // We will add fields in alphabetical order
             fields.into_iter().for_each(|field_inner| {
-                Self::extract_fields_name(field_inner, parent_field_name, fields_digest_buffer);
+                Self::extract_fields_name(
+                    field_inner,
+                    Self::construct_field_name_hierarchy(parent_field_name, field.name()).as_str(),
+                    fields_digest_buffer,
+                );
             });
         } else {
-            // Base case, just add the field name
-            let field_name = if parent_field_name.is_empty() {
-                field.name().clone()
-            } else {
-                format!("{}__{}", parent_field_name, field.name())
-            };
+            // Base case, just add the the combine field name to the map
+            fields_digest_buffer.insert(
+                Self::construct_field_name_hierarchy(parent_field_name, field.name()),
+                D::new(),
+            );
+        }
+    }
 
-            fields_digest_buffer.insert(field_name, D::new());
+    fn construct_field_name_hierarchy(parent_field_name: &str, field_name: &str) -> String {
+        if parent_field_name.is_empty() {
+            field_name.to_owned()
+        } else {
+            format!("{parent_field_name}__{field_name}")
         }
     }
 }
@@ -708,5 +722,38 @@ mod tests {
             hex::encode(digester.finalize()),
             "9ba289655f0c7dd359ababc5a6f6188b352e45483623fbbf8b967723e2b798f8"
         );
+    }
+
+    #[test]
+    fn field_names() {
+        // Test nested struct field name extraction
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(
+                "nested",
+                DataType::Struct(
+                    vec![
+                        Field::new("name", DataType::Utf8, true),
+                        Field::new(
+                            "deep",
+                            DataType::Struct(
+                                vec![Field::new("value", DataType::Int64, false)].into(),
+                            ),
+                            false,
+                        ),
+                    ]
+                    .into(),
+                ),
+                false,
+            ),
+        ]);
+
+        let digester = ArrowDigester::<Sha256>::new(schema);
+        let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
+
+        assert_eq!(field_names.len(), 3);
+        assert!(field_names.contains(&&"id".to_owned()));
+        assert!(field_names.contains(&&"nested__name".to_owned()));
+        assert!(field_names.contains(&&"nested__deep__value".to_owned()));
     }
 }
