@@ -157,7 +157,12 @@ impl<D: Digest> ArrowDigester<D> {
         array: &StructArray,
         digest: &mut D,
     ) {
-        if field_name_hierarchy.len() == current_level {
+        if field_name_hierarchy
+            .len()
+            .checked_sub(1)
+            .expect("field_name_hierarchy underflow occurred")
+            == current_level
+        {
             let array_data = array
                 .column_by_name(
                     field_name_hierarchy
