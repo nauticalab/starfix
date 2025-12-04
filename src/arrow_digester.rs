@@ -45,7 +45,7 @@ impl<D: Digest> ArrowDigester<D> {
         }
     }
 
-    /// Hash a array directly without needing to create an `ArrowDigester` instance on the user side
+    /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
         let mut digest = D::new();
         Self::array_digest_update(array.data_type(), array, &mut digest);
