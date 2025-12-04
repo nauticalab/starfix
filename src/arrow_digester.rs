@@ -55,7 +55,7 @@ impl<D: Digest> ArrowDigester<D> {
     /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
         let mut digester = Self::new(record_batch.schema().as_ref().clone());
-        digester.update(&record_batch.clone());
+        digester.update(record_batch);
         digester.finalize()
     }
 
