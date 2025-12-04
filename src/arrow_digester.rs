@@ -287,11 +287,21 @@ impl<D: Digest> ArrowDigester<D> {
             DataType::Struct(_) => todo!(),
             DataType::Union(_, _) => todo!(),
             DataType::Dictionary(_, _) => todo!(),
-            DataType::Decimal32(precision, scale)
-            | DataType::Decimal64(precision, scale)
-            | DataType::Decimal128(precision, scale)
-            | DataType::Decimal256(precision, scale) => {
-                Self::hash_decimal(*precision, *scale, array, digest);
+            DataType::Decimal32(precision, scale) => {
+                Self::hash_decimal_metadata(*precision, *scale, digest);
+                Self::hash_fixed_size_array(array, digest, 4);
+            }
+            DataType::Decimal64(precision, scale) => {
+                Self::hash_decimal_metadata(*precision, *scale, digest);
+                Self::hash_fixed_size_array(array, digest, 8);
+            }
+            DataType::Decimal128(precision, scale) => {
+                Self::hash_decimal_metadata(*precision, *scale, digest);
+                Self::hash_fixed_size_array(array, digest, 16);
+            }
+            DataType::Decimal256(precision, scale) => {
+                Self::hash_decimal_metadata(*precision, *scale, digest);
+                Self::hash_fixed_size_array(array, digest, 32);
             }
             DataType::Map(_, _) => todo!(),
             DataType::RunEndEncoded(_, _) => todo!(),
@@ -380,12 +390,17 @@ impl<D: Digest> ArrowDigester<D> {
         Self::hash_fixed_size_array(array, digest, element_size);
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "String lengths from Arrow offsets are bounded"
+    )]
     fn hash_string_array(array: &GenericStringArray<impl OffsetSizeTrait>, digest: &mut D) {
         match array.nulls() {
             Some(null_buf) => {
                 for i in 0..array.len() {
                     if null_buf.is_valid(i) {
                         let value = array.value(i);
+                        digest.update((value.len() as u32).to_le_bytes());
                         digest.update(value.as_bytes());
                     } else {
                         digest.update(NULL_BYTES);
@@ -395,6 +410,7 @@ impl<D: Digest> ArrowDigester<D> {
             None => {
                 for i in 0..array.len() {
                     let value = array.value(i);
+                    digest.update((value.len() as u32).to_le_bytes());
                     digest.update(value.as_bytes());
                 }
             }
@@ -424,19 +440,10 @@ impl<D: Digest> ArrowDigester<D> {
         }
     }
 
-    fn hash_decimal(precision: u8, scale: i8, array: &dyn Array, digest: &mut D) {
+    fn hash_decimal_metadata(precision: u8, scale: i8, digest: &mut D) {
         // Include the precision and scale in the hash
         digest.update([precision]);
         digest.update(scale.to_le_bytes());
-
-        // Hash the underlying fixed size array based on precision
-        match precision {
-            1..=9 => Self::hash_fixed_size_array(array, digest, 4),
-            10..=18 => Self::hash_fixed_size_array(array, digest, 8),
-            19..=38 => Self::hash_fixed_size_array(array, digest, 16),
-            39..=76 => Self::hash_fixed_size_array(array, digest, 32),
-            _ => panic!("Unsupported decimal precision: {precision}"),
-        }
     }
 
     /// Internal recursive function to extract field names from nested structs effectively flattening the schema
@@ -584,7 +591,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&string_array));
         assert_eq!(
             hash,
-            "078347d3063fb5bbe0bdbd3315cf8e5e140733ea34e6b73cbc0838b60a9c8012"
+            "bde5c268d835b1ea9ea8b2a058f35f978d1c95a071b71fc5051a8a21f717e77e"
         );
 
         // Test large string array with same data to ensure consistency
@@ -625,7 +632,7 @@ mod tests {
 
         assert_eq!(
             hex::encode(ArrowDigester::<Sha256>::hash_array(&decimal32_array)),
-            "bd639e8df756f0bd194f18572e89ea180307e6d46e88d96ade52b61e196c3268"
+            "9bafa8b4e342aa48ed6d25f3e7ca62ec849108395a93739252bdb329d72ec58a"
         );
 
         // Test Decimal64 (precision 10-18)
@@ -639,7 +646,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex::encode(ArrowDigester::<Sha256>::hash_array(&decimal64_array)),
-            "ca1f8a6fb179ddafad1e02738ad2d869da187c72a9b815d8e12a85692525d231"
+            "d2730c9222bd211d5c7cfae9fbe604728bb6e75aa0a96383daec511b20b63796"
         );
 
         // Test Decimal128 (precision 19-38)
@@ -797,7 +804,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             hex::encode(digester.finalize()),
-            "3dad089e89d2d971b6f35781f670deec28b6d0201044110000e9a7cf96f74395"
+            "5ac26748e626fbac963be995ad91fcd90b441e9e27f2e8b93e39aeb8b5f60ca6"
         );
     }
 }
