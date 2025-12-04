@@ -105,7 +105,7 @@ impl<D: Digest> ArrowDigester<D> {
     fn update(&mut self, record_batch: &RecordBatch) {
         // Verify schema matches
         assert!(
-            !(*record_batch.schema() != self.schema),
+            *record_batch.schema() == self.schema,
             "Record batch schema does not match ArrowDigester schema"
         );
 
@@ -764,6 +764,6 @@ mod tests {
         assert_eq!(
             hex::encode(digester.finalize()),
             "9c5861a91a66e9e5e4dc16b12b6c9e23acaa8fc6a62519fe8e388ce39daa4fd5"
-        )
+        );
     }
 }
