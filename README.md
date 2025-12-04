@@ -11,7 +11,7 @@ NOTE: After every code edit in rust code, you will need to rerun the command to 
 # Hashing System Overview
 ArrowDigester stores the digest for multiple components of the arrow data table before combining them
 
-- schema: Each field name is serialize via PostCard: https://docs.rs/postcard/latest/postcard/
+- schema: Each field name is serialized via PostCard: https://docs.rs/postcard/latest/postcard/
     - Was chosen since I was originally using JSON but wanted something even faster, hence postcard. It is design to be very resource efficient
 
 - fields_digest_buffer: Flattens all nested schema with the '__' delimiter between the parent and sub level in this format parent_field_name__child_field_name
