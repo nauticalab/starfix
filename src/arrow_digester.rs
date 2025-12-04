@@ -1,7 +1,6 @@
 #![expect(
     clippy::expect_used,
     clippy::todo,
-    clippy::panic,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
 use std::collections::BTreeMap;
@@ -198,6 +197,10 @@ impl<D: Digest> ArrowDigester<D> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Comprehensive match on all data types"
+    )]
     fn array_digest_update(data_type: &DataType, array: &dyn Array, digest: &mut D) {
         match data_type {
             DataType::Null => todo!(),
