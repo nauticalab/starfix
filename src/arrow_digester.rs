@@ -20,6 +20,8 @@ use postcard::to_vec;
 
 const NULL_BYTES: &[u8] = b"NULL";
 
+const DELIMITER_FOR_NESTED_FIELD: &str = "__";
+
 pub struct ArrowDigester<D: Digest> {
     schema: Schema,
     schema_digest: Vec<u8>,
@@ -112,7 +114,9 @@ impl<D: Digest> ArrowDigester<D> {
             .iter_mut()
             .for_each(|(field_name, digest)| {
                 // Determine if field name is nested
-                let field_name_hierarchy = field_name.split('_').collect::<Vec<_>>();
+                let field_name_hierarchy = field_name
+                    .split(DELIMITER_FOR_NESTED_FIELD)
+                    .collect::<Vec<_>>();
 
                 if field_name_hierarchy.len() == 1 {
                     Self::array_digest_update(
@@ -464,7 +468,7 @@ impl<D: Digest> ArrowDigester<D> {
         if parent_field_name.is_empty() {
             field_name.to_owned()
         } else {
-            format!("{parent_field_name}__{field_name}")
+            format!("{parent_field_name}{DELIMITER_FOR_NESTED_FIELD}{field_name}")
         }
     }
 }
@@ -755,5 +759,11 @@ mod tests {
         assert!(field_names.contains(&&"id".to_owned()));
         assert!(field_names.contains(&&"nested__name".to_owned()));
         assert!(field_names.contains(&&"nested__deep__value".to_owned()));
+
+        // Check the digest
+        assert_eq!(
+            hex::encode(digester.finalize()),
+            "9c5861a91a66e9e5e4dc16b12b6c9e23acaa8fc6a62519fe8e388ce39daa4fd5"
+        )
     }
 }
