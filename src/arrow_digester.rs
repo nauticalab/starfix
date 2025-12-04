@@ -148,7 +148,7 @@ impl<D: Digest> ArrowDigester<D> {
 
     /// Recursive function to update nested field digests (structs within structs)
     fn update_nested_field(
-        field_name_hierarchy: &Vec<&str>,
+        field_name_hierarchy: &[&str],
         current_level: usize,
         array: &StructArray,
         digest: &mut D,
