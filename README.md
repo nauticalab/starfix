@@ -9,7 +9,7 @@ NOTE: After every code edit in rust code, you will need to rerun the command to 
 
 
 # Hashing System Overview
-ArrowDigester stores the digest for multiple components of the arrow data_table before combining them
+ArrowDigester stores the digest for multiple components of the arrow data table before combining them
 
 - schema: Each field name is serialize via PostCard: https://docs.rs/postcard/latest/postcard/
     - Was chosen since I was originally using JSON but wanted something even faster, hence postcard. It is design to be very resource efficient
