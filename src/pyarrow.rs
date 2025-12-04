@@ -1,5 +1,5 @@
 use arrow::array::{RecordBatch, StructArray};
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema, from_ffi};
+use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use sha2::Sha256;
 
 use crate::arrow_digester::ArrowDigester;
