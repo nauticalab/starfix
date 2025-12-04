@@ -424,11 +424,10 @@ impl<D: Digest> ArrowDigester<D> {
         }
     }
 
-    #[expect(clippy::cast_sign_loss, reason = "Scale should always be non-negative")]
     fn hash_decimal(precision: u8, scale: i8, array: &dyn Array, digest: &mut D) {
         // Include the precision and scale in the hash
         digest.update([precision]);
-        digest.update([scale as u8]);
+        digest.update(scale.to_le_bytes());
 
         // Hash the underlying fixed size array based on precision
         match precision {
