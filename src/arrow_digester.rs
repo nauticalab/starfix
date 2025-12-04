@@ -430,7 +430,7 @@ impl<D: Digest> ArrowDigester<D> {
     }
 
     /// Internal recursive function to extract field names from nested structs effectively flattening the schema
-    /// The format is `parent_child_grandchild_etc`... for nested fields and will be stored in `fields_digest_buffer`
+    /// The format is `parent__child__grandchild__etc`... for nested fields and will be stored in `fields_digest_buffer`
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
@@ -447,7 +447,7 @@ impl<D: Digest> ArrowDigester<D> {
             let field_name = if parent_field_name.is_empty() {
                 field.name().clone()
             } else {
-                format!("{}_{}", parent_field_name, field.name())
+                format!("{}__{}", parent_field_name, field.name())
             };
 
             fields_digest_buffer.insert(field_name, D::new());
