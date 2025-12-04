@@ -157,16 +157,20 @@ impl<D: Digest> ArrowDigester<D> {
         array: &StructArray,
         digest: &mut D,
     ) {
+        let current_level_plus_one = current_level
+            .checked_add(1)
+            .expect("Field nesting level overflow");
+
         if field_name_hierarchy
             .len()
             .checked_sub(1)
-            .expect("field_name_hierarchy underflow occurred")
-            == current_level
+            .expect("field_name_hierarchy underflow")
+            == current_level_plus_one
         {
             let array_data = array
                 .column_by_name(
                     field_name_hierarchy
-                        .first()
+                        .last()
                         .expect("Failed to get field name at idx 0, list is empty!"),
                 )
                 .expect("Failed to get column by name");
@@ -177,7 +181,7 @@ impl<D: Digest> ArrowDigester<D> {
             let next_array = array
                 .column_by_name(
                     field_name_hierarchy
-                        .get(current_level)
+                        .get(current_level_plus_one)
                         .expect("Failed to get field name at current level"),
                 )
                 .expect("Failed to get column by name")
@@ -187,9 +191,7 @@ impl<D: Digest> ArrowDigester<D> {
 
             Self::update_nested_field(
                 field_name_hierarchy,
-                current_level
-                    .checked_add(1)
-                    .expect("Field nesting level overflow"),
+                current_level_plus_one,
                 next_array,
                 digest,
             );
@@ -447,11 +449,6 @@ impl<D: Digest> ArrowDigester<D> {
     ) {
         // Check if field is a nested type of struct
         if let DataType::Struct(fields) = field.data_type() {
-            println!(
-                "Extracting nested struct field: {} with parent: {}",
-                field.name(),
-                parent_field_name
-            );
             // We will add fields in alphabetical order
             fields.into_iter().for_each(|field_inner| {
                 Self::extract_fields_name(
@@ -485,9 +482,9 @@ mod tests {
 
     use arrow::{
         array::{
-            ArrayRef, BinaryArray, BooleanArray, Int32Array, LargeBinaryArray, LargeStringArray,
-            ListArray, RecordBatch, StringArray, Time32MillisecondArray, Time32SecondArray,
-            Time64MicrosecondArray,
+            ArrayRef, BinaryArray, BooleanArray, Int32Array, Int64Array, LargeBinaryArray,
+            LargeStringArray, ListArray, RecordBatch, StringArray, StructArray,
+            Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
         },
         datatypes::Int32Type,
     };
@@ -734,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn field_names() {
+    fn nested_fields() {
         // Test nested struct field name extraction
         let schema = Schema::new(vec![
             Field::new("id", DataType::Int32, false),
@@ -757,7 +754,7 @@ mod tests {
             ),
         ]);
 
-        let digester = ArrowDigester::<Sha256>::new(schema);
+        let mut digester = ArrowDigester::<Sha256>::new(schema.clone());
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
         assert_eq!(field_names.len(), 3);
@@ -765,10 +762,43 @@ mod tests {
         assert!(field_names.contains(&&"nested__name".to_owned()));
         assert!(field_names.contains(&&"nested__deep__value".to_owned()));
 
+        // Test the nested field update by creating record_batch and using the update method
+        let id_array = Arc::new(Int32Array::from(vec![Some(1), Some(2)])) as ArrayRef;
+        let name_array = Arc::new(StringArray::from(vec![Some("Alice"), Some("Bob")])) as ArrayRef;
+        let value_array = Arc::new(Int64Array::from(vec![Some(100), Some(200)])) as ArrayRef;
+
+        let schema_ref = Arc::new(schema);
+
+        let nested_struct = StructArray::from(vec![
+            (
+                Arc::new(Field::new("name", DataType::Utf8, true)),
+                name_array,
+            ),
+            (
+                Arc::new(Field::new(
+                    "deep",
+                    DataType::Struct(vec![Field::new("value", DataType::Int64, false)].into()),
+                    false,
+                )),
+                Arc::new(StructArray::from(vec![(
+                    Arc::new(Field::new("value", DataType::Int64, false)),
+                    value_array,
+                )])) as ArrayRef,
+            ),
+        ]);
+
+        let record_batch = RecordBatch::try_new(
+            Arc::clone(&schema_ref),
+            vec![id_array, Arc::new(nested_struct)],
+        )
+        .unwrap();
+
+        digester.update(&record_batch);
+
         // Check the digest
         assert_eq!(
             hex::encode(digester.finalize()),
-            "9c5861a91a66e9e5e4dc16b12b6c9e23acaa8fc6a62519fe8e388ce39daa4fd5"
+            "3dad089e89d2d971b6f35781f670deec28b6d0201044110000e9a7cf96f74395"
         );
     }
 }
