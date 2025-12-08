@@ -18,7 +18,7 @@ use digest::Digest;
 
 const NULL_BYTES: &[u8] = b"NULL";
 
-const DELIMITER_FOR_NESTED_FIELD: &str = "__";
+const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
 pub struct ArrowDigester<D: Digest> {
     schema: Schema,
@@ -783,8 +783,8 @@ mod tests {
 
         assert_eq!(field_names.len(), 3);
         assert!(field_names.contains(&&"id".to_owned()));
-        assert!(field_names.contains(&&"nested__name".to_owned()));
-        assert!(field_names.contains(&&"nested__deep__value".to_owned()));
+        assert!(field_names.contains(&&"nested/name".to_owned()));
+        assert!(field_names.contains(&&"nested/deep/value".to_owned()));
 
         // Test the nested field update by creating record_batch and using the update method
         let id_array = Arc::new(Int32Array::from(vec![Some(1), Some(2)])) as ArrayRef;
