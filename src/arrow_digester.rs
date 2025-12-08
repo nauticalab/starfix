@@ -15,7 +15,6 @@ use arrow::{
 };
 use arrow_schema::{Field, TimeUnit};
 use digest::Digest;
-use postcard::to_vec;
 
 const NULL_BYTES: &[u8] = b"NULL";
 
@@ -84,18 +83,13 @@ impl<D: Digest> ArrowDigester<D> {
     fn hash_schema(schema: &Schema) -> Vec<u8> {
         let fields_digest = schema
             .fields
-            .into_iter()
-            .map(|field| {
-                (
-                    field.name(),
-                    to_vec::<_, 256>(field).expect("Failed to serialize field of schema"),
-                )
-            })
+            .iter()
+            .map(|field| (field.name(), field.to_string()))
             .collect::<BTreeMap<_, _>>();
 
         // Hash the entire thing to the digest
         D::digest(
-            to_vec::<_, 1024>(&fields_digest).expect("Failed to serialize field_digest to bytes"),
+            serde_json::to_vec(&fields_digest).expect("Failed to serialize field_digest to bytes"),
         )
         .to_vec()
     }
@@ -498,11 +492,28 @@ mod tests {
         datatypes::Int32Type,
     };
     use arrow_schema::{DataType, Field, Schema};
+    use hex::encode;
     use pretty_assertions::assert_eq;
     use sha2::Sha256;
 
     use crate::arrow_digester::ArrowDigester;
     use arrow::array::Decimal128Array;
+
+    #[test]
+    fn schema_only() {
+        let schema = Schema::new(vec![
+            Field::new("col1", DataType::Int32, false),
+            Field::new("col2", DataType::Utf8, true),
+        ]);
+
+        let digester = ArrowDigester::<Sha256>::new(schema);
+        let hash = digester.finalize();
+
+        assert_eq!(
+            encode(hash),
+            "95eb6c962dd0b61704bc0a29347ff91d3024e52adc31e23b33d843c539715abc"
+        );
+    }
 
     #[test]
     fn boolean_array_hashing() {
@@ -634,7 +645,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(
-            hex::encode(ArrowDigester::<Sha256>::hash_array(&decimal32_array)),
+            encode(ArrowDigester::<Sha256>::hash_array(&decimal32_array)),
             "9bafa8b4e342aa48ed6d25f3e7ca62ec849108395a93739252bdb329d72ec58a"
         );
 
@@ -648,7 +659,7 @@ mod tests {
         .with_precision_and_scale(15, 3)
         .unwrap();
         assert_eq!(
-            hex::encode(ArrowDigester::<Sha256>::hash_array(&decimal64_array)),
+            encode(ArrowDigester::<Sha256>::hash_array(&decimal64_array)),
             "d2730c9222bd211d5c7cfae9fbe604728bb6e75aa0a96383daec511b20b63796"
         );
 
@@ -696,8 +707,12 @@ mod tests {
 
         // Hash both record batches
         assert_eq!(
-            ArrowDigester::<Sha256>::hash_record_batch(batch1.as_ref().unwrap()),
-            ArrowDigester::<Sha256>::hash_record_batch(batch2.as_ref().unwrap())
+            encode(ArrowDigester::<Sha256>::hash_record_batch(
+                batch1.as_ref().unwrap()
+            )),
+            encode(ArrowDigester::<Sha256>::hash_record_batch(
+                batch2.as_ref().unwrap()
+            ))
         );
     }
 
@@ -734,8 +749,8 @@ mod tests {
         digester.update(&batch1);
         digester.update(&batch2);
         assert_eq!(
-            hex::encode(digester.finalize()),
-            "9ba289655f0c7dd359ababc5a6f6188b352e45483623fbbf8b967723e2b798f8"
+            encode(digester.finalize()),
+            "6042a984d52c98d660832763a997eb8d79694005aa46ca89bac15a2240ee46e7"
         );
     }
 
@@ -806,8 +821,8 @@ mod tests {
 
         // Check the digest
         assert_eq!(
-            hex::encode(digester.finalize()),
-            "5ac26748e626fbac963be995ad91fcd90b441e9e27f2e8b93e39aeb8b5f60ca6"
+            encode(digester.finalize()),
+            "28a12e93525ceb84554fb0ce564d14b14c537b9d0d6b2bf13a583170d18f41fb"
         );
     }
 }
