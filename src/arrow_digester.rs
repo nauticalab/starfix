@@ -3,7 +3,7 @@
     clippy::todo,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, iter::repeat_n};
 
 use arrow::{
     array::{
@@ -14,16 +14,22 @@ use arrow::{
     datatypes::{DataType, Schema},
 };
 use arrow_schema::{Field, TimeUnit};
+use bitvec::prelude::*;
 use digest::Digest;
 
 const NULL_BYTES: &[u8] = b"NULL";
 
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
+enum DigestBufferType<D: Digest> {
+    NonNullable(D),
+    Nullable(BitVec, D), // Where first digest is for the bull bits, while the second is for the actual data
+}
+
 pub struct ArrowDigester<D: Digest> {
     schema: Schema,
     schema_digest: Vec<u8>,
-    fields_digest_buffer: BTreeMap<String, D>,
+    fields_digest_buffer: BTreeMap<String, DigestBufferType<D>>,
 }
 
 impl<D: Digest> ArrowDigester<D> {
@@ -47,9 +53,17 @@ impl<D: Digest> ArrowDigester<D> {
 
     /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
-        let mut digest = D::new();
-        Self::array_digest_update(array.data_type(), array, &mut digest);
-        digest.finalize().to_vec()
+        let mut digest_buffer = if array.is_nullable() {
+            DigestBufferType::Nullable(BitVec::new(), D::new())
+        } else {
+            DigestBufferType::NonNullable(D::new())
+        };
+        Self::array_digest_update(array.data_type(), array, &mut digest_buffer);
+
+        // Finalize all the sub digest and combine them into a single digest
+        let mut final_digest = D::new();
+        Self::finalize_digest(&mut final_digest, digest_buffer);
+        final_digest.finalize().to_vec()
     }
 
     /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side
@@ -71,12 +85,30 @@ impl<D: Digest> ArrowDigester<D> {
         // Then digest each field digest in order
         self.fields_digest_buffer
             .into_iter()
-            .for_each(|(_, digest)| {
-                let field_hash = digest.finalize();
-                final_digest.update(&field_hash);
-            });
+            .for_each(|(_, digest)| Self::finalize_digest(&mut final_digest, digest));
 
         final_digest.finalize().to_vec()
+    }
+
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "Use for bit packing the null_bit_values"
+    )]
+    /// Finalize a single field digest into the final digest
+    /// Helpers to reduce code duplication
+    fn finalize_digest(final_digest: &mut D, digest: DigestBufferType<D>) {
+        match digest {
+            DigestBufferType::NonNullable(data_digest) => {
+                final_digest.update(data_digest.finalize());
+            }
+            DigestBufferType::Nullable(null_bit_digest, data_digest) => {
+                final_digest.update(null_bit_digest.len().to_le_bytes());
+                for &word in null_bit_digest.as_raw_slice() {
+                    final_digest.update(word.to_be_bytes());
+                }
+                final_digest.update(data_digest.finalize());
+            }
+        }
     }
 
     /// Serialize the schema into a `BTreeMap` for field name and its digest
@@ -148,7 +180,7 @@ impl<D: Digest> ArrowDigester<D> {
         field_name_hierarchy: &[&str],
         current_level: usize,
         array: &StructArray,
-        digest: &mut D,
+        digest: &mut DigestBufferType<D>,
     ) {
         let current_level_plus_one = current_level
             .checked_add(1)
@@ -195,7 +227,11 @@ impl<D: Digest> ArrowDigester<D> {
         clippy::too_many_lines,
         reason = "Comprehensive match on all data types"
     )]
-    fn array_digest_update(data_type: &DataType, array: &dyn Array, digest: &mut D) {
+    fn array_digest_update(
+        data_type: &DataType,
+        array: &dyn Array,
+        digest: &mut DigestBufferType<D>,
+    ) {
         match data_type {
             DataType::Null => todo!(),
             DataType::Boolean => {
@@ -205,24 +241,53 @@ impl<D: Digest> ArrowDigester<D> {
                     .downcast_ref::<BooleanArray>()
                     .expect("Failed to downcast to BooleanArray");
 
-                bool_array.into_iter().for_each(|value| match value {
-                    Some(b) => digest.update([u8::from(b)]),
-                    None => digest.update(NULL_BYTES),
-                });
+                match digest {
+                    DigestBufferType::NonNullable(data_digest) => {
+                        // We want to bit pack the boolean values into bytes for hashing
+                        let mut bit_vec = BitVec::<u8, Msb0>::with_capacity(bool_array.len());
+                        for i in 0..bool_array.len() {
+                            bit_vec.push(bool_array.value(i));
+                        }
+
+                        data_digest.update(bit_vec.as_raw_slice());
+                    }
+                    DigestBufferType::Nullable(null_bit_vec, data_digest) => {
+                        // Handle null bits first
+                        Self::handle_null_bits(bool_array, null_bit_vec);
+
+                        // Handle the data
+                        let mut bit_vec = BitVec::<u8, Msb0>::with_capacity(bool_array.len());
+                        for i in 0..bool_array.len() {
+                            // We only want the valid bits, for null we will discard from the hash since that is already capture by null_bits
+                            if bool_array.is_valid(i) {
+                                bit_vec.push(bool_array.value(i));
+                            }
+                        }
+                        data_digest.update(bit_vec.as_raw_slice());
+                    }
+                }
             }
             DataType::Int8 | DataType::UInt8 => Self::hash_fixed_size_array(array, digest, 1),
             DataType::Int16 | DataType::UInt16 | DataType::Float16 => {
                 Self::hash_fixed_size_array(array, digest, 2);
             }
-            DataType::Int32 | DataType::UInt32 | DataType::Float32 | DataType::Date32 => {
+            DataType::Int32
+            | DataType::UInt32
+            | DataType::Float32
+            | DataType::Date32
+            | DataType::Decimal32(_, _) => {
                 Self::hash_fixed_size_array(array, digest, 4);
             }
-            DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Date64 => {
+            DataType::Int64
+            | DataType::UInt64
+            | DataType::Float64
+            | DataType::Date64
+            | DataType::Decimal64(_, _) => {
                 Self::hash_fixed_size_array(array, digest, 8);
             }
             DataType::Timestamp(_, _) => todo!(),
-            DataType::Time32(time_unit) => Self::hash_time_array(array, *time_unit, digest, 4),
-            DataType::Time64(time_unit) => Self::hash_time_array(array, *time_unit, digest, 8),
+            DataType::Time32(_) => Self::hash_fixed_size_array(array, digest, 4),
+            DataType::Time64(_) => Self::hash_fixed_size_array(array, digest, 8),
             DataType::Duration(_) => todo!(),
             DataType::Interval(_) => todo!(),
             DataType::Binary => Self::hash_binary_array(
@@ -284,20 +349,10 @@ impl<D: Digest> ArrowDigester<D> {
             DataType::Struct(_) => todo!(),
             DataType::Union(_, _) => todo!(),
             DataType::Dictionary(_, _) => todo!(),
-            DataType::Decimal32(precision, scale) => {
-                Self::hash_decimal_metadata(*precision, *scale, digest);
-                Self::hash_fixed_size_array(array, digest, 4);
-            }
-            DataType::Decimal64(precision, scale) => {
-                Self::hash_decimal_metadata(*precision, *scale, digest);
-                Self::hash_fixed_size_array(array, digest, 8);
-            }
-            DataType::Decimal128(precision, scale) => {
-                Self::hash_decimal_metadata(*precision, *scale, digest);
+            DataType::Decimal128(_, _) => {
                 Self::hash_fixed_size_array(array, digest, 16);
             }
-            DataType::Decimal256(precision, scale) => {
-                Self::hash_decimal_metadata(*precision, *scale, digest);
+            DataType::Decimal256(_, _) => {
                 Self::hash_fixed_size_array(array, digest, 32);
             }
             DataType::Map(_, _) => todo!(),
@@ -306,7 +361,11 @@ impl<D: Digest> ArrowDigester<D> {
     }
 
     #[expect(clippy::cast_sign_loss, reason = "element_size is always positive")]
-    fn hash_fixed_size_array(array: &dyn Array, digest: &mut D, element_size: i32) {
+    fn hash_fixed_size_array(
+        array: &dyn Array,
+        digest_buffer: &mut DigestBufferType<D>,
+        element_size: i32,
+    ) {
         let array_data = array.to_data();
         let element_size_usize = element_size as usize;
 
@@ -324,61 +383,103 @@ impl<D: Digest> ArrowDigester<D> {
             )
             .expect("Failed to get buffer slice for FixedSizeBinaryArray");
 
-        // Deal with null
-        match array_data.nulls() {
-            Some(null_buffer) => {
-                // There are nulls, so we need to incrementally hash each value
-                for i in 0..array_data.len() {
-                    if null_buffer.is_valid(i) {
-                        let data_pos = i
-                            .checked_mul(element_size_usize)
-                            .expect("Data position multiplication overflow");
-                        let end_pos = data_pos
-                            .checked_add(element_size_usize)
-                            .expect("End position addition overflow");
-                        if let Some(data_slice) = slice.get(data_pos..end_pos) {
-                            digest.update(data_slice);
-                        } else {
-                            digest.update(NULL_BYTES);
+        match digest_buffer {
+            DigestBufferType::NonNullable(data_digest) => {
+                // No nulls, we can hash the entire buffer directly
+                data_digest.update(slice);
+            }
+            DigestBufferType::Nullable(null_bits, data_digest) => {
+                // Handle null bits first
+                Self::handle_null_bits(array, null_bits);
+
+                match array_data.nulls() {
+                    Some(null_buffer) => {
+                        // There are nulls, so we need to incrementally hash each value
+                        for i in 0..array_data.len() {
+                            if null_buffer.is_valid(i) {
+                                let data_pos = i
+                                    .checked_mul(element_size_usize)
+                                    .expect("Data position multiplication overflow");
+                                let end_pos = data_pos
+                                    .checked_add(element_size_usize)
+                                    .expect("End position addition overflow");
+
+                                data_digest.update(
+                                    slice
+                                        .get(data_pos..end_pos)
+                                        .expect("Failed to get data_slice"),
+                                );
+                            }
                         }
-                    } else {
-                        digest.update(NULL_BYTES);
+                    }
+                    None => {
+                        // No nulls, we can hash the entire buffer directly
+                        data_digest.update(slice);
                     }
                 }
-            }
-            None => {
-                // No nulls, we can hash the entire buffer directly
-                digest.update(slice);
             }
         }
     }
 
-    fn hash_binary_array(array: &GenericBinaryArray<impl OffsetSizeTrait>, digest: &mut D) {
-        match array.nulls() {
-            Some(null_buf) => {
-                for i in 0..array.len() {
-                    if null_buf.is_valid(i) {
-                        let value = array.value(i);
-                        digest.update(value.len().to_le_bytes());
-                        digest.update(value);
-                    } else {
-                        digest.update(NULL_BYTES);
-                    }
-                }
-            }
-            None => {
+    fn hash_binary_array(
+        array: &GenericBinaryArray<impl OffsetSizeTrait>,
+        digest: &mut DigestBufferType<D>,
+    ) {
+        match digest {
+            DigestBufferType::NonNullable(data_digest) => {
                 for i in 0..array.len() {
                     let value = array.value(i);
-                    digest.update(value.len().to_le_bytes());
-                    digest.update(value);
+                    data_digest.update(value.len().to_le_bytes());
+                    data_digest.update(value);
+                }
+            }
+            DigestBufferType::Nullable(null_bit_vec, data_digest) => {
+                // Deal with the null bits first
+                if let Some(null_buf) = array.nulls() {
+                    // We would need to iterate through the null buffer and push it into the null_bit_vec
+                    for i in 0..array.len() {
+                        null_bit_vec.push(null_buf.is_valid(i));
+                    }
+
+                    for i in 0..array.len() {
+                        if null_buf.is_valid(i) {
+                            let value = array.value(i);
+                            data_digest.update(value.len().to_le_bytes());
+                            data_digest.update(value);
+                        } else {
+                            data_digest.update(NULL_BYTES);
+                        }
+                    }
+                } else {
+                    // All valid, therefore we can extend the bit vector with all true values
+                    let len = array.len().checked_sub(1).expect("Array length underflow");
+                    null_bit_vec.extend(repeat_n(true, len));
+
+                    // Deal with the data
+                    for i in 0..array.len() {
+                        let value = array.value(i);
+                        data_digest.update(value.len().to_le_bytes());
+                        data_digest.update(value);
+                    }
                 }
             }
         }
     }
 
-    fn hash_time_array(array: &dyn Array, time_unit: TimeUnit, digest: &mut D, element_size: i32) {
+    fn hash_time_array(
+        array: &dyn Array,
+        time_unit: TimeUnit,
+        digest: &mut DigestBufferType<D>,
+        element_size: i32,
+    ) {
         // We need to update the digest with the time unit first to ensure different time units produce different hashes
-        digest.update([match time_unit {
+
+        let data_digest = match digest {
+            DigestBufferType::NonNullable(data_digest)
+            | DigestBufferType::Nullable(_, data_digest) => data_digest,
+        };
+
+        data_digest.update([match time_unit {
             TimeUnit::Second => 0_u8,
             TimeUnit::Millisecond => 1_u8,
             TimeUnit::Microsecond => 2_u8,
@@ -393,24 +494,41 @@ impl<D: Digest> ArrowDigester<D> {
         clippy::cast_possible_truncation,
         reason = "String lengths from Arrow offsets are bounded"
     )]
-    fn hash_string_array(array: &GenericStringArray<impl OffsetSizeTrait>, digest: &mut D) {
-        match array.nulls() {
-            Some(null_buf) => {
-                for i in 0..array.len() {
-                    if null_buf.is_valid(i) {
-                        let value = array.value(i);
-                        digest.update((value.len() as u32).to_le_bytes());
-                        digest.update(value.as_bytes());
-                    } else {
-                        digest.update(NULL_BYTES);
-                    }
-                }
-            }
-            None => {
+    fn hash_string_array(
+        array: &GenericStringArray<impl OffsetSizeTrait>,
+        digest: &mut DigestBufferType<D>,
+    ) {
+        match digest {
+            DigestBufferType::NonNullable(data_digest) => {
                 for i in 0..array.len() {
                     let value = array.value(i);
-                    digest.update((value.len() as u32).to_le_bytes());
-                    digest.update(value.as_bytes());
+                    data_digest.update((value.len() as u64).to_le_bytes());
+                    data_digest.update(value.as_bytes());
+                }
+            }
+            DigestBufferType::Nullable(null_bit_vec, data_digest) => {
+                // Deal with the null bits first
+                Self::handle_null_bits(array, null_bit_vec);
+
+                match array.nulls() {
+                    Some(null_buf) => {
+                        for i in 0..array.len() {
+                            if null_buf.is_valid(i) {
+                                let value = array.value(i);
+                                data_digest.update((value.len() as u32).to_le_bytes());
+                                data_digest.update(value.as_bytes());
+                            } else {
+                                data_digest.update(NULL_BYTES);
+                            }
+                        }
+                    }
+                    None => {
+                        for i in 0..array.len() {
+                            let value = array.value(i);
+                            data_digest.update((value.len() as u32).to_le_bytes());
+                            data_digest.update(value.as_bytes());
+                        }
+                    }
                 }
             }
         }
@@ -419,21 +537,42 @@ impl<D: Digest> ArrowDigester<D> {
     fn hash_list_array(
         array: &GenericListArray<impl OffsetSizeTrait>,
         field_data_type: &DataType,
-        digest: &mut D,
+        digest: &mut DigestBufferType<D>,
     ) {
-        match array.nulls() {
-            Some(null_buf) => {
-                for i in 0..array.len() {
-                    if null_buf.is_valid(i) {
-                        Self::array_digest_update(field_data_type, array.value(i).as_ref(), digest);
-                    } else {
-                        digest.update(NULL_BYTES);
-                    }
-                }
-            }
-            None => {
+        todo!();
+        match digest {
+            DigestBufferType::NonNullable(data_digest) => {
                 for i in 0..array.len() {
                     Self::array_digest_update(field_data_type, array.value(i).as_ref(), digest);
+                }
+            }
+            DigestBufferType::Nullable(bit_vec, data_digest) => {
+                // Deal with null bits first
+                Self::handle_null_bits(array, bit_vec);
+
+                match array.nulls() {
+                    Some(null_buf) => {
+                        for i in 0..array.len() {
+                            if null_buf.is_valid(i) {
+                                Self::array_digest_update(
+                                    field_data_type,
+                                    array.value(i).as_ref(),
+                                    digest,
+                                );
+                            } else {
+                                data_digest.update(NULL_BYTES);
+                            }
+                        }
+                    }
+                    None => {
+                        for i in 0..array.len() {
+                            Self::array_digest_update(
+                                field_data_type,
+                                array.value(i).as_ref(),
+                                digest,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -450,7 +589,7 @@ impl<D: Digest> ArrowDigester<D> {
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
-        fields_digest_buffer: &mut BTreeMap<String, D>,
+        fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         // Check if field is a nested type of struct
         if let DataType::Struct(fields) = field.data_type() {
@@ -466,7 +605,11 @@ impl<D: Digest> ArrowDigester<D> {
             // Base case, just add the the combine field name to the map
             fields_digest_buffer.insert(
                 Self::construct_field_name_hierarchy(parent_field_name, field.name()),
-                D::new(),
+                if field.is_nullable() {
+                    DigestBufferType::Nullable(BitVec::new(), D::new())
+                } else {
+                    DigestBufferType::NonNullable(D::new())
+                },
             );
         }
     }
@@ -476,6 +619,24 @@ impl<D: Digest> ArrowDigester<D> {
             field_name.to_owned()
         } else {
             format!("{parent_field_name}{DELIMITER_FOR_NESTED_FIELD}{field_name}")
+        }
+    }
+
+    fn handle_null_bits(array: &dyn Array, null_bit_vec: &mut BitVec) {
+        match array.nulls() {
+            Some(null_buf) => {
+                // We would need to iterate through the null buffer and push it into the null_bit_vec
+                for i in 0..array.len() {
+                    null_bit_vec.push(null_buf.is_valid(i));
+                }
+            }
+            None => {
+                // All valid, therefore we can extend the bit vector with all true values
+                null_bit_vec.extend(repeat_n(
+                    true,
+                    array.len().checked_sub(1).expect("Array length underflow"),
+                ));
+            }
         }
     }
 }

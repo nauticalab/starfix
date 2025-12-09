@@ -4,7 +4,7 @@
         "pyarrow",
         "pythonapi",
         "uniffi",
-        "uids"
+        "uids""bitvec"
     ],
     "ignoreWords": [],
     "useGitignore": false,
