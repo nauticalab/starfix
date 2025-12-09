@@ -359,6 +359,7 @@ impl<D: Digest> ArrowDigester<D> {
                 for i in 0..array.len() {
                     if null_buf.is_valid(i) {
                         let value = array.value(i);
+                        digest.update(value.len().to_le_bytes());
                         digest.update(value);
                     } else {
                         digest.update(NULL_BYTES);
@@ -368,6 +369,7 @@ impl<D: Digest> ArrowDigester<D> {
             None => {
                 for i in 0..array.len() {
                     let value = array.value(i);
+                    digest.update(value.len().to_le_bytes());
                     digest.update(value);
                 }
             }
@@ -581,7 +583,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&binary_array));
         assert_eq!(
             hash,
-            "078347d3063fb5bbe0bdbd3315cf8e5e140733ea34e6b73cbc0838b60a9c8012"
+            "2dadcaf793c1878ffa22eb2d5d746e27b648d638e4e344e565a23840a957b660"
         );
 
         // Test large binary array with same data to ensure consistency
@@ -595,6 +597,46 @@ mod tests {
         assert_eq!(
             hex::encode(ArrowDigester::<Sha256>::hash_array(&large_binary_array)),
             hash
+        );
+    }
+
+    // Test binary array collision vulnerability - different partitions should produce different hashes
+    #[test]
+    fn binary_array_length_prefix_prevents_collisions() {
+        // Array 1: [[0x01, 0x02], [0x03]]
+        let array1 = BinaryArray::from(vec![Some(&[0x01_u8, 0x02_u8][..]), Some(&[0x03_u8][..])]);
+
+        // Array 2: [[0x01], [0x02, 0x03]]
+        let array2 = BinaryArray::from(vec![Some(&[0x01_u8][..]), Some(&[0x02_u8, 0x03_u8][..])]);
+
+        let hash1 = hex::encode(ArrowDigester::<Sha256>::hash_array(&array1));
+        let hash2 = hex::encode(ArrowDigester::<Sha256>::hash_array(&array2));
+
+        // Without length prefix, these would collide (both hash to 0x01 0x02 0x03)
+        // With length prefix, they should produce different hashes
+        assert_ne!(
+            hash1, hash2,
+            "Binary arrays with different partitions should produce different hashes"
+        );
+    }
+
+    // Test string array collision vulnerability - different partitions should produce different hashes
+    #[test]
+    fn string_array_length_prefix_prevents_collisions() {
+        // Array 1: ["ab", "c"]
+        let array1 = StringArray::from(vec![Some("ab"), Some("c")]);
+
+        // Array 2: ["a", "bc"]
+        let array2 = StringArray::from(vec![Some("a"), Some("bc")]);
+
+        let hash1 = hex::encode(ArrowDigester::<Sha256>::hash_array(&array1));
+        let hash2 = hex::encode(ArrowDigester::<Sha256>::hash_array(&array2));
+
+        // Without length prefix, these would collide (both hash to "abc")
+        // With length prefix, they should produce different hashes
+        assert_ne!(
+            hash1, hash2,
+            "String arrays with different partitions should produce different hashes"
         );
     }
 
