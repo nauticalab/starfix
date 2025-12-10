@@ -13,7 +13,7 @@ use arrow::{
     },
     datatypes::{DataType, Schema},
 };
-use arrow_schema::{Field, TimeUnit};
+use arrow_schema::Field;
 use bitvec::prelude::*;
 use digest::Digest;
 
@@ -52,17 +52,32 @@ impl<D: Digest> ArrowDigester<D> {
     }
 
     /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side
+    /// For hash array, we don't have a schema to hash, however we do have field data type.
+    /// So similar to schema, we will hash based on datatype to encode the metadata information into the digest
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if JSON serialization of the data type fails.
+    ///
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
+        let mut final_digest = D::new();
+
+        let data_type_serialized = serde_json::to_string(&array.data_type())
+            .expect("Failed to serialize data type to string");
+
+        // Update the digest buffer with the array metadata and field data
+        final_digest.update(data_type_serialized);
+
+        // Now we update it with the actual array data
         let mut digest_buffer = if array.is_nullable() {
             DigestBufferType::Nullable(BitVec::new(), D::new())
         } else {
             DigestBufferType::NonNullable(D::new())
         };
         Self::array_digest_update(array.data_type(), array, &mut digest_buffer);
-
-        // Finalize all the sub digest and combine them into a single digest
-        let mut final_digest = D::new();
         Self::finalize_digest(&mut final_digest, digest_buffer);
+
+        // Finalize and return the digest
         final_digest.finalize().to_vec()
     }
 
@@ -112,18 +127,23 @@ impl<D: Digest> ArrowDigester<D> {
     }
 
     /// Serialize the schema into a `BTreeMap` for field name and its digest
-    fn hash_schema(schema: &Schema) -> Vec<u8> {
+    ///
+    /// # Panics
+    /// This function will panic if JSON serialization of the schema fails.
+    fn serialized_schema(schema: &Schema) -> String {
         let fields_digest = schema
             .fields
             .iter()
-            .map(|field| (field.name(), field.to_string()))
+            .map(|field| (field.name(), (field.to_string(), field.data_type())))
             .collect::<BTreeMap<_, _>>();
 
+        serde_json::to_string(&fields_digest).expect("Failed to serialize field_digest to bytes")
+    }
+
+    /// Serialize the schema into a `BTreeMap` for field name and its digest
+    pub fn hash_schema(schema: &Schema) -> Vec<u8> {
         // Hash the entire thing to the digest
-        D::digest(
-            serde_json::to_vec(&fields_digest).expect("Failed to serialize field_digest to bytes"),
-        )
-        .to_vec()
+        D::digest(Self::serialized_schema(schema)).to_vec()
     }
 
     /// Hash a record batch and update the internal digests
@@ -466,30 +486,6 @@ impl<D: Digest> ArrowDigester<D> {
         }
     }
 
-    fn hash_time_array(
-        array: &dyn Array,
-        time_unit: TimeUnit,
-        digest: &mut DigestBufferType<D>,
-        element_size: i32,
-    ) {
-        // We need to update the digest with the time unit first to ensure different time units produce different hashes
-
-        let data_digest = match digest {
-            DigestBufferType::NonNullable(data_digest)
-            | DigestBufferType::Nullable(_, data_digest) => data_digest,
-        };
-
-        data_digest.update([match time_unit {
-            TimeUnit::Second => 0_u8,
-            TimeUnit::Millisecond => 1_u8,
-            TimeUnit::Microsecond => 2_u8,
-            TimeUnit::Nanosecond => 3_u8,
-        }]);
-
-        // Now hash the underlying fixed size array based on time unit
-        Self::hash_fixed_size_array(array, digest, element_size);
-    }
-
     #[expect(
         clippy::cast_possible_truncation,
         reason = "String lengths from Arrow offsets are bounded"
@@ -539,14 +535,13 @@ impl<D: Digest> ArrowDigester<D> {
         field_data_type: &DataType,
         digest: &mut DigestBufferType<D>,
     ) {
-        todo!();
         match digest {
-            DigestBufferType::NonNullable(data_digest) => {
+            DigestBufferType::NonNullable(_) => {
                 for i in 0..array.len() {
                     Self::array_digest_update(field_data_type, array.value(i).as_ref(), digest);
                 }
             }
-            DigestBufferType::Nullable(bit_vec, data_digest) => {
+            DigestBufferType::Nullable(bit_vec, _) => {
                 // Deal with null bits first
                 Self::handle_null_bits(array, bit_vec);
 
@@ -559,8 +554,6 @@ impl<D: Digest> ArrowDigester<D> {
                                     array.value(i).as_ref(),
                                     digest,
                                 );
-                            } else {
-                                data_digest.update(NULL_BYTES);
                             }
                         }
                     }
@@ -576,12 +569,6 @@ impl<D: Digest> ArrowDigester<D> {
                 }
             }
         }
-    }
-
-    fn hash_decimal_metadata(precision: u8, scale: i8, digest: &mut D) {
-        // Include the precision and scale in the hash
-        digest.update([precision]);
-        digest.update(scale.to_le_bytes());
     }
 
     /// Internal recursive function to extract field names from nested structs effectively flattening the schema
@@ -648,33 +635,290 @@ mod tests {
 
     use arrow::{
         array::{
-            ArrayRef, BinaryArray, BooleanArray, Int32Array, Int64Array, LargeBinaryArray,
-            LargeStringArray, ListArray, RecordBatch, StringArray, StructArray,
-            Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
+            ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal32Array,
+            Decimal64Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
+            Int8Array, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, RecordBatch,
+            StringArray, StructArray, Time32MillisecondArray, Time32SecondArray,
+            Time64MicrosecondArray, Time64NanosecondArray, UInt16Array, UInt32Array, UInt64Array,
+            UInt8Array,
         },
         datatypes::Int32Type,
     };
-    use arrow_schema::{DataType, Field, Schema};
+    use arrow_schema::{DataType, Field, Schema, TimeUnit};
     use hex::encode;
+    use indoc::indoc;
     use pretty_assertions::assert_eq;
     use sha2::Sha256;
 
     use crate::arrow_digester::ArrowDigester;
     use arrow::array::Decimal128Array;
 
+    #[expect(clippy::too_many_lines, reason = "Comprehensive schema test")]
     #[test]
-    fn schema_only() {
+    fn schema() {
         let schema = Schema::new(vec![
-            Field::new("col1", DataType::Int32, false),
-            Field::new("col2", DataType::Utf8, true),
+            Field::new("bool", DataType::Boolean, true),
+            Field::new("int8", DataType::Int8, false),
+            Field::new("uint8", DataType::UInt8, false),
+            Field::new("int16", DataType::Int16, false),
+            Field::new("uint16", DataType::UInt16, false),
+            Field::new("int32", DataType::Int32, false),
+            Field::new("uint32", DataType::UInt32, false),
+            Field::new("int64", DataType::Int64, false),
+            Field::new("uint64", DataType::UInt64, false),
+            Field::new("float32", DataType::Float32, false),
+            Field::new("float64", DataType::Float64, false),
+            Field::new("date32", DataType::Date32, false),
+            Field::new("date64", DataType::Date64, false),
+            Field::new("time32_second", DataType::Time32(TimeUnit::Second), false),
+            Field::new(
+                "time32_millis",
+                DataType::Time32(TimeUnit::Millisecond),
+                false,
+            ),
+            Field::new(
+                "time64_micro",
+                DataType::Time64(TimeUnit::Microsecond),
+                false,
+            ),
+            Field::new("time64_nano", DataType::Time64(TimeUnit::Nanosecond), false),
+            Field::new("binary", DataType::Binary, true),
+            Field::new("large_binary", DataType::LargeBinary, true),
+            Field::new("utf8", DataType::Utf8, true),
+            Field::new("large_utf8", DataType::LargeUtf8, true),
+            Field::new(
+                "list",
+                DataType::List(Box::new(Field::new("item", DataType::Int32, true)).into()),
+                true,
+            ),
+            Field::new(
+                "large_list",
+                DataType::LargeList(Box::new(Field::new("item", DataType::Int32, true)).into()),
+                true,
+            ),
+            Field::new("decimal32", DataType::Decimal32(9, 2), true),
+            Field::new("decimal64", DataType::Decimal64(18, 3), true),
+            Field::new("decimal128", DataType::Decimal128(38, 5), true),
         ]);
 
-        let digester = ArrowDigester::<Sha256>::new(schema);
-        let hash = digester.finalize();
+        // Serialize the schema and covert it over to pretty json for comparison
+        let compact_json: serde_json::Value =
+            serde_json::from_str(&ArrowDigester::<Sha256>::serialized_schema(&schema)).unwrap();
+        let pretty_json = serde_json::to_string_pretty(&compact_json).unwrap();
 
         assert_eq!(
-            encode(hash),
-            "95eb6c962dd0b61704bc0a29347ff91d3024e52adc31e23b33d843c539715abc"
+            pretty_json,
+            indoc! {r#"
+{
+  "binary": [
+    "Field { \"binary\": nullable Binary }",
+    "Binary"
+  ],
+  "bool": [
+    "Field { \"bool\": nullable Boolean }",
+    "Boolean"
+  ],
+  "date32": [
+    "Field { \"date32\": Date32 }",
+    "Date32"
+  ],
+  "date64": [
+    "Field { \"date64\": Date64 }",
+    "Date64"
+  ],
+  "decimal128": [
+    "Field { \"decimal128\": nullable Decimal128(38, 5) }",
+    {
+      "Decimal128": [
+        38,
+        5
+      ]
+    }
+  ],
+  "decimal32": [
+    "Field { \"decimal32\": nullable Decimal32(9, 2) }",
+    {
+      "Decimal32": [
+        9,
+        2
+      ]
+    }
+  ],
+  "decimal64": [
+    "Field { \"decimal64\": nullable Decimal64(18, 3) }",
+    {
+      "Decimal64": [
+        18,
+        3
+      ]
+    }
+  ],
+  "float32": [
+    "Field { \"float32\": Float32 }",
+    "Float32"
+  ],
+  "float64": [
+    "Field { \"float64\": Float64 }",
+    "Float64"
+  ],
+  "int16": [
+    "Field { \"int16\": Int16 }",
+    "Int16"
+  ],
+  "int32": [
+    "Field { \"int32\": Int32 }",
+    "Int32"
+  ],
+  "int64": [
+    "Field { \"int64\": Int64 }",
+    "Int64"
+  ],
+  "int8": [
+    "Field { \"int8\": Int8 }",
+    "Int8"
+  ],
+  "large_binary": [
+    "Field { \"large_binary\": nullable LargeBinary }",
+    "LargeBinary"
+  ],
+  "large_list": [
+    "Field { \"large_list\": nullable LargeList(nullable Int32) }",
+    {
+      "LargeList": {
+        "data_type": "Int32",
+        "dict_id": 0,
+        "dict_is_ordered": false,
+        "metadata": {},
+        "name": "item",
+        "nullable": true
+      }
+    }
+  ],
+  "large_utf8": [
+    "Field { \"large_utf8\": nullable LargeUtf8 }",
+    "LargeUtf8"
+  ],
+  "list": [
+    "Field { \"list\": nullable List(nullable Int32) }",
+    {
+      "List": {
+        "data_type": "Int32",
+        "dict_id": 0,
+        "dict_is_ordered": false,
+        "metadata": {},
+        "name": "item",
+        "nullable": true
+      }
+    }
+  ],
+  "time32_millis": [
+    "Field { \"time32_millis\": Time32(ms) }",
+    {
+      "Time32": "Millisecond"
+    }
+  ],
+  "time32_second": [
+    "Field { \"time32_second\": Time32(s) }",
+    {
+      "Time32": "Second"
+    }
+  ],
+  "time64_micro": [
+    "Field { \"time64_micro\": Time64(µs) }",
+    {
+      "Time64": "Microsecond"
+    }
+  ],
+  "time64_nano": [
+    "Field { \"time64_nano\": Time64(ns) }",
+    {
+      "Time64": "Nanosecond"
+    }
+  ],
+  "uint16": [
+    "Field { \"uint16\": UInt16 }",
+    "UInt16"
+  ],
+  "uint32": [
+    "Field { \"uint32\": UInt32 }",
+    "UInt32"
+  ],
+  "uint64": [
+    "Field { \"uint64\": UInt64 }",
+    "UInt64"
+  ],
+  "uint8": [
+    "Field { \"uint8\": UInt8 }",
+    "UInt8"
+  ],
+  "utf8": [
+    "Field { \"utf8\": nullable Utf8 }",
+    "Utf8"
+  ]
+}"#}
+        );
+
+        // Empty Table Hashing Check
+
+        assert_eq!(
+            encode(ArrowDigester::<Sha256>::new(schema.clone()).finalize()),
+            "a42e35f6623d86b72350bf0bb74b97781946df45423f192c397d435c254bc71e"
+        );
+
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(BooleanArray::from(vec![Some(true)])),
+                Arc::new(Int8Array::from(vec![1_i8])),
+                Arc::new(UInt8Array::from(vec![1_u8])),
+                Arc::new(Int16Array::from(vec![100_i16])),
+                Arc::new(UInt16Array::from(vec![100_u16])),
+                Arc::new(Int32Array::from(vec![1000_i32])),
+                Arc::new(UInt32Array::from(vec![1000_u32])),
+                Arc::new(Int64Array::from(vec![100_000_i64])),
+                Arc::new(UInt64Array::from(vec![100_000_u64])),
+                Arc::new(Float32Array::from(vec![1.5_f32])),
+                Arc::new(Float64Array::from(vec![1.5_f64])),
+                Arc::new(Date32Array::from(vec![18993_i32])),
+                Arc::new(Date64Array::from(vec![1_640_995_200_000_i64])),
+                Arc::new(Time32SecondArray::from(vec![3600_i32])),
+                Arc::new(Time32MillisecondArray::from(vec![3_600_000_i32])),
+                Arc::new(Time64MicrosecondArray::from(vec![3_600_000_000_i64])),
+                Arc::new(Time64NanosecondArray::from(vec![3_600_000_000_000_i64])),
+                Arc::new(BinaryArray::from(vec![Some(b"data1".as_ref())])),
+                Arc::new(LargeBinaryArray::from(vec![Some(b"large1".as_ref())])),
+                Arc::new(StringArray::from(vec![Some("text1")])),
+                Arc::new(LargeStringArray::from(vec![Some("large_text1")])),
+                Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+                    Some(vec![Some(1), Some(2)]),
+                ])),
+                Arc::new(LargeListArray::from_iter_primitive::<Int32Type, _, _>(
+                    vec![Some(vec![Some(5), Some(6)])],
+                )),
+                Arc::new(
+                    Decimal32Array::from_iter(vec![Some(12345)])
+                        .with_precision_and_scale(9, 2)
+                        .unwrap(),
+                ),
+                Arc::new(
+                    Decimal64Array::from_iter(vec![Some(123_456_789_012)])
+                        .with_precision_and_scale(18, 3)
+                        .unwrap(),
+                ),
+                Arc::new(
+                    Decimal128Array::from_iter(vec![Some(
+                        123_456_789_012_345_678_901_234_567_890_i128,
+                    )])
+                    .with_precision_and_scale(38, 5)
+                    .unwrap(),
+                ),
+            ],
+        )
+        .unwrap();
+        // Hash the record batch
+        assert_eq!(
+            encode(ArrowDigester::<Sha256>::hash_record_batch(&batch)),
+            "da0d7d3d76a47e88648e3a1160a5d2432647f0769e08b42315533163c36b3eb0"
         );
     }
 
@@ -684,7 +928,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&bool_array));
         assert_eq!(
             hash,
-            "d7b7a73916d3f0c693ebcfa94fe2eee163d31a38ba8fe44ef81c5ffbff50c9be"
+            "f9abeb37d9395f359b48a379f0a8467c572b19ecc6cae9fa85e1bf627a52a8f3"
         );
     }
 
@@ -695,7 +939,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&int_array));
         assert_eq!(
             hash,
-            "bb36e54f5e2d937a05bb716a8d595f1c8da67fda48feeb7ab5b071a69e63d648"
+            "27f2411e6839eb1e3fe706ac3f01e704c7b46357360fb2ddb8a08ec98e8ba4fa"
         );
     }
 
@@ -706,7 +950,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&time_array));
         assert_eq!(
             hash,
-            "b5d70eca0650399a9b00440e3cd9985e58b0f033d446bdd5947f96a62397002a"
+            "9000b74aa80f685103a8cafc7e113aa8f33ccc0c94ea3713318d2cc2f3436baa"
         );
     }
 
@@ -717,7 +961,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&time_array));
         assert_eq!(
             hash,
-            "1f0847660ea421c266f226293d2f0c54ea5de0c168ac7e4bebfabf6d348a6d18"
+            "95f12143d789f364a3ed52f7300f8f91dc21fbe00c34aed798ca8fd54182dea3"
         );
     }
 
@@ -744,7 +988,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&binary_array));
         assert_eq!(
             hash,
-            "2dadcaf793c1878ffa22eb2d5d746e27b648d638e4e344e565a23840a957b660"
+            "466801efd880d2acecd6c78915b5c2a51476870f9116912834d79de43a000071"
         );
 
         // Test large binary array with same data to ensure consistency
@@ -755,7 +999,7 @@ mod tests {
             Some(b"".as_ref()),
         ]);
 
-        assert_eq!(
+        assert_ne!(
             hex::encode(ArrowDigester::<Sha256>::hash_array(&large_binary_array)),
             hash
         );
@@ -808,14 +1052,14 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&string_array));
         assert_eq!(
             hash,
-            "bde5c268d835b1ea9ea8b2a058f35f978d1c95a071b71fc5051a8a21f717e77e"
+            "14a2d2eaf535b6e78fbf1d58ae93accce424eafd20fa449eff8acefc47903d3d"
         );
 
         // Test large string array with same data to ensure consistency
         let large_string_array =
             LargeStringArray::from(vec![Some("hello"), None, Some("world"), Some("")]);
 
-        assert_eq!(
+        assert_ne!(
             hex::encode(ArrowDigester::<Sha256>::hash_array(&large_string_array)),
             hash
         );
@@ -834,7 +1078,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::<Sha256>::hash_array(&list_array));
         assert_eq!(
             hash,
-            "d30c8845c58f71bcec4910c65a91328af2cc86d26001662270da3a3d5222dd36"
+            "1a8d06635dec40079b979ce439f662c1fb6456bb7e02bbf7d8e8048c61498faf"
         );
     }
 
@@ -849,7 +1093,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::<Sha256>::hash_array(&decimal32_array)),
-            "9bafa8b4e342aa48ed6d25f3e7ca62ec849108395a93739252bdb329d72ec58a"
+            "ef29250615f9d6ab34672c3b11dfa2dcda6e8e6164bc55899c13887f17705f5d"
         );
 
         // Test Decimal64 (precision 10-18)
@@ -863,7 +1107,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             encode(ArrowDigester::<Sha256>::hash_array(&decimal64_array)),
-            "d2730c9222bd211d5c7cfae9fbe604728bb6e75aa0a96383daec511b20b63796"
+            "efa4ed72641051233889c07775366cbf2e56eb4b0fcfd46653f5741e81786f08"
         );
 
         // Test Decimal128 (precision 19-38)
@@ -877,7 +1121,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex::encode(ArrowDigester::<Sha256>::hash_array(&decimal128_array)),
-            "d2a1a2d8c87193032d46a541405e1bf60124d08a7c431ce3fe55f26508b400f3"
+            "55cc4d81a048dbca001ca8581673a5a6c93efd870d358df211a545c2af9b658d"
         );
     }
 
@@ -953,7 +1197,7 @@ mod tests {
         digester.update(&batch2);
         assert_eq!(
             encode(digester.finalize()),
-            "6042a984d52c98d660832763a997eb8d79694005aa46ca89bac15a2240ee46e7"
+            "37954b3edd169c7a9e65604c191caf6a307940357305d182a5d2168047e9cc51"
         );
     }
 
@@ -1025,7 +1269,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "28a12e93525ceb84554fb0ce564d14b14c537b9d0d6b2bf13a583170d18f41fb"
+            "b7faf50f1328ec80b575e018c121eed9d0e7e84ad72645499ebc8667e64199a7"
         );
     }
 }
