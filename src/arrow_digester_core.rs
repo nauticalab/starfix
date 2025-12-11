@@ -473,8 +473,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     }
                 } else {
                     // All valid, therefore we can extend the bit vector with all true values
-                    let len = array.len().checked_sub(1).expect("Array length underflow");
-                    null_bit_vec.extend(repeat_n(true, len));
+                    null_bit_vec.extend(repeat_n(true, array.len()));
 
                     // Deal with the data
                     for i in 0..array.len() {
@@ -620,10 +619,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             }
             None => {
                 // All valid, therefore we can extend the bit vector with all true values
-                null_bit_vec.extend(repeat_n(
-                    true,
-                    array.len().checked_sub(1).expect("Array length underflow"),
-                ));
+                null_bit_vec.extend(repeat_n(true, array.len()));
             }
         }
     }
@@ -919,7 +915,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "e32c1f0981ee262622e0e91a5ea99210a085b62d6025d70eb1ee074096a151dd"
+            "36ffc4d4c072ac0d2470dfa12a9dab10eaecd932a25872aca8de173bf51baa15"
         );
     }
 }

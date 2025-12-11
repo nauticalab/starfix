@@ -128,7 +128,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "0000019972058c784f11f63a1d49998a79c00616b0f0a34b9774bbc7e2a3247df709ca"
+            "000001ac720bed7fb1d696d5626705dc7602d14cfe974a3297cc28c3cb8b8e9a62601a"
         );
     }
 
@@ -288,7 +288,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "0000011a8d06635dec40079b979ce439f662c1fb6456bb7e02bbf7d8e8048c61498faf"
+            "000001f654be5f0ef89807feba9483072190b7d26964e535cd7c522706218df9c3c015"
         );
     }
 
@@ -456,6 +456,58 @@ mod tests {
         assert_ne!(
             hash_nullable, hash_non_nullable,
             "Nullable and non-nullable schemas with same data types should produce different hashes"
+        );
+    }
+
+    #[test]
+    fn batches_vs_single_hash_produces_same_result() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("value", DataType::Float64, true),
+        ]));
+
+        // Create two batches with data
+        let batch1 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3])),
+                Arc::new(Float64Array::from(vec![1.1, 2.2, 3.3])),
+            ],
+        )
+        .unwrap();
+
+        let batch2 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from(vec![4, 5, 6])),
+                Arc::new(Float64Array::from(vec![4.4, 5.5, 6.6])),
+            ],
+        )
+        .unwrap();
+
+        // Hash batches incrementally
+        let mut digester_batches = ArrowDigester::new((*schema).clone());
+        digester_batches.update(&batch1);
+        digester_batches.update(&batch2);
+        let hash_batches = encode(digester_batches.finalize());
+
+        // Hash combined batch all at once
+        let combined_batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5, 6])),
+                Arc::new(Float64Array::from(vec![1.1, 2.2, 3.3, 4.4, 5.5, 6.6])),
+            ],
+        )
+        .unwrap();
+
+        let mut digester_single = ArrowDigester::new((*schema).clone());
+        digester_single.update(&combined_batch);
+        let hash_single = encode(digester_single.finalize());
+
+        assert_eq!(
+            hash_batches, hash_single,
+            "Hashing multiple batches incrementally should produce the same result as hashing one combined batch"
         );
     }
 }
