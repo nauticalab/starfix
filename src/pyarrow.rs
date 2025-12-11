@@ -1,12 +1,10 @@
+use crate::ArrowDigester;
 use arrow::array::{RecordBatch, StructArray};
 use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
-use sha2::Sha256;
-
-use crate::arrow_digester::ArrowDigester;
 
 /// Process an Arrow table via C Data Interface
 ///
-/// # Safety
+/// # Panics
 /// The pointers must be valid Arrow C Data Interface structs from Python's pyarrow
 
 #[uniffi::export]
@@ -30,5 +28,5 @@ pub fn process_arrow_table(array_ptr: u64, schema_ptr: u64) -> Vec<u8> {
     };
 
     // Hash the table
-    ArrowDigester::<Sha256>::hash_record_batch(&RecordBatch::from(StructArray::from(array_data)))
+    ArrowDigester::hash_record_batch(&RecordBatch::from(StructArray::from(array_data)))
 }

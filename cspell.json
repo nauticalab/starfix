@@ -6,7 +6,8 @@
         "uniffi",
         "uids",
         "bitvec",
-        "indoc"
+        "indoc",
+        "starfix"
     ],
     "ignoreWords": [],
     "useGitignore": false,
