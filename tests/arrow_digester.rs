@@ -72,7 +72,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(schema.clone()).finalize()),
-            "c7bc0a0c84aca684adbec21f8cb481781332fc91a205165a6c74c3a63a80e9b2"
+            "000001c7bc0a0c84aca684adbec21f8cb481781332fc91a205165a6c74c3a63a80e9b2"
         );
 
         let batch = RecordBatch::try_new(
@@ -128,7 +128,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "9972058c784f11f63a1d49998a79c00616b0f0a34b9774bbc7e2a3247df709ca"
+            "0000019972058c784f11f63a1d49998a79c00616b0f0a34b9774bbc7e2a3247df709ca"
         );
     }
 
@@ -138,7 +138,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&bool_array));
         assert_eq!(
             hash,
-            "f9abeb37d9395f359b48a379f0a8467c572b19ecc6cae9fa85e1bf627a52a8f3"
+            "000001f9abeb37d9395f359b48a379f0a8467c572b19ecc6cae9fa85e1bf627a52a8f3"
         );
     }
 
@@ -149,7 +149,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&int_array));
         assert_eq!(
             hash,
-            "27f2411e6839eb1e3fe706ac3f01e704c7b46357360fb2ddb8a08ec98e8ba4fa"
+            "00000127f2411e6839eb1e3fe706ac3f01e704c7b46357360fb2ddb8a08ec98e8ba4fa"
         );
     }
 
@@ -160,7 +160,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&time_array));
         assert_eq!(
             hash,
-            "9000b74aa80f685103a8cafc7e113aa8f33ccc0c94ea3713318d2cc2f3436baa"
+            "0000019000b74aa80f685103a8cafc7e113aa8f33ccc0c94ea3713318d2cc2f3436baa"
         );
     }
 
@@ -171,7 +171,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&time_array));
         assert_eq!(
             hash,
-            "95f12143d789f364a3ed52f7300f8f91dc21fbe00c34aed798ca8fd54182dea3"
+            "00000195f12143d789f364a3ed52f7300f8f91dc21fbe00c34aed798ca8fd54182dea3"
         );
     }
 
@@ -198,7 +198,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&binary_array));
         assert_eq!(
             hash,
-            "466801efd880d2acecd6c78915b5c2a51476870f9116912834d79de43a000071"
+            "000001466801efd880d2acecd6c78915b5c2a51476870f9116912834d79de43a000071"
         );
 
         // Test large binary array with same data to ensure consistency
@@ -262,7 +262,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&string_array));
         assert_eq!(
             hash,
-            "14a2d2eaf535b6e78fbf1d58ae93accce424eafd20fa449eff8acefc47903d3d"
+            "00000114a2d2eaf535b6e78fbf1d58ae93accce424eafd20fa449eff8acefc47903d3d"
         );
 
         // Test large string array with same data to ensure consistency
@@ -288,7 +288,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "1a8d06635dec40079b979ce439f662c1fb6456bb7e02bbf7d8e8048c61498faf"
+            "0000011a8d06635dec40079b979ce439f662c1fb6456bb7e02bbf7d8e8048c61498faf"
         );
     }
 
@@ -303,7 +303,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::hash_array(&decimal32_array)),
-            "ef29250615f9d6ab34672c3b11dfa2dcda6e8e6164bc55899c13887f17705f5d"
+            "000001ef29250615f9d6ab34672c3b11dfa2dcda6e8e6164bc55899c13887f17705f5d"
         );
 
         // Test Decimal64 (precision 10-18)
@@ -317,7 +317,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             encode(ArrowDigester::hash_array(&decimal64_array)),
-            "efa4ed72641051233889c07775366cbf2e56eb4b0fcfd46653f5741e81786f08"
+            "000001efa4ed72641051233889c07775366cbf2e56eb4b0fcfd46653f5741e81786f08"
         );
 
         // Test Decimal128 (precision 19-38)
@@ -331,7 +331,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&decimal128_array)),
-            "55cc4d81a048dbca001ca8581673a5a6c93efd870d358df211a545c2af9b658d"
+            "00000155cc4d81a048dbca001ca8581673a5a6c93efd870d358df211a545c2af9b658d"
         );
     }
 
@@ -363,10 +363,15 @@ mod tests {
         );
 
         // Hash both record batches
-        assert_eq!(
-            encode(ArrowDigester::hash_record_batch(batch1.as_ref().unwrap())),
+        let hash1 = format!(
+            "000001{}",
+            encode(ArrowDigester::hash_record_batch(batch1.as_ref().unwrap()))
+        );
+        let hash2 = format!(
+            "000001{}",
             encode(ArrowDigester::hash_record_batch(batch2.as_ref().unwrap()))
         );
+        assert_eq!(hash1, hash2);
     }
 
     #[test]
@@ -403,7 +408,7 @@ mod tests {
         digester.update(&batch2);
         assert_eq!(
             encode(digester.finalize()),
-            "37954b3edd169c7a9e65604c191caf6a307940357305d182a5d2168047e9cc51"
+            "00000137954b3edd169c7a9e65604c191caf6a307940357305d182a5d2168047e9cc51"
         );
     }
 

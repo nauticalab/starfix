@@ -1,5 +1,4 @@
-//! Intuitive compute pipeline orchestration with reproducibility, performance, and scalability in
-//! mind.
+/// Crate for
 extern crate uniffi as uniffi_external;
 uniffi_external::setup_scaffolding!();
 
@@ -9,6 +8,7 @@ use sha2::Sha256;
 
 use crate::arrow_digester_core::ArrowDigesterCore;
 
+const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Version 1.0
 /// Maps `arrow_digester_core` function to a `sha_256` digester + versioning
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
@@ -29,17 +29,23 @@ impl ArrowDigester {
 
     /// Consume the digester and finalize the hash computation
     pub fn finalize(self) -> Vec<u8> {
-        self.digester.finalize()
+        Self::prepend_version_bytes(self.digester.finalize())
     }
 
     /// Function to hash an Array in one go
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
-        ArrowDigesterCore::<Sha256>::hash_array(array)
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_array(array))
     }
 
     /// Function to hash a complete `RecordBatch` in one go
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
-        ArrowDigesterCore::<Sha256>::hash_record_batch(record_batch)
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(record_batch))
+    }
+
+    fn prepend_version_bytes(digest: Vec<u8>) -> Vec<u8> {
+        let mut complete_hash = VERSION_BYTES.clone().to_vec();
+        complete_hash.extend(digest);
+        complete_hash
     }
 }
 
