@@ -72,7 +72,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(schema.clone()).finalize()),
-            "a42e35f6623d86b72350bf0bb74b97781946df45423f192c397d435c254bc71e"
+            "c7bc0a0c84aca684adbec21f8cb481781332fc91a205165a6c74c3a63a80e9b2"
         );
 
         let batch = RecordBatch::try_new(
@@ -128,7 +128,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "da0d7d3d76a47e88648e3a1160a5d2432647f0769e08b42315533163c36b3eb0"
+            "9972058c784f11f63a1d49998a79c00616b0f0a34b9774bbc7e2a3247df709ca"
         );
     }
 

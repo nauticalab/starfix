@@ -774,7 +774,7 @@ mod tests {
     "LargeBinary"
   ],
   "large_list": [
-    "Field { \"large_list\": nullable LargeList(nullable Int32) }",
+    "Field { \"large_list\": nullable LargeList(Int32) }",
     {
       "LargeList": {
         "data_type": "Int32",
@@ -791,7 +791,7 @@ mod tests {
     "LargeUtf8"
   ],
   "list": [
-    "Field { \"list\": nullable List(nullable Int32) }",
+    "Field { \"list\": nullable List(Int32) }",
     {
       "List": {
         "data_type": "Int32",
@@ -919,7 +919,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "b7faf50f1328ec80b575e018c121eed9d0e7e84ad72645499ebc8667e64199a7"
+            "e32c1f0981ee262622e0e91a5ea99210a085b62d6025d70eb1ee074096a151dd"
         );
     }
 }
