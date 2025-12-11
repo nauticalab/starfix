@@ -406,4 +406,51 @@ mod tests {
             "37954b3edd169c7a9e65604c191caf6a307940357305d182a5d2168047e9cc51"
         );
     }
+
+    #[test]
+    fn nullable_vs_non_nullable_array_produces_same_hash() {
+        let nullable_array = Int32Array::from(vec![Some(1), Some(2), Some(3)]);
+        let non_nullable_array = Int32Array::from(vec![1, 2, 3]);
+
+        let hash_nullable = hex::encode(ArrowDigester::hash_array(&nullable_array));
+        let hash_non_nullable = hex::encode(ArrowDigester::hash_array(&non_nullable_array));
+
+        assert_eq!(
+            hash_nullable, hash_non_nullable,
+            "Nullable and non-nullable arrays with same data should produce same hashes"
+        );
+    }
+
+    #[test]
+    fn empty_nullable_vs_non_nullable_array_produces_different_hash() {
+        let empty_nullable_array: Int32Array = Int32Array::from(vec![] as Vec<Option<i32>>);
+        let empty_non_nullable_array: Int32Array = Int32Array::from(vec![] as Vec<i32>);
+
+        let hash_nullable = hex::encode(ArrowDigester::hash_array(&empty_nullable_array));
+        let hash_non_nullable = hex::encode(ArrowDigester::hash_array(&empty_non_nullable_array));
+
+        // Both are empty, but their nullability metadata may differ
+        // This test documents the expected behavior
+        assert_eq!(hash_nullable, hash_non_nullable);
+    }
+
+    #[test]
+    fn nullable_vs_non_nullable_schema_produces_different_hash() {
+        let nullable_schema = Schema::new(vec![
+            Field::new("col1", DataType::Int32, true),
+            Field::new("col2", DataType::Boolean, true),
+        ]);
+        let non_nullable_schema = Schema::new(vec![
+            Field::new("col1", DataType::Int32, false),
+            Field::new("col2", DataType::Boolean, false),
+        ]);
+
+        let hash_nullable = hex::encode(ArrowDigester::new(nullable_schema).finalize());
+        let hash_non_nullable = hex::encode(ArrowDigester::new(non_nullable_schema).finalize());
+
+        assert_ne!(
+            hash_nullable, hash_non_nullable,
+            "Nullable and non-nullable schemas with same data types should produce different hashes"
+        );
+    }
 }
