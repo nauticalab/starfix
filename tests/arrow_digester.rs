@@ -510,4 +510,63 @@ mod tests {
             "Hashing multiple batches incrementally should produce the same result as hashing one combined batch"
         );
     }
+
+    #[test]
+    fn batches_with_nulls_vs_single_hash_produces_same_result() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, true),
+            Field::new("value", DataType::Float64, true),
+        ]));
+
+        // Create two batches: first all nulls, second with values
+        let batch1 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from(vec![None, None, None])),
+                Arc::new(Float64Array::from(vec![None, None, None])),
+            ],
+        )
+        .unwrap();
+
+        let batch2 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from(vec![Some(1), Some(2), Some(3)])),
+                Arc::new(Float64Array::from(vec![Some(1.1), Some(2.2), Some(3.3)])),
+            ],
+        )
+        .unwrap();
+
+        // Hash batches incrementally
+        let mut digester_batches = ArrowDigester::new((*schema).clone());
+        digester_batches.update(&batch1);
+        digester_batches.update(&batch2);
+        let hash_batches = encode(digester_batches.finalize());
+
+        // Hash combined batch all at once
+        let combined_batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from(vec![None, None, None, Some(1), Some(2), Some(3)])),
+                Arc::new(Float64Array::from(vec![
+                    None,
+                    None,
+                    None,
+                    Some(1.1),
+                    Some(2.2),
+                    Some(3.3),
+                ])),
+            ],
+        )
+        .unwrap();
+
+        let mut digester_single = ArrowDigester::new((*schema).clone());
+        digester_single.update(&combined_batch);
+        let hash_single = encode(digester_single.finalize());
+
+        assert_eq!(
+            hash_batches, hash_single,
+            "Hashing batches where first is all nulls should produce same result as combined batch"
+        );
+    }
 }
