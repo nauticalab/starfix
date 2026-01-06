@@ -8,7 +8,7 @@ use sha2::Sha256;
 
 use crate::arrow_digester_core::ArrowDigesterCore;
 
-const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Version 1.0
+const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Version 0.0.1
 /// Maps `arrow_digester_core` function to a `sha_256` digester + versioning
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
@@ -51,3 +51,5 @@ impl ArrowDigester {
 
 pub(crate) mod arrow_digester_core;
 pub mod pyarrow;
+
+// Write a test to check that int32 digest is consistent
