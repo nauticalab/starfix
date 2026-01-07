@@ -513,7 +513,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                         for i in 0..array.len() {
                             if null_buf.is_valid(i) {
                                 let value = array.value(i);
-                                data_digest.update((value.len() as u32).to_le_bytes());
+                                data_digest.update((value.len() as u64).to_le_bytes());
                                 data_digest.update(value.as_bytes());
                             } else {
                                 data_digest.update(NULL_BYTES);
@@ -523,7 +523,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     None => {
                         for i in 0..array.len() {
                             let value = array.value(i);
-                            data_digest.update((value.len() as u32).to_le_bytes());
+                            data_digest.update((value.len() as u64).to_le_bytes());
                             data_digest.update(value.as_bytes());
                         }
                     }
