@@ -547,7 +547,14 @@ mod tests {
         let combined_batch = RecordBatch::try_new(
             Arc::clone(&schema),
             vec![
-                Arc::new(Int32Array::from(vec![None, None, None, Some(1), Some(2), Some(3)])),
+                Arc::new(Int32Array::from(vec![
+                    None,
+                    None,
+                    None,
+                    Some(1),
+                    Some(2),
+                    Some(3),
+                ])),
                 Arc::new(Float64Array::from(vec![
                     None,
                     None,
