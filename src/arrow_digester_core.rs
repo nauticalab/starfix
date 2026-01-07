@@ -21,11 +21,13 @@ const NULL_BYTES: &[u8] = b"NULL";
 
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
+#[derive(Clone)]
 enum DigestBufferType<D: Digest> {
     NonNullable(D),
     Nullable(BitVec, D), // Where first digest is for the bull bits, while the second is for the actual data
 }
 
+#[derive(Clone)]
 pub struct ArrowDigesterCore<D: Digest> {
     schema: Schema,
     schema_digest: Vec<u8>,

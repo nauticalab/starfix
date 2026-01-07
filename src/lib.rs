@@ -9,7 +9,9 @@ use sha2::Sha256;
 use crate::arrow_digester_core::ArrowDigesterCore;
 
 const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Version 0.0.1
+
 /// Maps `arrow_digester_core` function to a `sha_256` digester + versioning
+#[derive(Clone)]
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
 }
@@ -40,6 +42,11 @@ impl ArrowDigester {
     /// Function to hash a complete `RecordBatch` in one go
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
         Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(record_batch))
+    }
+
+    /// Function to hash schema only
+    pub fn hash_schema(schema: &Schema) -> Vec<u8> {
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_schema(schema))
     }
 
     fn prepend_version_bytes(digest: Vec<u8>) -> Vec<u8> {
