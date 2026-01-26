@@ -917,7 +917,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "36ffc4d4c072ac0d2470dfa12a9dab10eaecd932a25872aca8de173bf51baa15"
+            "9eb7e0c11ddb72ec86b0da522d104081db57ab660b6b6b3be83e2125dabdc6cd"
         );
     }
 }

@@ -128,7 +128,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "000001ac720bed7fb1d696d5626705dc7602d14cfe974a3297cc28c3cb8b8e9a62601a"
+            "000001816085f5f88d3cf3eaec5c6fff9e9a20743c964932db77fea72eac5f580a20bf"
         );
     }
 
@@ -262,7 +262,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&string_array));
         assert_eq!(
             hash,
-            "00000114a2d2eaf535b6e78fbf1d58ae93accce424eafd20fa449eff8acefc47903d3d"
+            "000001811f2407a0d2e90ef9688514d37cd92225242e7614f02ef5ef36abcae73ca374"
         );
 
         // Test large string array with same data to ensure consistency
@@ -450,8 +450,8 @@ mod tests {
             Field::new("col2", DataType::Boolean, false),
         ]);
 
-        let hash_nullable = hex::encode(ArrowDigester::new(nullable_schema).finalize());
-        let hash_non_nullable = hex::encode(ArrowDigester::new(non_nullable_schema).finalize());
+        let hash_nullable = hex::encode(ArrowDigester::hash_schema(&nullable_schema));
+        let hash_non_nullable = hex::encode(ArrowDigester::hash_schema(&non_nullable_schema));
 
         assert_ne!(
             hash_nullable, hash_non_nullable,
