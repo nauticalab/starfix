@@ -488,10 +488,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "String lengths from Arrow offsets are bounded"
-    )]
     fn hash_string_array(
         array: &GenericStringArray<impl OffsetSizeTrait>,
         digest: &mut DigestBufferType<D>,
@@ -637,13 +633,11 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
     use hex::encode;
-    use indoc::indoc;
     use pretty_assertions::assert_eq;
     use sha2::Sha256;
 
     use crate::arrow_digester_core::ArrowDigesterCore;
 
-    #[expect(clippy::too_many_lines, reason = "Comprehensive schema test")]
     #[test]
     fn schema() {
         let schema = Schema::new(vec![
@@ -694,158 +688,12 @@ mod tests {
         // Serialize the schema and covert it over to pretty json for comparison
         let compact_json: serde_json::Value =
             serde_json::from_str(&ArrowDigesterCore::<Sha256>::serialized_schema(&schema)).unwrap();
-        let pretty_json = serde_json::to_string_pretty(&compact_json).unwrap();
+        let mut pretty_json = serde_json::to_string_pretty(&compact_json).unwrap();
+        pretty_json.push('\n');
 
         assert_eq!(
             pretty_json,
-            indoc! {r#"
-{
-  "binary": [
-    "Field { \"binary\": nullable Binary }",
-    "Binary"
-  ],
-  "bool": [
-    "Field { \"bool\": nullable Boolean }",
-    "Boolean"
-  ],
-  "date32": [
-    "Field { \"date32\": Date32 }",
-    "Date32"
-  ],
-  "date64": [
-    "Field { \"date64\": Date64 }",
-    "Date64"
-  ],
-  "decimal128": [
-    "Field { \"decimal128\": nullable Decimal128(38, 5) }",
-    {
-      "Decimal128": [
-        38,
-        5
-      ]
-    }
-  ],
-  "decimal32": [
-    "Field { \"decimal32\": nullable Decimal32(9, 2) }",
-    {
-      "Decimal32": [
-        9,
-        2
-      ]
-    }
-  ],
-  "decimal64": [
-    "Field { \"decimal64\": nullable Decimal64(18, 3) }",
-    {
-      "Decimal64": [
-        18,
-        3
-      ]
-    }
-  ],
-  "float32": [
-    "Field { \"float32\": Float32 }",
-    "Float32"
-  ],
-  "float64": [
-    "Field { \"float64\": Float64 }",
-    "Float64"
-  ],
-  "int16": [
-    "Field { \"int16\": Int16 }",
-    "Int16"
-  ],
-  "int32": [
-    "Field { \"int32\": Int32 }",
-    "Int32"
-  ],
-  "int64": [
-    "Field { \"int64\": Int64 }",
-    "Int64"
-  ],
-  "int8": [
-    "Field { \"int8\": Int8 }",
-    "Int8"
-  ],
-  "large_binary": [
-    "Field { \"large_binary\": nullable LargeBinary }",
-    "LargeBinary"
-  ],
-  "large_list": [
-    "Field { \"large_list\": nullable LargeList(Int32) }",
-    {
-      "LargeList": {
-        "data_type": "Int32",
-        "dict_id": 0,
-        "dict_is_ordered": false,
-        "metadata": {},
-        "name": "item",
-        "nullable": true
-      }
-    }
-  ],
-  "large_utf8": [
-    "Field { \"large_utf8\": nullable LargeUtf8 }",
-    "LargeUtf8"
-  ],
-  "list": [
-    "Field { \"list\": nullable List(Int32) }",
-    {
-      "List": {
-        "data_type": "Int32",
-        "dict_id": 0,
-        "dict_is_ordered": false,
-        "metadata": {},
-        "name": "item",
-        "nullable": true
-      }
-    }
-  ],
-  "time32_millis": [
-    "Field { \"time32_millis\": Time32(ms) }",
-    {
-      "Time32": "Millisecond"
-    }
-  ],
-  "time32_second": [
-    "Field { \"time32_second\": Time32(s) }",
-    {
-      "Time32": "Second"
-    }
-  ],
-  "time64_micro": [
-    "Field { \"time64_micro\": Time64(µs) }",
-    {
-      "Time64": "Microsecond"
-    }
-  ],
-  "time64_nano": [
-    "Field { \"time64_nano\": Time64(ns) }",
-    {
-      "Time64": "Nanosecond"
-    }
-  ],
-  "uint16": [
-    "Field { \"uint16\": UInt16 }",
-    "UInt16"
-  ],
-  "uint32": [
-    "Field { \"uint32\": UInt32 }",
-    "UInt32"
-  ],
-  "uint64": [
-    "Field { \"uint64\": UInt64 }",
-    "UInt64"
-  ],
-  "uint8": [
-    "Field { \"uint8\": UInt8 }",
-    "UInt8"
-  ],
-  "utf8": [
-    "Field { \"utf8\": nullable Utf8 }",
-    "Utf8"
-  ]
-}"#}
+            include_str!("../tests/golden_files/schema_serialization_pretty.json")
         );
     }
 
