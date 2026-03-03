@@ -35,7 +35,7 @@ pub struct ArrowDigesterCore<D: Digest> {
 }
 
 impl<D: Digest> ArrowDigesterCore<D> {
-    /// Create a new instance of `ArrowDigesterCore` with the schema which will be enforce through each update
+    /// Create a new instance of `ArrowDigesterCore` with the schema which will be enforce through each update.
     pub fn new(schema: Schema) -> Self {
         // Hash the schema first
         let schema_digest = Self::hash_schema(&schema);
@@ -54,7 +54,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Hash a record batch and update the internal digests
+    /// Hash a record batch and update the internal digests.
     pub fn update(&mut self, record_batch: &RecordBatch) {
         // Verify schema matches
         assert!(
@@ -105,7 +105,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side
     /// For hash array, we don't have a schema to hash, however we do have field data type.
-    /// So similar to schema, we will hash based on datatype to encode the metadata information into the digest
+    /// So similar to schema, we will hash based on datatype to encode the metadata information into the digest.....
     ///
     /// # Panics
     ///
@@ -133,7 +133,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.finalize().to_vec()
     }
 
-    /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side
+    /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side.
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
         let mut digester = Self::new(record_batch.schema().as_ref().clone());
         digester.update(record_batch);
@@ -141,7 +141,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     }
 
     /// This will consume the `ArrowDigester` and produce the final combined digest where the schema
-    /// digest is fed in first, followed by each field digest in alphabetical order of field names
+    /// digest is fed in first, followed by each field digest in alphabetical order of field names.
     pub fn finalize(self) -> Vec<u8> {
         // Finalize all the sub digest and combine them into a single digest
         let mut final_digest = D::new();
@@ -161,8 +161,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         clippy::big_endian_bytes,
         reason = "Use for bit packing the null_bit_values"
     )]
-    /// Finalize a single field digest into the final digest
-    /// Helpers to reduce code duplication
+    /// Finalize a single field digest into the final digest.
+    /// Helpers to reduce code duplication.
     fn finalize_digest(final_digest: &mut D, digest: DigestBufferType<D>) {
         match digest {
             DigestBufferType::NonNullable(data_digest) => {
@@ -178,27 +178,90 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Serialize the schema into a `BTreeMap` for field name and its digest
+    /// Serialize the schema into a `BTreeMap` for field name and its digest.
     ///
     /// # Panics
     /// This function will panic if JSON serialization of the schema fails.
     fn serialized_schema(schema: &Schema) -> String {
-        let fields_digest = schema
+        let fields_digest: BTreeMap<String, serde_json::Value> = schema
             .fields
             .iter()
-            .map(|field| (field.name(), (field.to_string(), field.data_type())))
-            .collect::<BTreeMap<_, _>>();
+            .map(|field| {
+                let value = serde_json::json!({
+                    "data_type": Self::data_type_to_value(field.data_type()),
+                    "nullable": field.is_nullable(),
+                });
+                (field.name().clone(), Self::sort_json_value(value))
+            })
+            .collect();
 
         serde_json::to_string(&fields_digest).expect("Failed to serialize field_digest to bytes")
     }
 
-    /// Serialize the schema into a `BTreeMap` for field name and its digest
+    /// Convert a `DataType` to a JSON value, recursively converting any inner `Field`
+    /// references to only include `name`, `data_type`, and `nullable`.
+    fn data_type_to_value(data_type: &DataType) -> serde_json::Value {
+        match data_type {
+            DataType::Struct(fields) => {
+                let fields_json: Vec<serde_json::Value> = fields
+                    .iter()
+                    .map(|f| Self::inner_field_to_value(f))
+                    .collect();
+                serde_json::json!({ "Struct": fields_json })
+            }
+            DataType::List(field) => {
+                serde_json::json!({ "List": Self::inner_field_to_value(field) })
+            }
+            DataType::LargeList(field) => {
+                serde_json::json!({ "LargeList": Self::inner_field_to_value(field) })
+            }
+            DataType::FixedSizeList(field, size) => {
+                serde_json::json!({ "FixedSizeList": [Self::inner_field_to_value(field), size] })
+            }
+            DataType::Map(field, sorted) => {
+                serde_json::json!({ "Map": [Self::inner_field_to_value(field), sorted] })
+            }
+            // For all non-nested types, Arrow's default serde is sufficient
+            other => serde_json::to_value(other).expect("Failed to serialize data type"),
+        }
+    }
+
+    /// Convert an inner field (e.g., list item, struct child) to a JSON value
+    /// with only `name`, `data_type`, and `nullable`.
+    fn inner_field_to_value(field: &Field) -> serde_json::Value {
+        serde_json::json!({
+            "name": field.name(),
+            "data_type": Self::data_type_to_value(field.data_type()),
+            "nullable": field.is_nullable(),
+        })
+    }
+
+    /// Recursively sort all JSON object keys for deterministic serialization.
+    fn sort_json_value(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let sorted: serde_json::Map<String, serde_json::Value> = map
+                    .into_iter()
+                    .map(|(k, v)| (k, Self::sort_json_value(v)))
+                    .collect::<BTreeMap<_, _>>()
+                    .into_iter()
+                    .collect();
+                serde_json::Value::Object(sorted)
+            }
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.into_iter().map(Self::sort_json_value).collect())
+            }
+            other => other,
+        }
+    }
+
+    /// Serialize the schema into a `BTreeMap` for field name and its digest.
     pub fn hash_schema(schema: &Schema) -> Vec<u8> {
         // Hash the entire thing to the digest
         D::digest(Self::serialized_schema(schema)).to_vec()
     }
 
-    /// Recursive function to update nested field digests (structs within structs)
+    /// Recursive function to update nested field digests (structs within structs).
     fn update_nested_field(
         field_name_hierarchy: &[&str],
         current_level: usize,
@@ -569,8 +632,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Internal recursive function to extract field names from nested structs effectively flattening the schema
-    /// The format is `parent__child__grandchild__etc`... for nested fields and will be stored in `fields_digest_buffer`
+    /// Internal recursive function to extract field names from nested structs effectively flattening the schema.
+    /// The format is `parent__child__grandchild__etc`... for nested fields and will be stored in `fields_digest_buffer`.
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
@@ -638,51 +701,105 @@ mod tests {
 
     use crate::arrow_digester_core::ArrowDigesterCore;
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Comprehensive test of schema serialization and nested field name extraction"
+    )]
     #[test]
     fn schema() {
         let schema = Schema::new(vec![
-            Field::new("bool", DataType::Boolean, true),
-            Field::new("int8", DataType::Int8, false),
-            Field::new("uint8", DataType::UInt8, false),
-            Field::new("int16", DataType::Int16, false),
-            Field::new("uint16", DataType::UInt16, false),
-            Field::new("int32", DataType::Int32, false),
-            Field::new("uint32", DataType::UInt32, false),
-            Field::new("int64", DataType::Int64, false),
-            Field::new("uint64", DataType::UInt64, false),
-            Field::new("float32", DataType::Float32, false),
-            Field::new("float64", DataType::Float64, false),
-            Field::new("date32", DataType::Date32, false),
-            Field::new("date64", DataType::Date64, false),
-            Field::new("time32_second", DataType::Time32(TimeUnit::Second), false),
+            Field::new("bool_name", DataType::Boolean, true),
+            Field::new("int8_name", DataType::Int8, false),
+            Field::new("uint8_name", DataType::UInt8, false),
+            Field::new("int16_name", DataType::Int16, false),
+            Field::new("uint16_name", DataType::UInt16, false),
+            Field::new("int32_name", DataType::Int32, false),
+            Field::new("uint32_name", DataType::UInt32, false),
+            Field::new("int64_name", DataType::Int64, false),
+            Field::new("uint64_name", DataType::UInt64, false),
+            Field::new("float32_name", DataType::Float32, false),
+            Field::new("float64_name", DataType::Float64, false),
+            Field::new("date32_name", DataType::Date32, false),
+            Field::new("date64_name", DataType::Date64, false),
             Field::new(
-                "time32_millis",
+                "time32_second_name",
+                DataType::Time32(TimeUnit::Second),
+                false,
+            ),
+            Field::new(
+                "time32_millis_name",
                 DataType::Time32(TimeUnit::Millisecond),
                 false,
             ),
             Field::new(
-                "time64_micro",
+                "time64_micro_name",
                 DataType::Time64(TimeUnit::Microsecond),
                 false,
             ),
-            Field::new("time64_nano", DataType::Time64(TimeUnit::Nanosecond), false),
-            Field::new("binary", DataType::Binary, true),
-            Field::new("large_binary", DataType::LargeBinary, true),
-            Field::new("utf8", DataType::Utf8, true),
-            Field::new("large_utf8", DataType::LargeUtf8, true),
             Field::new(
-                "list",
+                "time64_nano_name",
+                DataType::Time64(TimeUnit::Nanosecond),
+                false,
+            ),
+            Field::new("binary_name", DataType::Binary, true),
+            Field::new("large_binary_name", DataType::LargeBinary, true),
+            Field::new("utf8_name", DataType::Utf8, true),
+            Field::new("large_utf8_name", DataType::LargeUtf8, true),
+            Field::new(
+                "list_name",
                 DataType::List(Box::new(Field::new("item", DataType::Int32, true)).into()),
                 true,
             ),
             Field::new(
-                "large_list",
+                "large_list_name",
                 DataType::LargeList(Box::new(Field::new("item", DataType::Int32, true)).into()),
                 true,
             ),
-            Field::new("decimal32", DataType::Decimal32(9, 2), true),
-            Field::new("decimal64", DataType::Decimal64(18, 3), true),
-            Field::new("decimal128", DataType::Decimal128(38, 5), true),
+            Field::new("decimal32_name", DataType::Decimal32(9, 2), true),
+            Field::new("decimal64_name", DataType::Decimal64(18, 3), true),
+            Field::new("decimal128_name", DataType::Decimal128(38, 5), true),
+            Field::new(
+                "struct_name",
+                DataType::Struct(
+                    vec![
+                        Field::new("struct_field1", DataType::Int32, false),
+                        Field::new("struct_field2", DataType::Utf8, true),
+                    ]
+                    .into(),
+                ),
+                true,
+            ),
+            Field::new(
+                "doubly_nested_struct_name",
+                DataType::Struct(
+                    vec![
+                        Field::new("outer_field", DataType::Int32, false),
+                        Field::new(
+                            "middle",
+                            DataType::Struct(
+                                vec![
+                                    Field::new("middle_field", DataType::Utf8, true),
+                                    Field::new(
+                                        "inner",
+                                        DataType::Struct(
+                                            vec![
+                                                Field::new("inner_field1", DataType::Int64, false),
+                                                Field::new("inner_field2", DataType::Boolean, true),
+                                            ]
+                                            .into(),
+                                        ),
+                                        false,
+                                    ),
+                                ]
+                                .into(),
+                            ),
+                            false,
+                        ),
+                    ]
+                    .into(),
+                ),
+                true,
+            ),
         ]);
 
         // Serialize the schema and covert it over to pretty json for comparison
@@ -690,6 +807,8 @@ mod tests {
             serde_json::from_str(&ArrowDigesterCore::<Sha256>::serialized_schema(&schema)).unwrap();
         let mut pretty_json = serde_json::to_string_pretty(&compact_json).unwrap();
         pretty_json.push('\n');
+
+        println!("{pretty_json}");
 
         assert_eq!(
             pretty_json,
@@ -729,6 +848,12 @@ mod tests {
         assert!(field_names.contains(&&"nested/name".to_owned()));
         assert!(field_names.contains(&&"nested/deep/value".to_owned()));
 
+        let compact_json: serde_json::Value =
+            serde_json::from_str(&ArrowDigesterCore::<Sha256>::serialized_schema(&schema)).unwrap();
+        let mut pretty_json = serde_json::to_string_pretty(&compact_json).unwrap();
+        pretty_json.push('\n');
+        print!("{pretty_json}");
+
         // Test the nested field update by creating record_batch and using the update method
         let id_array = Arc::new(Int32Array::from(vec![Some(1), Some(2)])) as ArrayRef;
         let name_array = Arc::new(StringArray::from(vec![Some("Alice"), Some("Bob")])) as ArrayRef;
@@ -765,7 +890,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "9eb7e0c11ddb72ec86b0da522d104081db57ab660b6b6b3be83e2125dabdc6cd"
+            "9841aab2dfeb637872d41422d33fca1e939f06b8fa0dcec66ff3782592cf9565"
         );
     }
 }

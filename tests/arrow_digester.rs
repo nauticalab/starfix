@@ -72,7 +72,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(schema.clone()).finalize()),
-            "000001c7bc0a0c84aca684adbec21f8cb481781332fc91a205165a6c74c3a63a80e9b2"
+            "0000019c75bd0c40bd2fb15e878418c151c0b792c966476b35ded7d0f6fd1922cf5a00"
         );
 
         let batch = RecordBatch::try_new(
@@ -128,7 +128,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "000001816085f5f88d3cf3eaec5c6fff9e9a20743c964932db77fea72eac5f580a20bf"
+            "0000016ff39761c9794910d39970205fd8430cd9260dbcfd5885c52331fd52e597e39d"
         );
     }
 
@@ -142,7 +142,7 @@ mod tests {
         );
     }
 
-    /// Test int32 array hashing which is really meant to test fixed size element array hashing
+    /// Test int32 array hashing which is really meant to test fixed size element array hashing.
     #[test]
     fn int32_array_hashing() {
         let int_array = Int32Array::from(vec![Some(42), None, Some(-7), Some(0)]);
@@ -153,7 +153,7 @@ mod tests {
         );
     }
 
-    /// Test time array hashing
+    /// Test time array hashing.
     #[test]
     fn time32_array_hashing() {
         let time_array = Time32SecondArray::from(vec![Some(1000), None, Some(5000), Some(0)]);
@@ -186,7 +186,7 @@ mod tests {
         assert_ne!(hash_second, hash_millis);
     }
 
-    /// Test binary array hashing
+    /// Test binary array hashing.
     #[test]
     fn binary_array_hashing() {
         let binary_array = BinaryArray::from(vec![
@@ -408,7 +408,7 @@ mod tests {
         digester.update(&batch2);
         assert_eq!(
             encode(digester.finalize()),
-            "00000137954b3edd169c7a9e65604c191caf6a307940357305d182a5d2168047e9cc51"
+            "0000018aa41f456395dc1d26c8d82895d6c81ed9453c1bb3f401fee637131baa60553e"
         );
     }
 
