@@ -128,7 +128,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "0000016ff39761c9794910d39970205fd8430cd9260dbcfd5885c52331fd52e597e39d"
+            "00000199f7ba7f6c7ec30ad487996c2b3eb6f0e1c750c318a32b09afcdfdce7de8c08e"
         );
     }
 
@@ -288,7 +288,27 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "000001f654be5f0ef89807feba9483072190b7d26964e535cd7c522706218df9c3c015"
+            "00000114b8faee7c56d2a94d77095db599152df41aaf4d11e485035eebc94e8981f769"
+        );
+
+        // Collision test: [[1, 2], [3]] vs [[1], [2, 3]]
+        // Without a per-element length prefix, both lists produce the same raw bytes:
+        // 01000000 02000000 03000000 — and would collide.
+        let array1 = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(1), Some(2)]),
+            Some(vec![Some(3)]),
+        ]);
+        let array2 = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(1)]),
+            Some(vec![Some(2), Some(3)]),
+        ]);
+
+        let hash1 = hex::encode(ArrowDigester::hash_array(&array1));
+        let hash2 = hex::encode(ArrowDigester::hash_array(&array2));
+
+        assert_ne!(
+            hash1, hash2,
+            "List arrays with different element groupings should produce different hashes"
         );
     }
 

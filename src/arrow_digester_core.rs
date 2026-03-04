@@ -597,34 +597,36 @@ impl<D: Digest> ArrowDigesterCore<D> {
         digest: &mut DigestBufferType<D>,
     ) {
         match digest {
+            // Wildcard `_` avoids binding so `digest` remains usable below
             DigestBufferType::NonNullable(_) => {
                 for i in 0..array.len() {
-                    Self::array_digest_update(field_data_type, array.value(i).as_ref(), digest);
+                    let sub = array.value(i);
+                    // Prefix sub-array element count to prevent cross-boundary collisions.
+                    // Without this [[1,2],[3]] and [[1],[2,3]] produce identical byte streams.
+                    // sub.len() returns usize, avoiding the non-primitive OffsetSizeTrait cast.
+                    Self::update_data_digest(digest, (sub.len() as u64).to_le_bytes());
+                    Self::array_digest_update(field_data_type, sub.as_ref(), digest);
                 }
             }
             DigestBufferType::Nullable(bit_vec, _) => {
-                // Deal with null bits first
+                // Deal with null bits first; NLL ends bit_vec borrow after this call
                 Self::handle_null_bits(array, bit_vec);
 
                 match array.nulls() {
                     Some(null_buf) => {
                         for i in 0..array.len() {
                             if null_buf.is_valid(i) {
-                                Self::array_digest_update(
-                                    field_data_type,
-                                    array.value(i).as_ref(),
-                                    digest,
-                                );
+                                let sub = array.value(i);
+                                Self::update_data_digest(digest, (sub.len() as u64).to_le_bytes());
+                                Self::array_digest_update(field_data_type, sub.as_ref(), digest);
                             }
                         }
                     }
                     None => {
                         for i in 0..array.len() {
-                            Self::array_digest_update(
-                                field_data_type,
-                                array.value(i).as_ref(),
-                                digest,
-                            );
+                            let sub = array.value(i);
+                            Self::update_data_digest(digest, (sub.len() as u64).to_le_bytes());
+                            Self::array_digest_update(field_data_type, sub.as_ref(), digest);
                         }
                     }
                 }
@@ -667,6 +669,14 @@ impl<D: Digest> ArrowDigesterCore<D> {
             field_name.to_owned()
         } else {
             format!("{parent_field_name}{DELIMITER_FOR_NESTED_FIELD}{field_name}")
+        }
+    }
+
+    /// Write bytes directly into the data digest portion of the buffer, bypassing null-bit tracking.
+    /// Used to write length prefixes that sit in the data stream but are not nullable values.
+    fn update_data_digest(digest: &mut DigestBufferType<D>, data: impl AsRef<[u8]>) {
+        match digest {
+            DigestBufferType::NonNullable(d) | DigestBufferType::Nullable(_, d) => d.update(data),
         }
     }
 

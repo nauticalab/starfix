@@ -189,14 +189,19 @@ For each element:
 
 #### List Arrays
 
-Lists/Array types recursively hash their nested values:
+Lists/Array types prefix each sub-array's element count before recursively hashing the nested values, preventing cross-boundary collisions:
 
 ```
 For each list element:
+  - Hash: (sub.len() as u64).to_le_bytes()  // Element count prefix
   - Recursively call array_digest_update
   - Use the inner field's data type
   - Skip null list entries
 ```
+
+**Example collision prevention:**
+- Without prefix: `[[1,2],[3]]` and `[[1],[2,3]]` both flatten to `01000000 02000000 03000000` — identical!
+- With prefix: `len=2, 1, 2, len=1, 3` vs `len=1, 1, len=2, 2, 3` → different hashes ✓
 
 ## Schema Handling
 
@@ -245,11 +250,15 @@ The hashing algorithm includes multiple safeguards against collisions:
 
 ### 1. Length Prefixes (Variable-Length Types)
 
-Binary and string arrays include length prefixes to prevent merging boundaries:
+Binary, string, and list arrays include length prefixes to prevent merging boundaries:
 
 ```
 Array1: ["ab", "c"]        → len=2, "ab", len=1, "c"
 Array2: ["a", "bc"]        → len=1, "a", len=2, "bc"
+Result: Different hashes! ✓
+
+List1: [[1,2],[3]]          → len=2, 1, 2, len=1, 3
+List2: [[1],[2,3]]          → len=1, 1, len=2, 2, 3
 Result: Different hashes! ✓
 ```
 
