@@ -173,7 +173,29 @@ Sub-array elements are hashed recursively using the same rules.
 
 ### 3.5 Struct Types
 
-Struct fields are **not** hashed as a composite. Instead, each leaf field within the struct is extracted and hashed independently under its own path key (e.g., `address/city`, `address/zip`). These paths live in a `BTreeMap`, so they are always processed in alphabetical order.
+Struct fields are handled differently depending on context:
+
+#### Record-Batch Path (field decomposition)
+
+In the record-batch path (`hash_record_batch`, streaming `update`/`finalize`), struct fields are **decomposed into leaf fields**. Each leaf field within the struct is extracted and hashed independently under its own path key (e.g., `address/city`, `address/zip`). These paths live in a `BTreeMap`, so they are always processed in alphabetical order. The struct itself does not appear as a separate entry.
+
+#### Composite Path (`hash_array`, list sub-arrays)
+
+When a struct appears as a standalone array (`hash_array`) or as a sub-array within a list, it is hashed **compositely**:
+
+1. **Struct-level nulls**: If the parent digest is Nullable, push struct-level validity into the parent's `BitVec` (same as all other types via `handle_null_bits`).
+
+2. **Children sorted alphabetically** by field name.
+
+3. **For each child** (in sorted order):
+   - Create a fresh `DigestBufferType` for the child. The child is **effectively nullable** if either the child field is nullable OR the struct has null rows.
+   - If the struct has null rows, **propagate struct nulls** to the child: `combined_valid(i) = struct_valid(i) AND child_valid(i)`. This ensures undefined data at null struct positions is never hashed.
+   - Hash the child recursively via `array_digest_update`.
+   - **Finalize the child digest** and write the resulting bytes into the parent's data stream:
+     - NonNullable child: `SHA-256(child_data).finalize()` (32 bytes)
+     - Nullable child: `bit_count LE (8B) || validity_words BE (8B each) || SHA-256(child_data).finalize() (32B)`
+
+The parent's data stream thus contains the concatenation of all children's finalized bytes (in alphabetical order).
 
 ### 3.6 Dictionary-Encoded Arrays
 
@@ -511,6 +533,247 @@ Both produce the same data bytes:
 ```
 
 Therefore `hash_array(array1) == hash_array(array2)`.
+
+---
+
+### Example K: Struct Column in a Record Batch
+
+**Schema**: `{person: Struct<age: Int32 non-null, name: LargeUtf8 non-null> non-nullable}`
+
+**Data** (2 rows):
+
+| person.age | person.name |
+|------------|-------------|
+| 25         | "Alice"     |
+| 30         | "Bob"       |
+
+In the record-batch path, the struct is **decomposed into leaf fields**: `person/age` and `person/name`. Each is hashed independently.
+
+#### Step 1: Schema Digest
+
+Canonical JSON:
+```
+{"person":{"data_type":{"Struct":[{"data_type":"Int32","name":"age","nullable":false},{"data_type":"LargeUtf8","name":"name","nullable":false}]},"nullable":false}}
+```
+
+#### Step 2: Leaf field "person/age" (Int32, non-nullable)
+
+```
+age_data_digest = SHA-256(0x19000000_1e000000)    // [25, 30] as i32 LE
+```
+
+#### Step 3: Leaf field "person/name" (LargeUtf8, non-nullable)
+
+```
+name_data_digest = SHA-256(
+    0x0500000000000000 "Alice"    // len=5 u64 LE + UTF-8
+    0x0300000000000000 "Bob"      // len=3 u64 LE + UTF-8
+)
+```
+
+#### Step 4: Final Combination
+
+Fields alphabetically: `person/age`, `person/name`.
+
+```
+final_digest = SHA-256()
+final_digest.update( schema_digest )                     // 32 bytes
+final_digest.update( age_data_digest.finalize() )        // 32 bytes (non-nullable)
+final_digest.update( name_data_digest.finalize() )       // 32 bytes (non-nullable)
+output = 0x000001 ++ final_digest.finalize()
+```
+
+---
+
+### Example L: Struct Array via hash_array (non-nullable)
+
+**Array**: `StructArray [{a: 1, b: true}, {a: 2, b: false}]`
+
+Children: `a: Int32 non-null`, `b: Boolean non-null`. Struct is non-nullable.
+
+#### Step 1: Type Metadata
+
+Canonical type JSON (struct fields sorted alphabetically, keys sorted):
+```
+{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Boolean","name":"b","nullable":false}]}
+```
+
+#### Step 2: Composite Data
+
+Children sorted by name: `a`, then `b`.
+
+**Child "a"** (Int32, non-nullable):
+```
+child_a_data_digest = SHA-256(0x01000000_02000000)    // [1, 2] as i32 LE
+child_a_finalized = child_a_data_digest.finalize()     // 32 bytes (non-nullable)
+```
+
+**Child "b"** (Boolean, non-nullable):
+```
+// [true, false] → Msb0: bit7=1, bit6=0 → 0x80
+child_b_data_digest = SHA-256(0x80)
+child_b_finalized = child_b_data_digest.finalize()     // 32 bytes
+```
+
+**Parent data stream**: `child_a_finalized || child_b_finalized`
+
+```
+parent_data_digest = SHA-256( child_a_finalized || child_b_finalized )
+```
+
+#### Step 3: Finalization (non-nullable)
+
+```
+final_digest = SHA-256()
+final_digest.update( type_json_bytes )                   // type metadata
+final_digest.update( parent_data_digest.finalize() )     // 32 bytes
+output = 0x000001 ++ final_digest.finalize()
+```
+
+---
+
+### Example M: Nullable Struct Array via hash_array (struct-level nulls)
+
+**Array**: `StructArray [Some({a: 10, b: "x"}), None, Some({a: 30, b: "z"})]`
+
+Children: `a: Int32 non-null`, `b: LargeUtf8 non-null`. Struct is **nullable**.
+
+Row 1 is a null struct — children's data at row 1 is undefined and must be skipped.
+
+#### Step 1: Type Metadata
+
+Same struct type JSON as above (with appropriate fields):
+```
+{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}
+```
+
+#### Step 2: Struct-Level Validity
+
+Struct validity: `[valid, null, valid]` → bits `[1, 0, 1]`
+- bit_count = 3
+- usize word (Lsb0): `0b101` = 5
+
+This goes into the parent's BitVec (the top-level digest for `hash_array`).
+
+#### Step 3: Composite Data (children with struct-null propagation)
+
+**Child "a"** (Int32, effectively nullable due to struct nulls):
+- Combined validity: struct AND child = `[1, 0, 1]` (child has no nulls)
+- Valid data: `[10, 30]` (row 1 skipped)
+- bit_count = 3, validity_word = 5
+
+```
+child_a_data_digest = SHA-256(0x0a000000_1e000000)     // [10, 30] as i32 LE
+child_a_finalized = 0x0300000000000000                  // bit_count=3 LE
+                 || 0x0000000000000005                  // validity word=5 BE
+                 || child_a_data_digest.finalize()      // 32 bytes
+```
+
+**Child "b"** (LargeUtf8, effectively nullable):
+- Combined validity: `[1, 0, 1]`
+- Valid data: `"x"`, `"z"` (row 1 skipped)
+
+```
+child_b_data_digest = SHA-256(
+    0x0100000000000000 "x"     // len=1 + "x"
+    0x0100000000000000 "z"     // len=1 + "z"
+)
+child_b_finalized = 0x0300000000000000                  // bit_count=3 LE
+                 || 0x0000000000000005                  // validity word=5 BE
+                 || child_b_data_digest.finalize()      // 32 bytes
+```
+
+**Parent data stream**: `child_a_finalized || child_b_finalized`
+
+```
+parent_data_digest = SHA-256( child_a_finalized || child_b_finalized )
+```
+
+#### Step 4: Finalization (nullable)
+
+```
+final_digest = SHA-256()
+final_digest.update( type_json_bytes )                   // type metadata
+final_digest.update( 0x0300000000000000 )                // struct bit_count=3 LE
+final_digest.update( 0x0000000000000005 )                // struct validity word=5 BE
+final_digest.update( parent_data_digest.finalize() )     // 32 bytes
+output = 0x000001 ++ final_digest.finalize()
+```
+
+---
+
+### Example N: List-of-Struct in a Record Batch
+
+**Schema**: `{items: LargeList<Struct<id: Int32 non-null, label: LargeUtf8 non-null>> nullable}`
+
+**Data** (2 rows):
+
+| items |
+|-------|
+| `[{id: 1, label: "a"}, {id: 2, label: "b"}]` |
+| `[{id: 3, label: "c"}]` |
+
+The list column is a single field "items" in the BTreeMap. Its sub-arrays are struct arrays, hashed compositely via `array_digest_update(Struct)`.
+
+#### Step 1: Schema Digest
+
+Canonical JSON (element type omits Arrow-internal field name "item"):
+```
+{"items":{"data_type":{"LargeList":{"data_type":{"Struct":[{"data_type":"Int32","name":"id","nullable":false},{"data_type":"LargeUtf8","name":"label","nullable":false}]},"nullable":false}},"nullable":true}}
+```
+
+#### Step 2: Field "items" (nullable)
+
+**Validity BitVec** — accumulates ALL null bits from the list AND its struct sub-arrays:
+
+1. List-level: `handle_null_bits(list)` → `[1, 1]` (both list elements valid)
+2. Element 0 struct (2 rows, no nulls): `handle_null_bits(struct)` → `[1, 1]`
+3. Element 1 struct (1 row, no nulls): `handle_null_bits(struct)` → `[1]`
+
+Total BitVec: `[1, 1, 1, 1, 1]` — 5 bits, all valid.
+- bit_count = 5
+- usize word (Lsb0): `0b11111` = 31
+
+**Data stream** — for each list element: element count prefix + struct composite:
+
+**Element 0** (2 struct rows):
+```
+count prefix: 0x0200000000000000     // 2 as u64 LE
+```
+
+Struct children (sorted: "id", "label"):
+- Child "id" (Int32, non-nullable): `SHA-256(0x01000000_02000000).finalize()` — 32 bytes
+- Child "label" (LargeUtf8, non-nullable): `SHA-256(0x0100000000000000 "a" 0x0100000000000000 "b").finalize()` — 32 bytes
+
+**Element 1** (1 struct row):
+```
+count prefix: 0x0100000000000000     // 1 as u64 LE
+```
+
+- Child "id": `SHA-256(0x03000000).finalize()` — 32 bytes
+- Child "label": `SHA-256(0x0100000000000000 "c").finalize()` — 32 bytes
+
+```
+items_data_digest = SHA-256(
+    0x0200000000000000                     // element 0 count
+    || SHA-256([1,2] as i32 LE).finalize() // element 0 child "id"
+    || SHA-256(len+"a"+len+"b").finalize()  // element 0 child "label"
+    || 0x0100000000000000                  // element 1 count
+    || SHA-256([3] as i32 LE).finalize()   // element 1 child "id"
+    || SHA-256(len+"c").finalize()          // element 1 child "label"
+)
+```
+
+#### Step 3: Final Combination
+
+```
+final_digest = SHA-256()
+final_digest.update( schema_digest )                     // 32 bytes
+final_digest.update( 0x0500000000000000 )                // bit_count=5 LE
+final_digest.update( 0x000000000000001F )                // validity word=31 BE
+final_digest.update( items_data_digest.finalize() )      // 32 bytes
+output = 0x000001 ++ final_digest.finalize()
+```
 
 ---
 

@@ -7,10 +7,11 @@ use std::{collections::BTreeMap, iter::repeat_n};
 
 use arrow::{
     array::{
-        Array, BinaryArray, BooleanArray, GenericBinaryArray, GenericListArray, GenericStringArray,
-        LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, OffsetSizeTrait,
-        RecordBatch, StringArray, StructArray,
+        make_array, Array, BinaryArray, BooleanArray, GenericBinaryArray, GenericListArray,
+        GenericStringArray, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
+        OffsetSizeTrait, RecordBatch, StringArray, StructArray,
     },
+    buffer::NullBuffer,
     compute::cast,
     datatypes::{DataType, Schema},
 };
@@ -467,7 +468,70 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 );
             }
             DataType::LargeListView(_) => todo!(),
-            DataType::Struct(_) => todo!(),
+            DataType::Struct(fields) => {
+                let struct_array = array
+                    .as_any()
+                    .downcast_ref::<StructArray>()
+                    .expect("Failed to downcast to StructArray");
+
+                // Push struct-level nulls to parent's BitVec (same pattern as other types)
+                if let DigestBufferType::Nullable(ref mut bit_vec, _) = digest {
+                    Self::handle_null_bits(struct_array, bit_vec);
+                }
+
+                // Sort children alphabetically by field name
+                let mut sorted_fields: Vec<_> = fields.iter().enumerate().collect();
+                sorted_fields.sort_by_key(|(_, f)| f.name().clone());
+
+                for (idx, child_field) in &sorted_fields {
+                    let child_array = struct_array.column(*idx);
+
+                    // Child is effectively nullable if the child field is nullable
+                    // OR the struct itself has nulls (struct-level nulls propagate down)
+                    let effectively_nullable =
+                        child_field.is_nullable() || struct_array.nulls().is_some();
+
+                    let mut child_digest = if effectively_nullable {
+                        DigestBufferType::Nullable(BitVec::new(), D::new())
+                    } else {
+                        DigestBufferType::NonNullable(D::new())
+                    };
+
+                    if let Some(struct_nulls) = struct_array.nulls() {
+                        // Propagate struct-level nulls into the child array by combining
+                        // struct validity with child validity: combined = struct AND child
+                        let combined_nulls = child_array.nulls().map_or_else(
+                            || struct_nulls.clone(),
+                            |child_nulls| {
+                                NullBuffer::new(struct_nulls.inner() & child_nulls.inner())
+                            },
+                        );
+                        let child_data = child_array.to_data();
+                        let null_count = combined_nulls.null_count();
+                        let new_data = child_data
+                            .into_builder()
+                            .null_count(null_count)
+                            .null_bit_buffer(Some(combined_nulls.into_inner().into_inner()))
+                            .build()
+                            .expect("Failed to rebuild child array with combined null buffer");
+                        let combined_child = make_array(new_data);
+                        Self::array_digest_update(
+                            child_field.data_type(),
+                            combined_child.as_ref(),
+                            &mut child_digest,
+                        );
+                    } else {
+                        Self::array_digest_update(
+                            child_field.data_type(),
+                            child_array.as_ref(),
+                            &mut child_digest,
+                        );
+                    }
+
+                    // Finalize child digest into parent's data stream
+                    Self::finalize_child_into_data(digest, child_digest);
+                }
+            }
             DataType::Union(_, _) => todo!(),
             DataType::Dictionary(_, value_type) => {
                 let resolved = cast(array, value_type.as_ref())
@@ -708,6 +772,28 @@ impl<D: Digest> ArrowDigesterCore<D> {
     fn update_data_digest(digest: &mut DigestBufferType<D>, data: impl AsRef<[u8]>) {
         match digest {
             DigestBufferType::NonNullable(d) | DigestBufferType::Nullable(_, d) => d.update(data),
+        }
+    }
+
+    /// Finalize a child's digest and write the resulting bytes into the parent's data stream.
+    /// Used for composite types (structs) where each child is independently hashed and then
+    /// its finalized representation is fed into the parent digest.
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "Use for bit packing the null_bit_values"
+    )]
+    fn finalize_child_into_data(parent: &mut DigestBufferType<D>, child: DigestBufferType<D>) {
+        match child {
+            DigestBufferType::NonNullable(data_digest) => {
+                Self::update_data_digest(parent, data_digest.finalize());
+            }
+            DigestBufferType::Nullable(null_bit_digest, data_digest) => {
+                Self::update_data_digest(parent, null_bit_digest.len().to_le_bytes());
+                for &word in null_bit_digest.as_raw_slice() {
+                    Self::update_data_digest(parent, word.to_be_bytes());
+                }
+                Self::update_data_digest(parent, data_digest.finalize());
+            }
         }
     }
 
