@@ -6,12 +6,13 @@ mod tests {
     use arrow::{
         array::{
             ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal32Array,
-            Decimal64Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-            Int8Array, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, RecordBatch,
-            StringArray, Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
-            Time64NanosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+            Decimal64Array, DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
+            Int64Array, Int8Array, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
+            RecordBatch, StringArray, StructArray, Time32MillisecondArray, Time32SecondArray,
+            Time64MicrosecondArray, Time64NanosecondArray, UInt16Array, UInt32Array, UInt64Array,
+            UInt8Array,
         },
-        datatypes::Int32Type,
+        datatypes::{Int32Type, Int8Type},
     };
     use arrow_schema::{DataType, Field, Schema, TimeUnit};
     use hex::encode;
@@ -594,6 +595,357 @@ mod tests {
         assert_eq!(
             hash_batches, hash_single,
             "Hashing batches where first is all nulls should produce same result as combined batch"
+        );
+    }
+
+    // ── Issue 1: Struct field-order independence ─────────────────────────
+
+    /// Two schemas with the same struct fields in different order should produce identical schema hashes.
+    /// Bug: `data_type_to_value()` preserves struct field insertion order in the JSON Vec.
+    #[test]
+    #[ignore = "Bug: struct fields not sorted in data_type_to_value (Issue 1)"]
+    fn struct_field_order_in_schema_should_not_affect_hash() {
+        let schema1 = Schema::new(vec![Field::new(
+            "my_struct",
+            DataType::Struct(
+                vec![
+                    Field::new("x", DataType::Int32, false),
+                    Field::new("y", DataType::Utf8, true),
+                ]
+                .into(),
+            ),
+            true,
+        )]);
+
+        let schema2 = Schema::new(vec![Field::new(
+            "my_struct",
+            DataType::Struct(
+                vec![
+                    Field::new("y", DataType::Utf8, true),
+                    Field::new("x", DataType::Int32, false),
+                ]
+                .into(),
+            ),
+            true,
+        )]);
+
+        let hash1 = encode(ArrowDigester::hash_schema(&schema1));
+        let hash2 = encode(ArrowDigester::hash_schema(&schema2));
+
+        assert_eq!(
+            hash1, hash2,
+            "Struct field order should not affect schema hash"
+        );
+    }
+
+    /// Record batches with struct columns whose inner fields are reordered should produce identical hashes.
+    #[test]
+    #[ignore = "Bug: struct fields not sorted in data_type_to_value (Issue 1)"]
+    fn struct_field_order_in_record_batch_should_not_affect_hash() {
+        let schema1 = Arc::new(Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(
+                vec![
+                    Field::new("a", DataType::Int32, false),
+                    Field::new("b", DataType::Boolean, true),
+                ]
+                .into(),
+            ),
+            false,
+        )]));
+
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(
+                vec![
+                    Field::new("b", DataType::Boolean, true),
+                    Field::new("a", DataType::Int32, false),
+                ]
+                .into(),
+            ),
+            false,
+        )]));
+
+        let ints = Arc::new(Int32Array::from(vec![1, 2, 3])) as ArrayRef;
+        let bools =
+            Arc::new(BooleanArray::from(vec![Some(true), Some(false), None])) as ArrayRef;
+
+        let struct1 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&ints),
+            ),
+            (
+                Arc::new(Field::new("b", DataType::Boolean, true)),
+                Arc::clone(&bools),
+            ),
+        ]);
+
+        let struct2 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("b", DataType::Boolean, true)),
+                Arc::clone(&bools),
+            ),
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&ints),
+            ),
+        ]);
+
+        let batch1 =
+            RecordBatch::try_new(schema1, vec![Arc::new(struct1) as ArrayRef]).unwrap();
+        let batch2 =
+            RecordBatch::try_new(schema2, vec![Arc::new(struct2) as ArrayRef]).unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "Struct field order in record batch should not affect hash"
+        );
+    }
+
+    // ── Issue 5: Type canonicalization (Binary/LargeBinary, Utf8/LargeUtf8, List/LargeList) ──
+
+    #[test]
+    #[ignore = "Bug: no type canonicalization for Binary vs LargeBinary (Issue 5)"]
+    fn binary_and_large_binary_schema_should_hash_equal() {
+        let schema1 = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
+        let schema2 = Schema::new(vec![Field::new("col", DataType::LargeBinary, true)]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema1)),
+            encode(ArrowDigester::hash_schema(&schema2)),
+            "Binary and LargeBinary schemas should be logically equivalent"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: no type canonicalization for Utf8 vs LargeUtf8 (Issue 5)"]
+    fn utf8_and_large_utf8_schema_should_hash_equal() {
+        let schema1 = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
+        let schema2 = Schema::new(vec![Field::new("col", DataType::LargeUtf8, true)]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema1)),
+            encode(ArrowDigester::hash_schema(&schema2)),
+            "Utf8 and LargeUtf8 schemas should be logically equivalent"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: no type canonicalization for List vs LargeList (Issue 5)"]
+    fn list_and_large_list_schema_should_hash_equal() {
+        let list_field = Field::new("item", DataType::Int32, true);
+        let schema1 = Schema::new(vec![Field::new(
+            "col",
+            DataType::List(Box::new(list_field.clone()).into()),
+            true,
+        )]);
+        let schema2 = Schema::new(vec![Field::new(
+            "col",
+            DataType::LargeList(Box::new(list_field).into()),
+            true,
+        )]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema1)),
+            encode(ArrowDigester::hash_schema(&schema2)),
+            "List and LargeList schemas should be logically equivalent"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: no type canonicalization for Binary vs LargeBinary in hash_array (Issue 5)"]
+    fn binary_and_large_binary_array_should_hash_equal() {
+        let bin = BinaryArray::from(vec![
+            Some(b"hello".as_ref()),
+            None,
+            Some(b"world".as_ref()),
+        ]);
+        let large_bin = LargeBinaryArray::from(vec![
+            Some(b"hello".as_ref()),
+            None,
+            Some(b"world".as_ref()),
+        ]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&bin)),
+            encode(ArrowDigester::hash_array(&large_bin)),
+            "Binary and LargeBinary arrays with same data should produce same hash"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: no type canonicalization for Utf8 vs LargeUtf8 in hash_array (Issue 5)"]
+    fn utf8_and_large_utf8_array_should_hash_equal() {
+        let arr = StringArray::from(vec![Some("hello"), None, Some("world")]);
+        let large_arr = LargeStringArray::from(vec![Some("hello"), None, Some("world")]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&arr)),
+            encode(ArrowDigester::hash_array(&large_arr)),
+            "Utf8 and LargeUtf8 arrays with same data should produce same hash"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: no type canonicalization for Binary vs LargeBinary in hash_record_batch (Issue 5)"]
+    fn binary_and_large_binary_record_batch_should_hash_equal() {
+        let schema1 = Arc::new(Schema::new(vec![Field::new("col", DataType::Binary, true)]));
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "col",
+            DataType::LargeBinary,
+            true,
+        )]));
+
+        let batch1 = RecordBatch::try_new(
+            schema1,
+            vec![Arc::new(BinaryArray::from(vec![
+                Some(b"abc".as_ref()),
+                None,
+            ])) as ArrayRef],
+        )
+        .unwrap();
+
+        let batch2 = RecordBatch::try_new(
+            schema2,
+            vec![Arc::new(LargeBinaryArray::from(vec![
+                Some(b"abc".as_ref()),
+                None,
+            ])) as ArrayRef],
+        )
+        .unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "Binary and LargeBinary record batches with same data should produce same hash"
+        );
+    }
+
+    // ── Issue 6: Dictionary-encoded array equivalence ───────────────────
+
+    #[test]
+    #[ignore = "Bug: Dictionary arrays hit todo!() panic (Issue 6)"]
+    fn dictionary_utf8_should_hash_same_as_plain_string() {
+        let plain = StringArray::from(vec![Some("apple"), Some("banana"), Some("apple")]);
+
+        let dict: DictionaryArray<Int32Type> = vec![Some("apple"), Some("banana"), Some("apple")]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&plain)),
+            encode(ArrowDigester::hash_array(&dict)),
+            "Dictionary<Int32, Utf8> should hash same as plain StringArray"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: Dictionary arrays hit todo!() panic (Issue 6)"]
+    fn dictionary_int_values_should_hash_same_as_plain() {
+        let plain = StringArray::from(vec![Some("x"), Some("y"), Some("x")]);
+
+        let dict: DictionaryArray<Int8Type> = vec![Some("x"), Some("y"), Some("x")]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&plain)),
+            encode(ArrowDigester::hash_array(&dict)),
+            "Dictionary<Int8, Utf8> should hash same as plain StringArray"
+        );
+    }
+
+    #[test]
+    #[ignore = "Bug: Dictionary arrays hit todo!() panic (Issue 6)"]
+    fn dictionary_with_nulls_should_hash_same_as_plain() {
+        let plain = StringArray::from(vec![Some("a"), None, Some("b"), None]);
+
+        let dict: DictionaryArray<Int32Type> = vec![Some("a"), None, Some("b"), None]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&plain)),
+            encode(ArrowDigester::hash_array(&dict)),
+            "Dictionary with nulls should hash same as plain array with same nulls"
+        );
+    }
+
+    // ── Issue 7: Streaming schema equality too strict ───────────────────
+
+    /// Feeding a batch with reordered columns into a digester should not panic.
+    #[test]
+    #[ignore = "Bug: update() uses strict schema equality including column order (Issue 7)"]
+    fn streaming_update_with_reordered_columns_should_succeed() {
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Boolean, true),
+        ]);
+
+        let mut digester = ArrowDigester::new(schema);
+
+        // Batch with columns in DIFFERENT order: [b, a]
+        let reordered_schema = Arc::new(Schema::new(vec![
+            Field::new("b", DataType::Boolean, true),
+            Field::new("a", DataType::Int32, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            reordered_schema,
+            vec![
+                Arc::new(BooleanArray::from(vec![Some(true), Some(false)])) as ArrayRef,
+                Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        digester.update(&batch); // Should NOT panic
+        let _hash = encode(digester.finalize());
+    }
+
+    /// A digester fed batches with different column orders should produce the same hash
+    /// as one fed batches in the original order.
+    #[test]
+    #[ignore = "Bug: update() uses strict schema equality including column order (Issue 7)"]
+    fn streaming_reordered_columns_produce_same_hash() {
+        let schema_ab = Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Boolean, true),
+        ]);
+
+        let ints = Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef;
+        let bools = Arc::new(BooleanArray::from(vec![Some(true), Some(false)])) as ArrayRef;
+
+        let batch_ab = RecordBatch::try_new(
+            Arc::new(schema_ab.clone()),
+            vec![Arc::clone(&ints), Arc::clone(&bools)],
+        )
+        .unwrap();
+
+        let batch_ba = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("b", DataType::Boolean, true),
+                Field::new("a", DataType::Int32, false),
+            ])),
+            vec![Arc::clone(&bools), Arc::clone(&ints)],
+        )
+        .unwrap();
+
+        // Digester fed batch in original order [a, b]
+        let mut digester1 = ArrowDigester::new(schema_ab.clone());
+        digester1.update(&batch_ab);
+        let hash1 = encode(digester1.finalize());
+
+        // Digester fed batch in reversed order [b, a]
+        let mut digester2 = ArrowDigester::new(schema_ab);
+        digester2.update(&batch_ba);
+        let hash2 = encode(digester2.finalize());
+
+        assert_eq!(
+            hash1, hash2,
+            "Streaming with reordered columns should produce same hash"
         );
     }
 }
