@@ -12,9 +12,11 @@ categories = ["algorithms"]
 
 [dependencies]
 arrow = { version = "57.0.0", features = ["ffi"] }
+arrow-buffer = { version = "57.0.0" }
 arrow-schema = { version = "57.0.0", features = ["serde"] }
 bitvec = "1.0.1"
 digest = "0.10.7"
+half = "2.7.1"
 indoc = "2.0.7"
 
 postcard = "1.1.3"

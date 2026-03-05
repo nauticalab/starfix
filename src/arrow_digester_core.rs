@@ -698,18 +698,38 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "Okay in test")]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        reason = "Tests require panics and unwraps for assertions"
+    )]
 
-    use std::sync::Arc;
+    use std::{
+        f64::{self, consts},
+        sync::Arc,
+    };
 
-    use arrow::array::{ArrayRef, Int32Array, Int64Array, RecordBatch, StringArray, StructArray};
+    use arrow::{
+        array::{
+            ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal128Array,
+            Decimal32Array, FixedSizeBinaryBuilder, Float16Array, Float32Array, Float64Array,
+            Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeListBuilder,
+            LargeStringArray, ListBuilder, PrimitiveBuilder, RecordBatch, StringArray, StructArray,
+            Time32SecondArray, Time64MicrosecondArray, UInt16Array, UInt32Array, UInt64Array,
+            UInt8Array,
+        },
+        datatypes::Int32Type,
+    };
     use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
     use hex::encode;
     use pretty_assertions::assert_eq;
-    use sha2::Sha256;
+    use sha2::{Digest as _, Sha256};
 
-    use crate::arrow_digester_core::ArrowDigesterCore;
+    use crate::arrow_digester_core::{ArrowDigesterCore, DigestBufferType};
+    use arrow::array::{Decimal256Array, Decimal64Array};
+    use arrow_buffer::i256;
 
     #[expect(
         clippy::too_many_lines,
@@ -902,5 +922,1095 @@ mod tests {
             encode(digester.finalize()),
             "9841aab2dfeb637872d41422d33fca1e939f06b8fa0dcec66ff3782592cf9565"
         );
+    }
+
+    // ── Boolean ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn digest_bool_nullable_bytes() {
+        // [true, None, false, true] — valid values bit-packed Msb0, null skipped
+        let array = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Boolean, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Boolean,
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 4);
+        assert!(null_bit_vec[0], "index 0 (true) should be valid");
+        assert!(!null_bit_vec[1], "index 1 (None) should be null");
+        assert!(null_bit_vec[2], "index 2 (false) should be valid");
+        assert!(null_bit_vec[3], "index 3 (true) should be valid");
+
+        // Valid values [true, false, true] packed Msb0 into one byte:
+        // bit0=1, bit1=0, bit2=1 → 1010_0000 = 0xA0
+        let mut manual = Sha256::new();
+        manual.update([0xA0_u8]);
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_bool_non_nullable_bytes() {
+        // [false, true, false] — all values bit-packed, no nulls
+        let array = BooleanArray::from(vec![false, true, false]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Boolean, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Boolean,
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        // [false, true, false] packed Msb0: bit0=0, bit1=1, bit2=0 → 0100_0000 = 0x40
+        let mut manual = Sha256::new();
+        manual.update([0x40_u8]);
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Int8 / UInt8 (1-byte fixed) ───────────────────────────────────────
+
+    #[test]
+    fn digest_int8_nullable_bytes() {
+        // [10, None, -3] — valid bytes: 0x0A, 0xFD
+        let array = Int8Array::from(vec![Some(10_i8), None, Some(-3_i8)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Int8, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Int8, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(10_i8.to_le_bytes()); // 0a
+        manual.update((-3_i8).to_le_bytes()); // fd
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_uint8_non_nullable_bytes() {
+        // [1, 2, 255]
+        let array = UInt8Array::from(vec![1_u8, 2_u8, 255_u8]);
+        let schema = Schema::new(vec![Field::new("col", DataType::UInt8, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::UInt8, false)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update([0x01_u8, 0x02_u8, 0xFF_u8]);
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Int16 / UInt16 (2-byte fixed) ─────────────────────────────────────
+
+    #[test]
+    fn digest_int16_nullable_bytes() {
+        // [1000, None, -512]
+        // 1000 LE  = e8 03
+        // -512 LE  = 00 fe
+        let array = Int16Array::from(vec![Some(1000_i16), None, Some(-512_i16)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Int16, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Int16, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(1000_i16.to_le_bytes());
+        manual.update((-512_i16).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_uint16_non_nullable_bytes() {
+        // [100, 200, 65535]
+        let array = UInt16Array::from(vec![100_u16, 200_u16, 0xFFFF_u16]);
+        let schema = Schema::new(vec![Field::new("col", DataType::UInt16, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::UInt16,
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(100_u16.to_le_bytes());
+        manual.update(200_u16.to_le_bytes());
+        manual.update(0xFFFF_u16.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Float16 (2-byte float) ─────────────────────────────────────────────
+
+    #[test]
+    fn digest_float16_non_nullable_bytes() {
+        // [1.0, 2.5, -0.5]
+        let array = Float16Array::from(vec![
+            half::f16::from_f32(1.0),
+            half::f16::from_f32(2.5),
+            half::f16::from_f32(-0.5),
+        ]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Float16, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Float16,
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(half::f16::from_f32(1.0).to_le_bytes());
+        manual.update(half::f16::from_f32(2.5).to_le_bytes());
+        manual.update(half::f16::from_f32(-0.5).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Int32 / UInt32 (4-byte fixed) ─────────────────────────────────────
+
+    // Tests to check if the digest is bytes that are being fed into the digest in the correct format
+    #[test]
+    fn digest_int32_nullable_bytes() {
+        // Given this array, we will compare our manual hashing of the bytes according to our spec
+        // with the output of the digest to make sure they are consistent.
+
+        let int_array = Int32Array::from(vec![Some(42), None, Some(-7), Some(0)]);
+
+        let schema = Schema::new(vec![Field::new("int32_col", DataType::Int32, true)]);
+
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "int32_col",
+                    DataType::Int32,
+                    true,
+                )])),
+                vec![Arc::new(int_array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) = digester
+            .fields_digest_buffer
+            .get("int32_col")
+            .expect("int32_col field should exist in digest buffer")
+        else {
+            panic!("Expected a Nullable digest buffer for int32_col");
+        };
+
+        // The null bit vector should be [true, false, true, true] for [Some(42), None, Some(-7), Some(0)]
+        assert_eq!(null_bit_vec.len(), 4);
+        assert!(null_bit_vec[0], "index 0 (42) should be valid");
+        assert!(!null_bit_vec[1], "index 1 (None) should be null");
+        assert!(null_bit_vec[2], "index 2 (-7) should be valid");
+        assert!(null_bit_vec[3], "index 3 (0) should be valid");
+
+        // For the valid values [42, -7, 0], we hash only their little-endian bytes (nulls are skipped):
+        // 42  -> 2a 00 00 00
+        // -7  -> f9 ff ff ff
+        // 0   -> 00 00 00 00
+        let mut manual_digest = Sha256::new();
+        manual_digest.update([0x2a, 0x00, 0x00, 0x00]);
+        manual_digest.update([0xf9, 0xff, 0xff, 0xff]);
+        manual_digest.update([0x00, 0x00, 0x00, 0x00]);
+
+        assert_eq!(data_digest.clone().finalize(), manual_digest.finalize());
+    }
+
+    #[test]
+    fn digest_uint32_nullable_bytes() {
+        // [0, None, u32::MAX]
+        let array = UInt32Array::from(vec![Some(0_u32), None, Some(u32::MAX)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::UInt32, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::UInt32, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(0_u32.to_le_bytes());
+        manual.update(u32::MAX.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Float32 (4-byte float) ─────────────────────────────────────────────
+
+    #[test]
+    fn digest_float32_nullable_bytes() {
+        // [1.0, None, 2.5]
+        // 1.0f32 LE: 00 00 80 3f
+        // 2.5f32 LE: 00 00 20 40
+        let array = Float32Array::from(vec![Some(1.0_f32), None, Some(2.5_f32)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Float32, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Float32,
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(1.0_f32.to_le_bytes());
+        manual.update(2.5_f32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Decimal32 (4-byte decimal) ────────────────────────────────────────
+
+    #[test]
+    fn digest_decimal32_nullable_bytes() {
+        // Values are stored as i32 in 4 little-endian bytes.
+        // [12345, None, -999]
+        let array = Decimal32Array::from(vec![Some(12_345_i32), None, Some(-999_i32)])
+            .with_precision_and_scale(9, 2)
+            .unwrap();
+        let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Decimal32(9, 2),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(12_345_i32.to_le_bytes());
+        manual.update((-999_i32).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_decimal32_non_nullable_bytes() {
+        // [0, 1000, -1]
+        let array = Decimal32Array::from(vec![Some(0_i32), Some(1_000_i32), Some(-1_i32)])
+            .with_precision_and_scale(9, 2)
+            .unwrap();
+        let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Decimal32(9, 2),
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(0_i32.to_le_bytes());
+        manual.update(1_000_i32.to_le_bytes());
+        manual.update((-1_i32).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Int64 / UInt64 (8-byte fixed) ─────────────────────────────────────
+
+    #[test]
+    fn digest_int64_nullable_bytes() {
+        // [i64::MIN, None, 9_876_543_210]
+        let array = Int64Array::from(vec![Some(i64::MIN), None, Some(9_876_543_210_i64)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Int64, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Int64, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(i64::MIN.to_le_bytes());
+        manual.update(9_876_543_210_i64.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_uint64_nullable_bytes() {
+        // [0, None, u64::MAX]
+        let array = UInt64Array::from(vec![Some(0_u64), None, Some(u64::MAX)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::UInt64, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::UInt64, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(0_u64.to_le_bytes());
+        manual.update(u64::MAX.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Float64 (8-byte float) ─────────────────────────────────────────────
+
+    #[test]
+    fn digest_float64_non_nullable_bytes() {
+        // [1.0, -0.5, π]
+        let array = Float64Array::from(vec![1.0_f64, -0.5_f64, f64::consts::PI]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Float64, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Float64,
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(1.0_f64.to_le_bytes());
+        manual.update((-0.5_f64).to_le_bytes());
+        manual.update(consts::PI.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Decimal64 (8-byte decimal) ────────────────────────────────────────
+
+    #[test]
+    fn digest_decimal64_nullable_bytes() {
+        // Values are stored as i64 in 8 little-endian bytes.
+        // [987654321, None, -42]
+        let array = Decimal64Array::from(vec![Some(987_654_321_i64), None, Some(-42_i64)])
+            .with_precision_and_scale(18, 3)
+            .unwrap();
+        let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Decimal64(18, 3),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(987_654_321_i64.to_le_bytes());
+        manual.update((-42_i64).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_decimal64_non_nullable_bytes() {
+        // [0, 1000000, -1]
+        let array = Decimal64Array::from(vec![Some(0_i64), Some(1_000_000_i64), Some(-1_i64)])
+            .with_precision_and_scale(18, 3)
+            .unwrap();
+        let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Decimal64(18, 3),
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(0_i64.to_le_bytes());
+        manual.update(1_000_000_i64.to_le_bytes());
+        manual.update((-1_i64).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Date32 / Date64 ───────────────────────────────────────────────────
+
+    #[test]
+    fn digest_date32_nullable_bytes() {
+        // Days since Unix epoch: [0, None, 19000]
+        let array = Date32Array::from(vec![Some(0_i32), None, Some(19000_i32)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Date32, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Date32, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(0_i32.to_le_bytes());
+        manual.update(19000_i32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_date64_nullable_bytes() {
+        // Milliseconds since Unix epoch: [0, None, 1_000_000]
+        let array = Date64Array::from(vec![Some(0_i64), None, Some(1_000_000_i64)]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Date64, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Date64, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(0_i64.to_le_bytes());
+        manual.update(1_000_000_i64.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Time32 / Time64 ───────────────────────────────────────────────────
+
+    #[test]
+    fn digest_time32_nullable_bytes() {
+        // Seconds since midnight: [0, None, 3600]
+        let array = Time32SecondArray::from(vec![Some(0_i32), None, Some(3600_i32)]);
+        let schema = Schema::new(vec![Field::new(
+            "col",
+            DataType::Time32(TimeUnit::Second),
+            true,
+        )]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Time32(TimeUnit::Second),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(0_i32.to_le_bytes());
+        manual.update(3600_i32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_time64_nullable_bytes() {
+        // Microseconds since midnight: [0, None, 3_600_000_000]
+        let array = Time64MicrosecondArray::from(vec![Some(0_i64), None, Some(3_600_000_000_i64)]);
+        let schema = Schema::new(vec![Field::new(
+            "col",
+            DataType::Time64(TimeUnit::Microsecond),
+            true,
+        )]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Time64(TimeUnit::Microsecond),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(0_i64.to_le_bytes());
+        manual.update(3_600_000_000_i64.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Decimal128 (16-byte decimal) ──────────────────────────────────────
+
+    #[test]
+    fn digest_decimal128_nullable_bytes() {
+        // Values are stored as i128 in 16 little-endian bytes.
+        // [123456, None, -1]
+        let array = Decimal128Array::from(vec![Some(123_456_i128), None, Some(-1_i128)])
+            .with_precision_and_scale(38, 5)
+            .unwrap();
+        let schema = Schema::new(vec![Field::new("col", DataType::Decimal128(38, 5), true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Decimal128(38, 5),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(123_456_i128.to_le_bytes());
+        manual.update((-1_i128).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Decimal256 (32-byte decimal) ──────────────────────────────────────
+
+    #[test]
+    fn digest_decimal256_nullable_bytes() {
+        // Values are stored as i256 in 32 little-endian bytes.
+        // [123456, None, -1]
+        let array = Decimal256Array::from(vec![
+            Some(i256::from_i128(123_456_i128)),
+            None,
+            Some(i256::from_i128(-1_i128)),
+        ])
+        .with_precision_and_scale(76, 10)
+        .unwrap();
+        let schema = Schema::new(vec![Field::new("col", DataType::Decimal256(76, 10), true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Decimal256(76, 10),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(i256::from_i128(123_456_i128).to_le_bytes());
+        manual.update(i256::from_i128(-1_i128).to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── FixedSizeBinary ───────────────────────────────────────────────────
+
+    #[test]
+    fn digest_fixed_size_binary_nullable_bytes() {
+        // 4-byte fixed-width blobs: [0x01020304, None, 0xDEADBEEF]
+        let mut builder = FixedSizeBinaryBuilder::with_capacity(3, 4);
+        builder.append_value([0x01, 0x02, 0x03, 0x04]).unwrap();
+        builder.append_null();
+        builder.append_value([0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
+        let array = builder.finish();
+
+        let schema = Schema::new(vec![Field::new("col", DataType::FixedSizeBinary(4), true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::FixedSizeBinary(4),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        // Null bytes are skipped entirely; only valid slots' raw bytes are hashed.
+        let mut manual = Sha256::new();
+        manual.update([0x01_u8, 0x02_u8, 0x03_u8, 0x04_u8]);
+        manual.update([0xDE_u8, 0xAD_u8, 0xBE_u8, 0xEF_u8]);
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Binary / LargeBinary ──────────────────────────────────────────────
+
+    #[test]
+    fn digest_binary_nullable_bytes() {
+        // [b"hello", None, b"world"]
+        // Valid entries: (length as usize LE) ++ bytes.
+        // Null entries contribute the sentinel b"NULL" to the data digest.
+        let array = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Binary, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(5_usize.to_le_bytes()); // len("hello")
+        manual.update(b"hello");
+        manual.update(b"NULL"); // null sentinel
+        manual.update(5_usize.to_le_bytes()); // len("world")
+        manual.update(b"world");
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_large_binary_non_nullable_bytes() {
+        // [b"ab", b"cde"] — all valid, length prefix is usize LE
+        let array = LargeBinaryArray::from(vec![b"ab".as_ref(), b"cde".as_ref()]);
+        let schema = Schema::new(vec![Field::new("col", DataType::LargeBinary, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::LargeBinary,
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(2_usize.to_le_bytes());
+        manual.update(b"ab");
+        manual.update(3_usize.to_le_bytes());
+        manual.update(b"cde");
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Utf8 / LargeUtf8 ──────────────────────────────────────────────────
+
+    #[test]
+    fn digest_utf8_nullable_bytes() {
+        // ["foo", None, "ba"]
+        // Valid entries: (length as u64 LE) ++ UTF-8 bytes.
+        // Null entries contribute the sentinel b"NULL" to the data digest.
+        let array = StringArray::from(vec![Some("foo"), None, Some("ba")]);
+        let schema = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new("col", DataType::Utf8, true)])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
+            &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected Nullable buffer");
+        };
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0]);
+        assert!(!null_bit_vec[1]);
+        assert!(null_bit_vec[2]);
+
+        let mut manual = Sha256::new();
+        manual.update(3_u64.to_le_bytes()); // len("foo")
+        manual.update(b"foo");
+        manual.update(b"NULL"); // null sentinel
+        manual.update(2_u64.to_le_bytes()); // len("ba")
+        manual.update(b"ba");
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_large_utf8_non_nullable_bytes() {
+        // ["x", "yz"] — all valid, length prefix is u64 LE
+        let array = LargeStringArray::from(vec!["x", "yz"]);
+        let schema = Schema::new(vec![Field::new("col", DataType::LargeUtf8, false)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::LargeUtf8,
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(1_u64.to_le_bytes());
+        manual.update(b"x");
+        manual.update(2_u64.to_le_bytes());
+        manual.update(b"yz");
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── List<Int32> / LargeList<Int32> ─────────────────────────────────────
+    //
+    // Each outer element is prefixed by its inner element count (u64 LE), then the
+    // raw bytes of the inner array (no length limit — the implementation hashes from
+    // the element's offset to the end of the shared child buffer).
+    // Using a single outer element avoids buffer-bleed from preceding elements.
+
+    #[test]
+    fn digest_list_non_nullable_bytes() {
+        // [[10, 20, 30]] — single outer element, non-nullable List<Int32 nullable>
+        let mut builder = ListBuilder::new(PrimitiveBuilder::<Int32Type>::new());
+        builder.values().append_value(10);
+        builder.values().append_value(20);
+        builder.values().append_value(30);
+        builder.append(true);
+        let array = builder.finish();
+
+        let item_field = Arc::new(Field::new("item", DataType::Int32, true));
+        let schema = Schema::new(vec![Field::new(
+            "col",
+            DataType::List(Arc::clone(&item_field)),
+            false,
+        )]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::List(Arc::clone(&item_field)),
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        // sub-array has 3 elements at offset 0 → raw buffer slice from byte 0
+        let mut manual = Sha256::new();
+        manual.update(3_u64.to_le_bytes()); // element count prefix
+        manual.update(10_i32.to_le_bytes());
+        manual.update(20_i32.to_le_bytes());
+        manual.update(30_i32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_large_list_non_nullable_bytes() {
+        // [[1, 2, 3]] — single outer element, non-nullable LargeList<Int32 nullable>
+        let mut builder = LargeListBuilder::new(PrimitiveBuilder::<Int32Type>::new());
+        builder.values().append_value(1);
+        builder.values().append_value(2);
+        builder.values().append_value(3);
+        builder.append(true);
+        let array = builder.finish();
+
+        let item_field = Arc::new(Field::new("item", DataType::Int32, true));
+        let schema = Schema::new(vec![Field::new(
+            "col",
+            DataType::LargeList(Arc::clone(&item_field)),
+            false,
+        )]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::LargeList(Arc::clone(&item_field)),
+                    false,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
+        else {
+            panic!("Expected NonNullable buffer");
+        };
+
+        let mut manual = Sha256::new();
+        manual.update(3_u64.to_le_bytes());
+        manual.update(1_i32.to_le_bytes());
+        manual.update(2_i32.to_le_bytes());
+        manual.update(3_i32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 }
