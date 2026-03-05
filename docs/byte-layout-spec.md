@@ -1,0 +1,521 @@
+# Starfix Byte Layout Specification
+
+This document describes the **exact byte-level serialization** used by Starfix to compute deterministic hashes of Apache Arrow schemas and record batches. Every byte fed into SHA-256 is specified here, making it possible to implement a compatible hasher in any language.
+
+All multi-byte integers use **little-endian** byte order unless explicitly stated otherwise.
+
+---
+
+## 1. Output Format
+
+Every Starfix hash is **35 bytes**:
+
+```
+[version: 3 bytes] [SHA-256 digest: 32 bytes]
+```
+
+The version prefix is currently `0x00 0x00 0x01` (version 0.0.1).
+
+When displayed as hex, a hash looks like:
+
+```
+000001 <64 hex chars of SHA-256>
+```
+
+---
+
+## 2. Schema Serialization
+
+### 2.1 Canonical JSON String
+
+The schema is serialized as a **compact JSON string** (no whitespace) of an object where:
+
+- **Keys** are field names, sorted alphabetically (via `BTreeMap`).
+- **Values** are objects with keys `"data_type"` and `"nullable"`, with JSON keys sorted alphabetically within every nested object (recursively).
+
+Because all JSON object keys are sorted recursively, the key order is always `"data_type"` before `"nullable"` (and `"data_type"` before `"name"` before `"nullable"` for struct children).
+
+#### Type Canonicalization
+
+Before serialization, these logical equivalence classes are collapsed:
+
+| Arrow type(s)              | Canonical JSON form           |
+|----------------------------|-------------------------------|
+| `Binary`, `LargeBinary`   | `"LargeBinary"`               |
+| `Utf8`, `LargeUtf8`       | `"LargeUtf8"`                 |
+| `List(f)`, `LargeList(f)` | `{"LargeList": <element>}`    |
+| `Dictionary(k, v)`        | canonical form of `v`         |
+
+#### Nested Type Serialization
+
+**Struct fields** are serialized as:
+```json
+{"Struct": [<array of child objects sorted by "name">]}
+```
+Each child object: `{"data_type": ..., "name": "<field_name>", "nullable": <bool>}`.
+
+**List / LargeList elements** are serialized as:
+```json
+{"LargeList": {"data_type": ..., "nullable": <bool>}}
+```
+Note: the Arrow-internal field name (typically `"item"`) is **omitted** — only `data_type` and `nullable` are included.
+
+**Primitive types** use Arrow's built-in serde:
+- `"Int32"`, `"Boolean"`, `"Float64"`, `"LargeBinary"`, `"LargeUtf8"`, etc.
+- `{"Decimal128": [38, 5]}`, `{"Time32": "Second"}`, etc.
+
+### 2.2 Schema Digest
+
+```
+schema_digest = SHA-256(canonical_json_string_bytes)
+```
+
+The UTF-8 bytes of the JSON string are fed directly into SHA-256. The result is 32 bytes.
+
+### 2.3 Concrete Example
+
+Schema: `{name: LargeUtf8 nullable, age: Int32 non-nullable}`
+
+Canonical JSON string (compact, keys sorted):
+```
+{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}
+```
+
+Note: `"age"` comes before `"name"` alphabetically, and `"data_type"` comes before `"nullable"`.
+
+```
+schema_digest = SHA-256(b'{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}')
+```
+
+---
+
+## 3. Field Data Serialization
+
+Each leaf field in the schema is hashed independently into its own SHA-256 digest. Struct fields are flattened: a struct field `address` with children `city` and `zip` becomes two leaf fields `address/city` and `address/zip`.
+
+Each leaf field has a **digest buffer** that is one of:
+- **NonNullable**: a single running SHA-256 for data bytes.
+- **Nullable**: a validity `BitVec` (tracking which elements are valid) plus a running SHA-256 for data bytes.
+
+A field is Nullable if the Arrow field's `nullable` flag is `true`.
+
+### 3.1 Fixed-Size Types
+
+**Types**: `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`, `UInt32`, `Int64`, `UInt64`, `Float16`, `Float32`, `Float64`, `Date32`, `Date64`, `Time32(*)`, `Time64(*)`, `Decimal32`, `Decimal64`, `Decimal128`, `Decimal256`, `FixedSizeBinary(n)`.
+
+| Type | Bytes per element |
+|------|-------------------|
+| Int8 / UInt8 | 1 |
+| Int16 / UInt16 / Float16 | 2 |
+| Int32 / UInt32 / Float32 / Date32 / Decimal32 / Time32 | 4 |
+| Int64 / UInt64 / Float64 / Date64 / Decimal64 / Time64 | 8 |
+| Decimal128 | 16 |
+| Decimal256 | 32 |
+| FixedSizeBinary(n) | n |
+
+**Non-nullable path**: The entire contiguous byte buffer (all elements concatenated, little-endian) is fed into the data digest in a single update.
+
+**Nullable path**:
+1. For each element `i`, push `is_valid(i)` (true=1, false=0) into the validity `BitVec`.
+2. For each **valid** element, feed its little-endian bytes into the data digest.
+3. **Null elements are skipped entirely** — no data bytes are fed.
+
+If a nullable field has no actual nulls (null buffer absent), all elements are marked valid and the entire buffer is fed in one update (same as non-nullable data path).
+
+### 3.2 Boolean Type
+
+Boolean values are **bit-packed** using **MSB-first** (`Msb0`) ordering into bytes.
+
+**Non-nullable**: All values are packed sequentially into a `BitVec<u8, Msb0>`, then the raw bytes are fed into the data digest.
+
+**Nullable**:
+1. Extend the validity `BitVec` as usual.
+2. Only **valid** values are packed (nulls are skipped).
+3. The packed bytes are fed into the data digest.
+
+**Example**: `[true, NULL, false, true]` (nullable, 4 elements)
+- Validity bits: `[1, 0, 1, 1]`
+- Data bits (valid only): `[true, false, true]` → Msb0 packed: `1_0_1_00000` = `0xA0`
+- Bytes fed to data digest: `[0xA0]`
+
+### 3.3 Variable-Length Types (Binary, String)
+
+**Types**: `Binary`, `LargeBinary`, `Utf8`, `LargeUtf8`.
+
+Each element is serialized as:
+```
+[length as u64 little-endian: 8 bytes] [raw bytes: length bytes]
+```
+
+The length prefix is **always `u64`** (8 bytes, little-endian) regardless of the Arrow offset type.
+
+**Non-nullable**: For each element, feed `(len as u64).to_le_bytes()` then the raw bytes.
+
+**Nullable**:
+1. Extend the validity `BitVec`.
+2. For valid elements: feed length prefix + raw bytes.
+3. For null elements: **skip entirely** — no bytes fed to data digest.
+
+### 3.4 List Types
+
+**Types**: `List(field)`, `LargeList(field)`.
+
+Each list element (a sub-array) is serialized as:
+```
+[sub-array element count as u64 little-endian: 8 bytes] [recursive serialization of sub-array]
+```
+
+The element count prefix prevents collisions between differently-grouped lists (e.g., `[[1,2],[3]]` vs `[[1],[2,3]]`).
+
+**Nullable**: Extend validity `BitVec`; skip null list entries entirely.
+
+Sub-array elements are hashed recursively using the same rules.
+
+### 3.5 Struct Types
+
+Struct fields are **not** hashed as a composite. Instead, each leaf field within the struct is extracted and hashed independently under its own path key (e.g., `address/city`, `address/zip`). These paths live in a `BTreeMap`, so they are always processed in alphabetical order.
+
+### 3.6 Dictionary-Encoded Arrays
+
+Dictionary arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked so that the data stream is identical to a non-dictionary array with the same logical values.
+
+---
+
+## 4. Field Digest Finalization
+
+After all record batches have been fed, each field's digest buffer is finalized and fed into the **final combining digest**:
+
+### 4.1 NonNullable Field
+
+```
+final_digest.update( SHA-256(data_bytes).finalize() )    // 32 bytes
+```
+
+The data digest is finalized to 32 bytes and those bytes are fed into the combining digest.
+
+### 4.2 Nullable Field
+
+```
+final_digest.update( bit_count.to_le_bytes() )           // 8 bytes (usize LE = u64 LE on 64-bit)
+for each word in validity_bitvec.as_raw_slice():          // each word is usize (8 bytes on 64-bit)
+    final_digest.update( word.to_be_bytes() )             // 8 bytes big-endian per word
+final_digest.update( SHA-256(data_bytes).finalize() )     // 32 bytes
+```
+
+**Validity BitVec details**:
+- Storage type: `usize` (8 bytes on 64-bit platforms).
+- Bit order: `Lsb0` (least significant bit first within each word).
+- `bit_count` = total number of elements (valid + null), serialized as `usize` little-endian.
+- Each storage word is serialized as `usize` big-endian.
+- The last word may have unused high bits (zero-padded).
+
+---
+
+## 5. Final Combining Digest
+
+The final hash is computed by feeding into a fresh SHA-256:
+
+```
+final_digest = SHA-256()
+
+// 1. Schema digest (32 bytes)
+final_digest.update( schema_digest )
+
+// 2. Field digests in alphabetical order of field path
+for field_path in sorted(field_paths):
+    finalize field's DigestBufferType into final_digest (see Section 4)
+
+raw_hash = final_digest.finalize()    // 32 bytes
+output = [0x00, 0x00, 0x01] ++ raw_hash   // 35 bytes
+```
+
+---
+
+## 6. `hash_array` API
+
+The `hash_array` function hashes a single array (without a schema context). It works slightly differently from the record-batch path:
+
+```
+final_digest = SHA-256()
+
+// 1. Type metadata (canonical JSON string)
+canonical_type = data_type_to_value(effective_data_type)
+json_string = JSON.serialize(canonical_type)     // compact, keys sorted
+final_digest.update( json_string.as_bytes() )
+
+// 2. Data
+digest_buffer = NonNullable(SHA-256()) or Nullable(BitVec(), SHA-256())
+array_digest_update(effective_data_type, effective_array, digest_buffer)
+finalize digest_buffer into final_digest (see Section 4)
+
+raw_hash = final_digest.finalize()    // 32 bytes
+output = [0x00, 0x00, 0x01] ++ raw_hash   // 35 bytes
+```
+
+Dictionary arrays are resolved to their value type before hashing.
+
+---
+
+## 7. Worked Examples
+
+### Example A: Simple Two-Column Table
+
+**Schema**: `{age: Int32 non-nullable, name: LargeUtf8 nullable}`
+
+**Data** (1 record batch, 2 rows):
+
+| age | name    |
+|-----|---------|
+| 25  | "Alice" |
+| 30  | NULL    |
+
+#### Step 1: Schema Digest
+
+Canonical JSON (compact):
+```
+{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}
+```
+
+```
+schema_digest = SHA-256("{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}")
+```
+
+#### Step 2: Field "age" (Int32, non-nullable)
+
+Values: `[25, 30]`
+
+Little-endian bytes:
+- 25 as i32 LE: `19 00 00 00`
+- 30 as i32 LE: `1e 00 00 00`
+
+Data fed to digest: `19 00 00 00 1e 00 00 00` (8 bytes, one contiguous slice)
+
+```
+age_data_digest = SHA-256(0x19000000_1e000000)
+```
+
+Finalization into final_digest (non-nullable):
+```
+final_digest.update( age_data_digest.finalize() )   // 32 bytes
+```
+
+#### Step 3: Field "name" (LargeUtf8, nullable)
+
+Values: `["Alice", NULL]`
+
+**Validity bits** (Lsb0 in usize words):
+- Element 0 ("Alice"): valid → bit = 1
+- Element 1 (NULL): null → bit = 0
+- BitVec contents: bits `[1, 0]`, bit_count = 2
+- As usize (Lsb0): bit 0 = 1, bit 1 = 0 → binary `...0000_0001` = 1
+- `as_raw_slice()` = `[1_usize]`
+
+Validity serialization:
+```
+bit_count LE:  02 00 00 00 00 00 00 00     (2 as usize little-endian)
+word 0 BE:     00 00 00 00 00 00 00 01     (1 as usize big-endian)
+```
+
+**Data bytes** (only valid elements):
+- "Alice": length 5 as u64 LE = `05 00 00 00 00 00 00 00`, then UTF-8 bytes `41 6c 69 63 65`
+- NULL: skipped entirely
+
+```
+name_data_digest = SHA-256(0x0500000000000000_416c696365)
+```
+
+Finalization into final_digest (nullable):
+```
+final_digest.update( 0x0200000000000000 )                   // bit count
+final_digest.update( 0x0000000000000001 )                   // word 0 BE
+final_digest.update( name_data_digest.finalize() )           // 32 bytes
+```
+
+#### Step 4: Final Combination
+
+Fields in alphabetical order: `age`, then `name`.
+
+```
+final_digest = SHA-256()
+final_digest.update( schema_digest )                          // 32 bytes
+final_digest.update( age_data_digest.finalize() )             // 32 bytes (non-nullable)
+final_digest.update( 0x0200000000000000 )                     // name bit count
+final_digest.update( 0x0000000000000001 )                     // name validity word
+final_digest.update( name_data_digest.finalize() )            // 32 bytes
+raw_hash = final_digest.finalize()
+output = 0x000001 ++ raw_hash
+```
+
+---
+
+### Example B: Boolean Array with Nulls (hash_array API)
+
+**Array**: `BooleanArray [true, NULL, false, true]` (nullable)
+
+#### Step 1: Type Metadata
+
+Canonical type JSON: `"Boolean"` (7 bytes as UTF-8)
+
+```
+final_digest.update(b'"Boolean"')
+```
+
+Note: `serde_json::to_string` of a JSON string value includes the surrounding quotes.
+
+#### Step 2: Data
+
+**Validity bits** (Lsb0 in usize):
+- `[1, 0, 1, 1]` → bits: b0=1, b1=0, b2=1, b3=1
+- As usize (Lsb0): binary `...0000_1101` = 13
+- `as_raw_slice()` = `[13_usize]`
+
+**Data bits** (Msb0 packed, valid values only):
+- Valid values: `[true, false, true]` (3 values)
+- Msb0 packing: bit7=true(1), bit6=false(0), bit5=true(1), bits4-0=0
+- Byte: `10100000` = `0xA0`
+
+```
+data_digest = SHA-256(0xA0)
+```
+
+#### Step 3: Finalization
+
+```
+final_digest = SHA-256()
+final_digest.update(b'"Boolean"')                             // type metadata
+final_digest.update( 0x0400000000000000 )                     // 4 bits (bit count LE)
+final_digest.update( 0x000000000000000D )                     // 13 as usize BE
+final_digest.update( data_digest.finalize() )                 // 32 bytes
+raw_hash = final_digest.finalize()
+output = 0x000001 ++ raw_hash
+```
+
+---
+
+### Example C: Non-Nullable Int32 Array (hash_array API)
+
+**Array**: `Int32Array [1, 2, 3]` (non-nullable)
+
+#### Step 1: Type Metadata
+
+Canonical type JSON: `"Int32"` (6 bytes: `22 49 6e 74 33 32 22`... wait, `"Int32"` is the JSON string `"Int32"` including quotes)
+
+Actually: `serde_json::to_string(&json!("Int32"))` produces `"\"Int32\""`, but `data_type_to_value` for Int32 produces the JSON value `"Int32"` (a JSON string). Then `serde_json::to_string` of that JSON string value produces `"\"Int32\""` — the 7-byte string `"Int32"` with quotes.
+
+```
+final_digest.update(b'"Int32"')     // 7 bytes: 22 49 6e 74 33 32 22
+```
+
+#### Step 2: Data
+
+Values as i32 LE bytes:
+- 1: `01 00 00 00`
+- 2: `02 00 00 00`
+- 3: `03 00 00 00`
+
+Entire buffer fed as one slice: `01 00 00 00 02 00 00 00 03 00 00 00` (12 bytes)
+
+```
+data_digest = SHA-256(0x010000000200000003000000)
+```
+
+#### Step 3: Finalization (non-nullable)
+
+```
+final_digest = SHA-256()
+final_digest.update(b'"Int32"')                               // 7 bytes
+final_digest.update( data_digest.finalize() )                 // 32 bytes
+raw_hash = final_digest.finalize()
+output = 0x000001 ++ raw_hash
+```
+
+---
+
+### Example D: Binary Array (hash_array API)
+
+**Array**: `BinaryArray [b"hi", b""]` (non-nullable)
+
+#### Step 1: Type Metadata
+
+`Binary` is canonicalized to `LargeBinary`.
+
+```
+final_digest.update(b'"LargeBinary"')      // 13 bytes
+```
+
+#### Step 2: Data
+
+Each element: `[u64 LE length] [raw bytes]`
+
+- `b"hi"`: length 2 → `02 00 00 00 00 00 00 00` + `68 69`
+- `b""`: length 0 → `00 00 00 00 00 00 00 00` (no raw bytes)
+
+```
+data_digest = SHA-256(0x0200000000000000_6869_0000000000000000)
+```
+
+#### Step 3: Finalization (non-nullable)
+
+```
+final_digest = SHA-256()
+final_digest.update(b'"LargeBinary"')
+final_digest.update( data_digest.finalize() )
+raw_hash = final_digest.finalize()
+output = 0x000001 ++ raw_hash
+```
+
+---
+
+### Example E: Column-Order Independence
+
+Two record batches with the same logical data but different column orders must produce identical hashes.
+
+**Batch 1** (columns: x, y):
+```
+Schema: {x: Int32 non-nullable, y: Boolean nullable}
+x: [10]
+y: [true]
+```
+
+**Batch 2** (columns: y, x):
+```
+Schema: {y: Boolean nullable, x: Int32 non-nullable}
+y: [true]
+x: [10]
+```
+
+Both produce the same canonical schema JSON:
+```
+{"x":{"data_type":"Int32","nullable":false},"y":{"data_type":"Boolean","nullable":true}}
+```
+
+Both produce the same field digests (fields processed alphabetically: `x` then `y`):
+- Field `x`: `SHA-256(0x0a000000)` (10 as i32 LE)
+- Field `y`: validity `[1]` (1 bit, 1 word), data `0x80` (true packed Msb0)
+
+Therefore `hash_record_batch(batch1) == hash_record_batch(batch2)`.
+
+---
+
+### Example F: Type Equivalence (Utf8 vs LargeUtf8)
+
+**Array 1**: `StringArray ["ab"]` (non-nullable, Arrow type `Utf8`)
+**Array 2**: `LargeStringArray ["ab"]` (non-nullable, Arrow type `LargeUtf8`)
+
+Both produce the same type metadata: `"LargeUtf8"` (after canonicalization).
+
+Both produce the same data bytes:
+```
+02 00 00 00 00 00 00 00   (length 2 as u64 LE)
+61 62                      ("ab" as UTF-8)
+```
+
+Therefore `hash_array(array1) == hash_array(array2)`.
+
+---
+
+## 8. Platform Considerations
+
+- **Integer sizes**: All length prefixes use `u64` (8 bytes). Validity bit counts and validity words use `usize`, which is 8 bytes on 64-bit platforms. This means hashes are **platform-dependent** if `usize` differs (32-bit vs 64-bit).
+- **Byte order**: Data values use little-endian. Validity words use big-endian. Bit counts use little-endian.
+- **Floating point**: IEEE 754 representation is hashed directly. `NaN` values with different bit patterns produce different hashes. `+0.0` and `-0.0` produce different hashes.
