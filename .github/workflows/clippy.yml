@@ -1,0 +1,19 @@
+name: rust_checks
+on:
+  - pull_request
+jobs:
+  rust-syntax-style-format-and-integration:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust + components
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.91.1
+          components: rustfmt,clippy
+      - name: Run syntax and style tests
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Run format test
+        run: cargo fmt --check

@@ -1,0 +1,201 @@
+{
+  "binary_name": {
+    "data_type": "Binary",
+    "nullable": true
+  },
+  "bool_name": {
+    "data_type": "Boolean",
+    "nullable": true
+  },
+  "date32_name": {
+    "data_type": "Date32",
+    "nullable": false
+  },
+  "date64_name": {
+    "data_type": "Date64",
+    "nullable": false
+  },
+  "decimal128_name": {
+    "data_type": {
+      "Decimal128": [
+        38,
+        5
+      ]
+    },
+    "nullable": true
+  },
+  "decimal32_name": {
+    "data_type": {
+      "Decimal32": [
+        9,
+        2
+      ]
+    },
+    "nullable": true
+  },
+  "decimal64_name": {
+    "data_type": {
+      "Decimal64": [
+        18,
+        3
+      ]
+    },
+    "nullable": true
+  },
+  "doubly_nested_struct_name": {
+    "data_type": {
+      "Struct": [
+        {
+          "data_type": "Int32",
+          "name": "outer_field",
+          "nullable": false
+        },
+        {
+          "data_type": {
+            "Struct": [
+              {
+                "data_type": "Utf8",
+                "name": "middle_field",
+                "nullable": true
+              },
+              {
+                "data_type": {
+                  "Struct": [
+                    {
+                      "data_type": "Int64",
+                      "name": "inner_field1",
+                      "nullable": false
+                    },
+                    {
+                      "data_type": "Boolean",
+                      "name": "inner_field2",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "name": "inner",
+                "nullable": false
+              }
+            ]
+          },
+          "name": "middle",
+          "nullable": false
+        }
+      ]
+    },
+    "nullable": true
+  },
+  "float32_name": {
+    "data_type": "Float32",
+    "nullable": false
+  },
+  "float64_name": {
+    "data_type": "Float64",
+    "nullable": false
+  },
+  "int16_name": {
+    "data_type": "Int16",
+    "nullable": false
+  },
+  "int32_name": {
+    "data_type": "Int32",
+    "nullable": false
+  },
+  "int64_name": {
+    "data_type": "Int64",
+    "nullable": false
+  },
+  "int8_name": {
+    "data_type": "Int8",
+    "nullable": false
+  },
+  "large_binary_name": {
+    "data_type": "LargeBinary",
+    "nullable": true
+  },
+  "large_list_name": {
+    "data_type": {
+      "LargeList": {
+        "data_type": "Int32",
+        "name": "item",
+        "nullable": true
+      }
+    },
+    "nullable": true
+  },
+  "large_utf8_name": {
+    "data_type": "LargeUtf8",
+    "nullable": true
+  },
+  "list_name": {
+    "data_type": {
+      "List": {
+        "data_type": "Int32",
+        "name": "item",
+        "nullable": true
+      }
+    },
+    "nullable": true
+  },
+  "struct_name": {
+    "data_type": {
+      "Struct": [
+        {
+          "data_type": "Int32",
+          "name": "struct_field1",
+          "nullable": false
+        },
+        {
+          "data_type": "Utf8",
+          "name": "struct_field2",
+          "nullable": true
+        }
+      ]
+    },
+    "nullable": true
+  },
+  "time32_millis_name": {
+    "data_type": {
+      "Time32": "Millisecond"
+    },
+    "nullable": false
+  },
+  "time32_second_name": {
+    "data_type": {
+      "Time32": "Second"
+    },
+    "nullable": false
+  },
+  "time64_micro_name": {
+    "data_type": {
+      "Time64": "Microsecond"
+    },
+    "nullable": false
+  },
+  "time64_nano_name": {
+    "data_type": {
+      "Time64": "Nanosecond"
+    },
+    "nullable": false
+  },
+  "uint16_name": {
+    "data_type": "UInt16",
+    "nullable": false
+  },
+  "uint32_name": {
+    "data_type": "UInt32",
+    "nullable": false
+  },
+  "uint64_name": {
+    "data_type": "UInt64",
+    "nullable": false
+  },
+  "uint8_name": {
+    "data_type": "UInt8",
+    "nullable": false
+  },
+  "utf8_name": {
+    "data_type": "Utf8",
+    "nullable": true
+  }
+}

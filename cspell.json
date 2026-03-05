@@ -3,11 +3,13 @@
         "datatypes",
         "pyarrow",
         "pythonapi",
-        "uniffi"
+        "uniffi",
+        "uids",
+        "bitvec",
+        "indoc",
+        "starfix"
     ],
-    "ignoreWords": [
-
-    ],
+    "ignoreWords": [],
     "useGitignore": false,
     "ignorePaths": [
         "Cargo.lock",
