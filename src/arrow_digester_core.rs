@@ -11,13 +11,12 @@ use arrow::{
         LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, OffsetSizeTrait,
         RecordBatch, StringArray, StructArray,
     },
+    compute::cast,
     datatypes::{DataType, Schema},
 };
 use arrow_schema::Field;
 use bitvec::prelude::*;
 use digest::Digest;
-
-const NULL_BYTES: &[u8] = b"NULL";
 
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
@@ -56,9 +55,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Hash a record batch and update the internal digests.
     pub fn update(&mut self, record_batch: &RecordBatch) {
-        // Verify schema matches
+        // Verify schema matches logically (same fields regardless of order, with type canonicalization)
         assert!(
-            *record_batch.schema() == self.schema,
+            Self::serialized_schema(record_batch.schema().as_ref())
+                == Self::serialized_schema(&self.schema),
             "Record batch schema does not match ArrowDigester schema"
         );
 
@@ -112,21 +112,36 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// This function will panic if JSON serialization of the data type fails.
     ///
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
+        // Resolve dictionary arrays to their plain value type
+        let (effective_type, resolved_array);
+        let effective_array: &dyn Array =
+            if let DataType::Dictionary(_, value_type) = array.data_type() {
+                resolved_array = cast(array, value_type.as_ref())
+                    .expect("Failed to cast dictionary to plain array");
+                effective_type = value_type.as_ref().clone();
+                resolved_array.as_ref()
+            } else {
+                effective_type = array.data_type().clone();
+                array
+            };
+
         let mut final_digest = D::new();
 
-        let data_type_serialized = serde_json::to_string(&array.data_type())
+        // Use canonical type serialization for metadata
+        let canonical_type = Self::data_type_to_value(&effective_type);
+        let data_type_serialized = serde_json::to_string(&canonical_type)
             .expect("Failed to serialize data type to string");
 
         // Update the digest buffer with the array metadata and field data
         final_digest.update(data_type_serialized);
 
         // Now we update it with the actual array data
-        let mut digest_buffer = if array.is_nullable() {
+        let mut digest_buffer = if effective_array.is_nullable() {
             DigestBufferType::Nullable(BitVec::new(), D::new())
         } else {
             DigestBufferType::NonNullable(D::new())
         };
-        Self::array_digest_update(array.data_type(), array, &mut digest_buffer);
+        Self::array_digest_update(&effective_type, effective_array, &mut digest_buffer);
         Self::finalize_digest(&mut final_digest, digest_buffer);
 
         // Finalize and return the digest
@@ -201,36 +216,56 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Convert a `DataType` to a JSON value, recursively converting any inner `Field`
     /// references to only include `name`, `data_type`, and `nullable`.
     fn data_type_to_value(data_type: &DataType) -> serde_json::Value {
-        match data_type {
+        let value = match data_type {
             DataType::Struct(fields) => {
-                let fields_json: Vec<serde_json::Value> = fields
+                let mut sorted_fields: Vec<_> = fields.iter().collect();
+                sorted_fields.sort_by_key(|f| f.name().clone());
+                let fields_json: Vec<serde_json::Value> = sorted_fields
                     .iter()
                     .map(|f| Self::inner_field_to_value(f))
                     .collect();
                 serde_json::json!({ "Struct": fields_json })
             }
-            DataType::List(field) => {
-                serde_json::json!({ "List": Self::inner_field_to_value(field) })
-            }
-            DataType::LargeList(field) => {
-                serde_json::json!({ "LargeList": Self::inner_field_to_value(field) })
+            // Canonicalize List → LargeList; drop Arrow-internal field name ("item")
+            DataType::List(field) | DataType::LargeList(field) => {
+                serde_json::json!({ "LargeList": Self::element_type_to_value(field) })
             }
             DataType::FixedSizeList(field, size) => {
-                serde_json::json!({ "FixedSizeList": [Self::inner_field_to_value(field), size] })
+                serde_json::json!({ "FixedSizeList": [Self::element_type_to_value(field), size] })
             }
             DataType::Map(field, sorted) => {
                 serde_json::json!({ "Map": [Self::inner_field_to_value(field), sorted] })
             }
+            // Canonicalize Binary → LargeBinary
+            DataType::Binary => {
+                serde_json::to_value(&DataType::LargeBinary).expect("Failed to serialize data type")
+            }
+            // Canonicalize Utf8 → LargeUtf8
+            DataType::Utf8 => {
+                serde_json::to_value(&DataType::LargeUtf8).expect("Failed to serialize data type")
+            }
+            // Canonicalize Dictionary → value type
+            DataType::Dictionary(_, value_type) => Self::data_type_to_value(value_type.as_ref()),
             // For all non-nested types, Arrow's default serde is sufficient
             other => serde_json::to_value(other).expect("Failed to serialize data type"),
-        }
+        };
+        Self::sort_json_value(value)
     }
 
-    /// Convert an inner field (e.g., list item, struct child) to a JSON value
-    /// with only `name`, `data_type`, and `nullable`.
+    /// Convert an inner field (e.g., struct child) to a JSON value
+    /// with `name`, `data_type`, and `nullable`.
     fn inner_field_to_value(field: &Field) -> serde_json::Value {
         serde_json::json!({
             "name": field.name(),
+            "data_type": Self::data_type_to_value(field.data_type()),
+            "nullable": field.is_nullable(),
+        })
+    }
+
+    /// Convert a container element field (e.g., list item) to a JSON value
+    /// with only `data_type` and `nullable`, omitting the Arrow-internal field name.
+    fn element_type_to_value(field: &Field) -> serde_json::Value {
+        serde_json::json!({
             "data_type": Self::data_type_to_value(field.data_type()),
             "nullable": field.is_nullable(),
         })
@@ -434,7 +469,11 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::LargeListView(_) => todo!(),
             DataType::Struct(_) => todo!(),
             DataType::Union(_, _) => todo!(),
-            DataType::Dictionary(_, _) => todo!(),
+            DataType::Dictionary(_, value_type) => {
+                let resolved = cast(array, value_type.as_ref())
+                    .expect("Failed to cast dictionary to plain array");
+                Self::array_digest_update(value_type.as_ref(), resolved.as_ref(), digest);
+            }
             DataType::Decimal128(_, _) => {
                 Self::hash_fixed_size_array(array, digest, 16);
             }
@@ -515,36 +554,30 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DigestBufferType::NonNullable(data_digest) => {
                 for i in 0..array.len() {
                     let value = array.value(i);
-                    data_digest.update(value.len().to_le_bytes());
+                    data_digest.update((value.len() as u64).to_le_bytes());
                     data_digest.update(value);
                 }
             }
             DigestBufferType::Nullable(null_bit_vec, data_digest) => {
                 // Deal with the null bits first
-                if let Some(null_buf) = array.nulls() {
-                    // We would need to iterate through the null buffer and push it into the null_bit_vec
-                    for i in 0..array.len() {
-                        null_bit_vec.push(null_buf.is_valid(i));
-                    }
+                Self::handle_null_bits(array, null_bit_vec);
 
-                    for i in 0..array.len() {
-                        if null_buf.is_valid(i) {
-                            let value = array.value(i);
-                            data_digest.update(value.len().to_le_bytes());
-                            data_digest.update(value);
-                        } else {
-                            data_digest.update(NULL_BYTES);
+                match array.nulls() {
+                    Some(null_buf) => {
+                        for i in 0..array.len() {
+                            if null_buf.is_valid(i) {
+                                let value = array.value(i);
+                                data_digest.update((value.len() as u64).to_le_bytes());
+                                data_digest.update(value);
+                            }
                         }
                     }
-                } else {
-                    // All valid, therefore we can extend the bit vector with all true values
-                    null_bit_vec.extend(repeat_n(true, array.len()));
-
-                    // Deal with the data
-                    for i in 0..array.len() {
-                        let value = array.value(i);
-                        data_digest.update(value.len().to_le_bytes());
-                        data_digest.update(value);
+                    None => {
+                        for i in 0..array.len() {
+                            let value = array.value(i);
+                            data_digest.update((value.len() as u64).to_le_bytes());
+                            data_digest.update(value);
+                        }
                     }
                 }
             }
@@ -574,8 +607,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                                 let value = array.value(i);
                                 data_digest.update((value.len() as u64).to_le_bytes());
                                 data_digest.update(value.as_bytes());
-                            } else {
-                                data_digest.update(NULL_BYTES);
                             }
                         }
                     }
@@ -920,7 +951,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "9841aab2dfeb637872d41422d33fca1e939f06b8fa0dcec66ff3782592cf9565"
+            "e13ce8a993a636f70e30bc2f4c0667fa6a42aeef94d1a32e78e8fd8dbc59b0a0"
         );
     }
 
@@ -1789,8 +1820,8 @@ mod tests {
     #[test]
     fn digest_binary_nullable_bytes() {
         // [b"hello", None, b"world"]
-        // Valid entries: (length as usize LE) ++ bytes.
-        // Null entries contribute the sentinel b"NULL" to the data digest.
+        // Valid entries: (length as u64 LE) ++ bytes.
+        // Null entries are skipped entirely in the data digest.
         let array = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
         let schema = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
         let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
@@ -1814,10 +1845,10 @@ mod tests {
         assert!(null_bit_vec[2]);
 
         let mut manual = Sha256::new();
-        manual.update(5_usize.to_le_bytes()); // len("hello")
+        manual.update(5_u64.to_le_bytes()); // len("hello")
         manual.update(b"hello");
-        manual.update(b"NULL"); // null sentinel
-        manual.update(5_usize.to_le_bytes()); // len("world")
+        // null entry skipped — no sentinel bytes
+        manual.update(5_u64.to_le_bytes()); // len("world")
         manual.update(b"world");
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
@@ -1846,9 +1877,9 @@ mod tests {
         };
 
         let mut manual = Sha256::new();
-        manual.update(2_usize.to_le_bytes());
+        manual.update(2_u64.to_le_bytes());
         manual.update(b"ab");
-        manual.update(3_usize.to_le_bytes());
+        manual.update(3_u64.to_le_bytes());
         manual.update(b"cde");
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
@@ -1859,7 +1890,7 @@ mod tests {
     fn digest_utf8_nullable_bytes() {
         // ["foo", None, "ba"]
         // Valid entries: (length as u64 LE) ++ UTF-8 bytes.
-        // Null entries contribute the sentinel b"NULL" to the data digest.
+        // Null entries are skipped entirely in the data digest.
         let array = StringArray::from(vec![Some("foo"), None, Some("ba")]);
         let schema = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
         let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
@@ -1885,7 +1916,7 @@ mod tests {
         let mut manual = Sha256::new();
         manual.update(3_u64.to_le_bytes()); // len("foo")
         manual.update(b"foo");
-        manual.update(b"NULL"); // null sentinel
+        // null entry skipped — no sentinel bytes
         manual.update(2_u64.to_le_bytes()); // len("ba")
         manual.update(b"ba");
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
