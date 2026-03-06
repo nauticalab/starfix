@@ -9,6 +9,12 @@
 mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
     #![expect(
+        clippy::similar_names,
+        reason = "child_a/child_b naming is clear in test context"
+    )]
+    #![expect(clippy::redundant_clone, reason = "Clones for clarity in test setup")]
+    #![expect(clippy::absolute_paths, reason = "One-off use in test")]
+    #![expect(
         clippy::big_endian_bytes,
         reason = "Starfix spec requires BE serialization of validity words"
     )]
@@ -60,8 +66,7 @@ mod tests {
         .unwrap();
 
         // ── Step 1: Schema digest ────────────────────────────────────────
-        let schema_json =
-            r#"{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}"#;
+        let schema_json = r#"{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}"#;
         let schema_digest = Sha256::digest(schema_json.as_bytes());
 
         // Verify the library agrees on schema hash
@@ -94,7 +99,7 @@ mod tests {
         let mut name_data = Sha256::new();
         name_data.update(5_u64.to_le_bytes()); // length prefix
         name_data.update(b"Alice"); // raw UTF-8 bytes
-        // NULL element: nothing fed
+                                    // NULL element: nothing fed
         let name_data_finalized = name_data.finalize();
 
         // ── Step 4: Final combination ────────────────────────────────────
@@ -270,8 +275,7 @@ mod tests {
         .unwrap();
 
         // ── Manual computation ───────────────────────────────────────────
-        let schema_json =
-            r#"{"x":{"data_type":"Int32","nullable":false},"y":{"data_type":"Boolean","nullable":true}}"#;
+        let schema_json = r#"{"x":{"data_type":"Int32","nullable":false},"y":{"data_type":"Boolean","nullable":true}}"#;
         let schema_digest = Sha256::digest(schema_json.as_bytes());
 
         // Field "x" (Int32, non-nullable): value 10
@@ -458,8 +462,7 @@ mod tests {
         ]);
 
         // ── Schema digest ────────────────────────────────────────────────
-        let schema_json =
-            r#"{"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"Boolean","nullable":true}}"#;
+        let schema_json = r#"{"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"Boolean","nullable":true}}"#;
         let schema_digest = Sha256::digest(schema_json.as_bytes());
 
         // ── Field "a" (Int32, non-nullable): no data fed ─────────────────
@@ -681,8 +684,7 @@ mod tests {
         // ── Type metadata ────────────────────────────────────────────────
         // Canonical: {"Struct":[{"data_type":"Int32","name":"a","nullable":false},
         //                       {"data_type":"Boolean","name":"b","nullable":false}]}
-        let type_json =
-            r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Boolean","name":"b","nullable":false}]}"#;
+        let type_json = r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Boolean","name":"b","nullable":false}]}"#;
 
         // ── Child "a" (Int32, non-nullable) ──────────────────────────────
         // Values: [1, 2]
@@ -749,12 +751,13 @@ mod tests {
             ],
             // Struct-level validity: [valid, null, valid]
             // Buffer from NullBuffer: true=valid, false=null
-            NullBuffer::from(vec![true, false, true]).into_inner().into_inner(),
+            NullBuffer::from(vec![true, false, true])
+                .into_inner()
+                .into_inner(),
         ));
 
         // ── Type metadata ────────────────────────────────────────────────
-        let type_json =
-            r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}"#;
+        let type_json = r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}"#;
 
         // ── Struct-level validity (Lsb0, usize) ─────────────────────────
         // [valid, null, valid] → bits [1, 0, 1] → 0b101 = 5
@@ -948,7 +951,7 @@ mod tests {
         // List element 0: struct children finalized into data (no size prefix here)
         items_data.update(e0_child_id_finalized); // non-nullable child: 32 bytes
         items_data.update(e0_child_label_finalized); // non-nullable child: 32 bytes
-        // List element 1: struct children finalized into data
+                                                     // List element 1: struct children finalized into data
         items_data.update(e1_child_id_finalized);
         items_data.update(e1_child_label_finalized);
         let items_data_finalized = items_data.finalize();

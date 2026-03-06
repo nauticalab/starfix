@@ -667,8 +667,7 @@ mod tests {
         )]));
 
         let ints = Arc::new(Int32Array::from(vec![1, 2, 3])) as ArrayRef;
-        let bools =
-            Arc::new(BooleanArray::from(vec![Some(true), Some(false), None])) as ArrayRef;
+        let bools = Arc::new(BooleanArray::from(vec![Some(true), Some(false), None])) as ArrayRef;
 
         let struct1 = StructArray::from(vec![
             (
@@ -692,10 +691,8 @@ mod tests {
             ),
         ]);
 
-        let batch1 =
-            RecordBatch::try_new(schema1, vec![Arc::new(struct1) as ArrayRef]).unwrap();
-        let batch2 =
-            RecordBatch::try_new(schema2, vec![Arc::new(struct2) as ArrayRef]).unwrap();
+        let batch1 = RecordBatch::try_new(schema1, vec![Arc::new(struct1) as ArrayRef]).unwrap();
+        let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(struct2) as ArrayRef]).unwrap();
 
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch1)),
@@ -757,16 +754,9 @@ mod tests {
     #[test]
 
     fn binary_and_large_binary_array_should_hash_equal() {
-        let bin = BinaryArray::from(vec![
-            Some(b"hello".as_ref()),
-            None,
-            Some(b"world".as_ref()),
-        ]);
-        let large_bin = LargeBinaryArray::from(vec![
-            Some(b"hello".as_ref()),
-            None,
-            Some(b"world".as_ref()),
-        ]);
+        let bin = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
+        let large_bin =
+            LargeBinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
 
         assert_eq!(
             encode(ArrowDigester::hash_array(&bin)),
@@ -800,19 +790,13 @@ mod tests {
 
         let batch1 = RecordBatch::try_new(
             schema1,
-            vec![Arc::new(BinaryArray::from(vec![
-                Some(b"abc".as_ref()),
-                None,
-            ])) as ArrayRef],
+            vec![Arc::new(BinaryArray::from(vec![Some(b"abc".as_ref()), None])) as ArrayRef],
         )
         .unwrap();
 
         let batch2 = RecordBatch::try_new(
             schema2,
-            vec![Arc::new(LargeBinaryArray::from(vec![
-                Some(b"abc".as_ref()),
-                None,
-            ])) as ArrayRef],
+            vec![Arc::new(LargeBinaryArray::from(vec![Some(b"abc".as_ref()), None])) as ArrayRef],
         )
         .unwrap();
 
@@ -846,9 +830,8 @@ mod tests {
     fn dictionary_int_values_should_hash_same_as_plain() {
         let plain = StringArray::from(vec![Some("x"), Some("y"), Some("x")]);
 
-        let dict: DictionaryArray<Int8Type> = vec![Some("x"), Some("y"), Some("x")]
-            .into_iter()
-            .collect();
+        let dict: DictionaryArray<Int8Type> =
+            vec![Some("x"), Some("y"), Some("x")].into_iter().collect();
 
         assert_eq!(
             encode(ArrowDigester::hash_array(&plain)),
@@ -862,9 +845,8 @@ mod tests {
     fn dictionary_with_nulls_should_hash_same_as_plain() {
         let plain = StringArray::from(vec![Some("a"), None, Some("b"), None]);
 
-        let dict: DictionaryArray<Int32Type> = vec![Some("a"), None, Some("b"), None]
-            .into_iter()
-            .collect();
+        let dict: DictionaryArray<Int32Type> =
+            vec![Some("a"), None, Some("b"), None].into_iter().collect();
 
         assert_eq!(
             encode(ArrowDigester::hash_array(&plain)),

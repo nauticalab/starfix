@@ -152,10 +152,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.update(data_type_serialized);
 
         // Now we update it with the actual array data
-        let mut digest_buffer = DigestBufferType::new(
-            effective_array.is_nullable(),
-            is_list_type(&effective_type),
-        );
+        let mut digest_buffer =
+            DigestBufferType::new(effective_array.is_nullable(), is_list_type(&effective_type));
         Self::array_digest_update(&effective_type, effective_array, &mut digest_buffer);
         Self::finalize_digest(&mut final_digest, digest_buffer);
 
@@ -1979,13 +1977,19 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let structural_digest = buf.structural.as_ref().expect("Expected structural digest for list");
+        let structural_digest = buf
+            .structural
+            .as_ref()
+            .expect("Expected structural digest for list");
         let data_digest = &buf.data;
 
         // Structural digest: element count (sizes separated from leaf data)
         let mut manual_structural = Sha256::new();
         manual_structural.update(3_u64.to_le_bytes()); // element count prefix
-        assert_eq!(structural_digest.clone().finalize(), manual_structural.finalize());
+        assert_eq!(
+            structural_digest.clone().finalize(),
+            manual_structural.finalize()
+        );
 
         // Data/leaf digest: only the raw leaf values
         let mut manual_data = Sha256::new();
@@ -2026,13 +2030,19 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let structural_digest = buf.structural.as_ref().expect("Expected structural digest for list");
+        let structural_digest = buf
+            .structural
+            .as_ref()
+            .expect("Expected structural digest for list");
         let data_digest = &buf.data;
 
         // Structural digest: element count (sizes separated from leaf data)
         let mut manual_structural = Sha256::new();
         manual_structural.update(3_u64.to_le_bytes());
-        assert_eq!(structural_digest.clone().finalize(), manual_structural.finalize());
+        assert_eq!(
+            structural_digest.clone().finalize(),
+            manual_structural.finalize()
+        );
 
         // Data/leaf digest: only the raw leaf values
         let mut manual_data = Sha256::new();
