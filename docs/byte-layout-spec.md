@@ -93,11 +93,17 @@ schema_digest = SHA-256(b'{"age":{"data_type":"Int32","nullable":false},"name":{
 
 Each leaf field in the schema is hashed independently into its own SHA-256 digest. Struct fields are flattened: a struct field `address` with children `city` and `zip` becomes two leaf fields `address/city` and `address/zip`.
 
-Each leaf field has a **digest buffer** that is one of:
-- **NonNullable**: a single running SHA-256 for data bytes.
-- **Nullable**: a validity `BitVec` (tracking which elements are valid) plus a running SHA-256 for data bytes.
+Each leaf field has a **digest buffer** containing up to three components:
 
-A field is Nullable if the Arrow field's `nullable` flag is `true`.
+| Component | Present when | Purpose |
+|-----------|-------------|---------|
+| `null_bits` (BitVec) | field is nullable | Tracks which elements are valid vs null |
+| `structural` (SHA-256) | field is a list type (`List` or `LargeList`) | Accumulates element counts (structure) |
+| `data` (SHA-256) | always | Accumulates leaf data bytes |
+
+A field is nullable if the Arrow field's `nullable` flag is `true`. A field is "structured" if its (canonical) data type is `List` or `LargeList`.
+
+This separation of structural information from leaf data ensures that list element boundaries are hashed independently from the values they contain. For example, `[[1,2],[3]]` and `[[1],[2,3]]` differ in their structural digest (element counts `[2,1]` vs `[1,2]`) even though their leaf data digest is identical (`[1,2,3]`).
 
 ### 3.1 Fixed-Size Types
 
@@ -160,16 +166,46 @@ The length prefix is **always `u64`** (8 bytes, little-endian) regardless of the
 
 **Types**: `List(field)`, `LargeList(field)`.
 
-Each list element (a sub-array) is serialized as:
+List types use **structural hashing**: element counts are written to a separate `structural` SHA-256 digest, while leaf data from sub-arrays flows into the `data` digest. This separation prevents collisions between differently-grouped lists (e.g., `[[1,2],[3]]` vs `[[1],[2,3]]`).
+
+For each valid list element (a sub-array):
+
+1. **Structural digest** receives: `[sub-array element count as u64 little-endian: 8 bytes]`
+2. **Data digest** receives: recursive serialization of the sub-array's leaf values
+
+**Nullable**: Extend validity `BitVec`; skip null list entries entirely (no bytes to either digest).
+
+Sub-array elements are hashed recursively using the same rules. If a list contains nested lists (e.g., `List<List<Int32>>`), each nesting level writes its element counts to the same structural digest, and only the innermost leaf values reach the data digest.
+
+#### Concrete Example: Structural vs Leaf Separation
+
+For `LargeList<Int32>` with data `[[1,2],[3]]`:
+
 ```
-[sub-array element count as u64 little-endian: 8 bytes] [recursive serialization of sub-array]
+structural digest receives:
+    02 00 00 00 00 00 00 00     (element 0: 2 items, u64 LE)
+    01 00 00 00 00 00 00 00     (element 1: 1 item, u64 LE)
+
+data digest receives:
+    01 00 00 00                  (1 as i32 LE)
+    02 00 00 00                  (2 as i32 LE)
+    03 00 00 00                  (3 as i32 LE)
 ```
 
-The element count prefix prevents collisions between differently-grouped lists (e.g., `[[1,2],[3]]` vs `[[1],[2,3]]`).
+Compare with `[[1],[2,3]]`:
 
-**Nullable**: Extend validity `BitVec`; skip null list entries entirely.
+```
+structural digest receives:
+    01 00 00 00 00 00 00 00     (element 0: 1 item)
+    02 00 00 00 00 00 00 00     (element 1: 2 items)
 
-Sub-array elements are hashed recursively using the same rules.
+data digest receives:
+    01 00 00 00                  (same leaf bytes)
+    02 00 00 00
+    03 00 00 00
+```
+
+The data digests are identical, but the structural digests differ — so the final hashes differ.
 
 ### 3.5 Struct Types
 
@@ -188,12 +224,14 @@ When a struct appears as a standalone array (`hash_array`) or as a sub-array wit
 2. **Children sorted alphabetically** by field name.
 
 3. **For each child** (in sorted order):
-   - Create a fresh `DigestBufferType` for the child. The child is **effectively nullable** if either the child field is nullable OR the struct has null rows.
+   - Create a fresh digest buffer for the child. The child is **effectively nullable** if either the child field is nullable OR the struct has null rows. The child gets a **structural digest** if it is a list type.
    - If the struct has null rows, **propagate struct nulls** to the child: `combined_valid(i) = struct_valid(i) AND child_valid(i)`. This ensures undefined data at null struct positions is never hashed.
    - Hash the child recursively via `array_digest_update`.
-   - **Finalize the child digest** and write the resulting bytes into the parent's data stream:
-     - NonNullable child: `SHA-256(child_data).finalize()` (32 bytes)
-     - Nullable child: `bit_count LE (8B) || validity_words BE (8B each) || SHA-256(child_data).finalize() (32B)`
+   - **Finalize the child digest** and write the resulting bytes into the parent's data stream (in the order: null_bits, structural, data):
+     - Non-nullable, non-list child: `SHA-256(child_data).finalize()` (32 bytes)
+     - Nullable, non-list child: `bit_count LE (8B) || validity_words BE (8B each) || SHA-256(child_data).finalize() (32B)`
+     - Non-nullable list child: `SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
+     - Nullable list child: `bit_count LE (8B) || validity_words BE (8B each) || SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
 
 The parent's data stream thus contains the concatenation of all children's finalized bytes (in alphabetical order).
 
@@ -205,17 +243,23 @@ Dictionary arrays are **resolved to their plain equivalent** before hashing. The
 
 ## 4. Field Digest Finalization
 
-After all record batches have been fed, each field's digest buffer is finalized and fed into the **final combining digest**:
+After all record batches have been fed, each field's digest buffer is finalized and fed into the **final combining digest**. The three components are written in this fixed order:
 
-### 4.1 NonNullable Field
+```
+1. null_bits    (if present — nullable fields only)
+2. structural   (if present — list fields only)
+3. data         (always present)
+```
+
+### 4.1 Non-Nullable, Non-List Field
 
 ```
 final_digest.update( SHA-256(data_bytes).finalize() )    // 32 bytes
 ```
 
-The data digest is finalized to 32 bytes and those bytes are fed into the combining digest.
+Only the data digest is finalized (32 bytes).
 
-### 4.2 Nullable Field
+### 4.2 Nullable, Non-List Field
 
 ```
 final_digest.update( bit_count.to_le_bytes() )           // 8 bytes (usize LE = u64 LE on 64-bit)
@@ -224,7 +268,24 @@ for each word in validity_bitvec.as_raw_slice():          // each word is usize 
 final_digest.update( SHA-256(data_bytes).finalize() )     // 32 bytes
 ```
 
-**Validity BitVec details**:
+### 4.3 Non-Nullable List Field
+
+```
+final_digest.update( SHA-256(structural_bytes).finalize() )   // 32 bytes (element counts)
+final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes (leaf values)
+```
+
+### 4.4 Nullable List Field
+
+```
+final_digest.update( bit_count.to_le_bytes() )                // 8 bytes
+for each word in validity_bitvec.as_raw_slice():
+    final_digest.update( word.to_be_bytes() )                  // 8 bytes per word
+final_digest.update( SHA-256(structural_bytes).finalize() )    // 32 bytes (element counts)
+final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes (leaf values)
+```
+
+**Validity BitVec details** (applies to all nullable variants):
 - Storage type: `usize` (8 bytes on 64-bit platforms).
 - Bit order: `Lsb0` (least significant bit first within each word).
 - `bit_count` = total number of elements (valid + null), serialized as `usize` little-endian.
@@ -265,8 +326,12 @@ canonical_type = data_type_to_value(effective_data_type)
 json_string = JSON.serialize(canonical_type)     // compact, keys sorted
 final_digest.update( json_string.as_bytes() )
 
-// 2. Data
-digest_buffer = NonNullable(SHA-256()) or Nullable(BitVec(), SHA-256())
+// 2. Data (with structural separation for list types)
+digest_buffer = {
+    null_bits:  BitVec if nullable, else absent
+    structural: SHA-256() if list type, else absent
+    data:       SHA-256()
+}
 array_digest_update(effective_data_type, effective_array, digest_buffer)
 finalize digest_buffer into final_digest (see Section 4)
 
@@ -722,9 +787,9 @@ Canonical JSON (element type omits Arrow-internal field name "item"):
 {"items":{"data_type":{"LargeList":{"data_type":{"Struct":[{"data_type":"Int32","name":"id","nullable":false},{"data_type":"LargeUtf8","name":"label","nullable":false}]},"nullable":false}},"nullable":true}}
 ```
 
-#### Step 2: Field "items" (nullable)
+#### Step 2: Field "items" (nullable list — has null_bits, structural, and data)
 
-**Validity BitVec** — accumulates ALL null bits from the list AND its struct sub-arrays:
+**Validity BitVec** (`null_bits`) — accumulates null bits from the list **and** all recursive sub-arrays that share this digest:
 
 1. List-level: `handle_null_bits(list)` → `[1, 1]` (both list elements valid)
 2. Element 0 struct (2 rows, no nulls): `handle_null_bits(struct)` → `[1, 1]`
@@ -734,44 +799,54 @@ Total BitVec: `[1, 1, 1, 1, 1]` — 5 bits, all valid.
 - bit_count = 5
 - usize word (Lsb0): `0b11111` = 31
 
-**Data stream** — for each list element: element count prefix + struct composite:
+**Structural digest** — receives element counts for each valid list element:
+
+```
+items_structural receives:
+    0x0200000000000000     // element 0: 2 struct rows (u64 LE)
+    0x0100000000000000     // element 1: 1 struct row (u64 LE)
+```
+
+**Data digest** — receives composite struct data (no element count prefixes):
+
+For each list element, the struct children are sorted alphabetically and their finalized digests are written into the data stream:
 
 **Element 0** (2 struct rows):
-```
-count prefix: 0x0200000000000000     // 2 as u64 LE
-```
 
 Struct children (sorted: "id", "label"):
 - Child "id" (Int32, non-nullable): `SHA-256(0x01000000_02000000).finalize()` — 32 bytes
 - Child "label" (LargeUtf8, non-nullable): `SHA-256(0x0100000000000000 "a" 0x0100000000000000 "b").finalize()` — 32 bytes
 
 **Element 1** (1 struct row):
-```
-count prefix: 0x0100000000000000     // 1 as u64 LE
-```
 
 - Child "id": `SHA-256(0x03000000).finalize()` — 32 bytes
 - Child "label": `SHA-256(0x0100000000000000 "c").finalize()` — 32 bytes
 
 ```
 items_data_digest = SHA-256(
-    0x0200000000000000                     // element 0 count
-    || SHA-256([1,2] as i32 LE).finalize() // element 0 child "id"
+    SHA-256([1,2] as i32 LE).finalize()    // element 0 child "id"
     || SHA-256(len+"a"+len+"b").finalize()  // element 0 child "label"
-    || 0x0100000000000000                  // element 1 count
     || SHA-256([3] as i32 LE).finalize()   // element 1 child "id"
     || SHA-256(len+"c").finalize()          // element 1 child "label"
 )
 ```
 
+Note: element counts are **not** in the data digest — they are in the structural digest.
+
 #### Step 3: Final Combination
+
+Finalization order: null_bits → structural → data (see Section 4.4).
 
 ```
 final_digest = SHA-256()
-final_digest.update( schema_digest )                     // 32 bytes
-final_digest.update( 0x0500000000000000 )                // bit_count=5 LE
-final_digest.update( 0x000000000000001F )                // validity word=31 BE
-final_digest.update( items_data_digest.finalize() )      // 32 bytes
+final_digest.update( schema_digest )                              // 32 bytes
+
+// items field finalization (nullable list = null_bits + structural + data)
+final_digest.update( 0x0500000000000000 )                         // bit_count=5 LE
+final_digest.update( 0x000000000000001F )                         // validity word=31 BE
+final_digest.update( items_structural_digest.finalize() )          // 32 bytes (element counts)
+final_digest.update( items_data_digest.finalize() )                // 32 bytes (leaf data)
+
 output = 0x000001 ++ final_digest.finalize()
 ```
 
