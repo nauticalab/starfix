@@ -893,6 +893,9 @@ mod tests {
 
         // ── Step 2: Field "items" (LargeList<Struct>, nullable) ──────────
         //
+        // With structural hashing, list sizes go to a separate structural digest,
+        // while leaf data (struct composites) goes to the data/leaf digest.
+        //
         // The BitVec accumulates ALL null bits from the list AND its sub-arrays.
         // List-level: handle_null_bits(list) → [1, 1] (both list elements valid)
         // Then for each list element, the struct sub-array also pushes its validity:
@@ -902,11 +905,15 @@ mod tests {
         let items_bit_count: usize = 5;
         let items_validity_word: usize = 0b11111; // 31
 
-        // Data: for each list element, write element_count as u64 LE then
-        //       array_digest_update(Struct, sub_array, digest)
+        // ── Structural digest: element counts (sizes) ────────────────────
+        let mut items_structural = Sha256::new();
+        items_structural.update(2_u64.to_le_bytes()); // element 0 has 2 struct rows
+        items_structural.update(1_u64.to_le_bytes()); // element 1 has 1 struct row
+        let items_structural_finalized = items_structural.finalize();
+
+        // ── Data/leaf digest: struct composites (no size prefixes) ────────
         //
         // --- List element 0: [{id:1,label:"a"}, {id:2,label:"b"}] (2 rows) ---
-        //   Element count prefix: 2 as u64 LE
         //   Struct composite: children sorted by name: "id" then "label"
         //     No struct-level nulls, children are non-nullable
         //
@@ -925,7 +932,6 @@ mod tests {
         let e0_child_label_finalized = e0_child_label_data.finalize();
 
         // --- List element 1: [{id:3,label:"c"}] (1 row) ---
-        //   Element count prefix: 1 as u64 LE
         //   Child "id": values [3]
         let mut e1_child_id_data = Sha256::new();
         e1_child_id_data.update(3_i32.to_le_bytes());
@@ -937,25 +943,24 @@ mod tests {
         e1_child_label_data.update(b"c");
         let e1_child_label_finalized = e1_child_label_data.finalize();
 
-        // ── Build data digest for "items" field ──────────────────────────
+        // Build leaf digest: struct composites for each list element
         let mut items_data = Sha256::new();
-        // List element 0: count prefix + struct composite
-        items_data.update(2_u64.to_le_bytes()); // element count = 2
-        // Struct children finalized into data: child "id" then "label" (alphabetical)
+        // List element 0: struct children finalized into data (no size prefix here)
         items_data.update(e0_child_id_finalized); // non-nullable child: 32 bytes
         items_data.update(e0_child_label_finalized); // non-nullable child: 32 bytes
-        // List element 1: count prefix + struct composite
-        items_data.update(1_u64.to_le_bytes()); // element count = 1
+        // List element 1: struct children finalized into data
         items_data.update(e1_child_id_finalized);
         items_data.update(e1_child_label_finalized);
         let items_data_finalized = items_data.finalize();
 
         // ── Step 3: Final combination ────────────────────────────────────
+        // For list fields (nullable): bit_count + validity_words + structural_digest + data_digest
         let mut final_digest = Sha256::new();
         final_digest.update(schema_digest);
-        // "items" (nullable): bit_count + validity_words + data_digest
+        // "items" (nullable, structured): null bits + structural + leaf
         final_digest.update(items_bit_count.to_le_bytes());
         final_digest.update(items_validity_word.to_be_bytes());
+        final_digest.update(items_structural_finalized);
         final_digest.update(items_data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());

@@ -73,7 +73,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(schema.clone()).finalize()),
-            "00000152af6d6753eef2667da550848475228eeae6cdda1111907b613f5e4c739d2dba"
+            "0000016a44e0dc5c25d5ca0c53312a6afcffa6e07168afc7f16f5e16c8ca052f09f1bb"
         );
 
         let batch = RecordBatch::try_new(
@@ -129,7 +129,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "00000117701f6c0425906bec9de3280696afe8e2d20a28b4138a8dff9d9d0057b327a6"
+            "0000010bc624523e362eb2377c47ccfaf9399a5631404bc20821fdd4e09ca25ea49fde"
         );
     }
 
@@ -289,7 +289,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "0000015c31dd356269385c795b9bfd8958cf358d09148eb9ba13abbb3df80303d66fb6"
+            "00000125939ebc0815ab1fb13b19fd7c0f36a1b27c09ec33d8100f5ba9f0e0032442ae"
         );
 
         // Collision test: [[1, 2], [3]] vs [[1], [2, 3]]
