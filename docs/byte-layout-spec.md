@@ -601,6 +601,166 @@ Therefore `hash_array(array1) == hash_array(array2)`.
 
 ---
 
+### Example G: Nullable Int32 Array with Nulls (hash_array API)
+
+**Array**: `Int32Array [Some(42), None, Some(-7), Some(0)]` (nullable)
+
+#### Step 1: Type Metadata
+
+```
+final_digest.update(b'"Int32"')     // 7 bytes
+```
+
+#### Step 2: Data
+
+**Validity bits** (Lsb0 in usize):
+- `[1, 0, 1, 1]` → bits: b0=1, b1=0, b2=1, b3=1
+- As usize (Lsb0): binary `...0000_1101` = 13
+- bit_count = 4
+
+**Data bytes** (only valid elements):
+- 42 as i32 LE: `2a 00 00 00`
+- -7 as i32 LE: `f9 ff ff ff`
+-  0 as i32 LE: `00 00 00 00`
+
+```
+data_digest = SHA-256(0x2a000000_f9ffffff_00000000)
+```
+
+#### Step 3: Finalization (nullable)
+
+```
+final_digest = SHA-256()
+final_digest.update(b'"Int32"')                                 // type metadata
+final_digest.update( 0x0400000000000000 )                       // 4 bits (bit count LE)
+final_digest.update( 0x000000000000000D )                       // 13 as usize BE
+final_digest.update( data_digest.finalize() )                   // 32 bytes
+raw_hash = final_digest.finalize()
+output = 0x000001 ++ raw_hash
+```
+
+---
+
+### Example H: Nullable String Array with Nulls (hash_array API)
+
+**Array**: `StringArray [Some("hello"), None, Some("world"), Some("")]` (nullable, Arrow type `Utf8`)
+
+#### Step 1: Type Metadata
+
+`Utf8` is canonicalized to `LargeUtf8`.
+
+```
+final_digest.update(b'"LargeUtf8"')     // 12 bytes
+```
+
+#### Step 2: Data
+
+**Validity bits** (Lsb0 in usize):
+- `[1, 0, 1, 1]` → 0b1101 = 13
+- bit_count = 4
+
+**Data bytes** (only valid elements, null skipped entirely):
+- `"hello"`: `05 00 00 00 00 00 00 00` (len=5 as u64 LE) + `68 65 6c 6c 6f`
+- `"world"`: `05 00 00 00 00 00 00 00` (len=5 as u64 LE) + `77 6f 72 6c 64`
+- `""`: `00 00 00 00 00 00 00 00` (len=0 as u64 LE, no raw bytes)
+
+```
+data_digest = SHA-256(len+"hello" + len+"world" + len+"")
+```
+
+#### Step 3: Finalization (nullable)
+
+```
+final_digest = SHA-256()
+final_digest.update(b'"LargeUtf8"')
+final_digest.update( 0x0400000000000000 )                       // bit_count=4 LE
+final_digest.update( 0x000000000000000D )                       // validity=13 BE
+final_digest.update( data_digest.finalize() )                   // 32 bytes
+raw_hash = final_digest.finalize()
+output = 0x000001 ++ raw_hash
+```
+
+---
+
+### Example I: Empty Table (no data, schema only)
+
+**Schema**: `{a: Int32 non-nullable, b: Boolean nullable}`
+
+When no record batches are fed (i.e., `finalize()` is called immediately after construction), the field digests still exist — they just contain no data.
+
+#### Schema Digest
+
+```
+schema_json = '{"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"Boolean","nullable":true}}'
+schema_digest = SHA-256(schema_json)
+```
+
+#### Field "a" (Int32, non-nullable)
+
+No data was fed, so:
+```
+a_data_digest = SHA-256("")     // SHA-256 of empty input
+```
+
+#### Field "b" (Boolean, nullable)
+
+No data was fed:
+- `bit_count` = 0 (no elements, BitVec is empty)
+- `as_raw_slice()` = `[]` (no words)
+- Data digest = SHA-256 of empty input
+
+#### Final Combination
+
+```
+final_digest = SHA-256()
+final_digest.update( schema_digest )                             // 32 bytes
+final_digest.update( SHA-256("").finalize() )                    // field "a" (non-nullable, 32 bytes)
+final_digest.update( 0x0000000000000000 )                        // field "b" bit_count=0 LE
+// no validity words (raw_slice is empty for 0-length BitVec)
+final_digest.update( SHA-256("").finalize() )                    // field "b" data (32 bytes)
+output = 0x000001 ++ final_digest.finalize()
+```
+
+---
+
+### Example J: Multi-Batch Streaming (batch-split independence)
+
+**Schema**: `{v: Int32 non-nullable}`
+
+Feeding two batches must produce the same hash as feeding one combined batch:
+
+- **Batch 1**: `v = [1, 2]`
+- **Batch 2**: `v = [3]`
+- **Combined**: `v = [1, 2, 3]`
+
+Because the internal SHA-256 state is incremental:
+```
+update(01 00 00 00  02 00 00 00)   // from batch 1
+update(03 00 00 00)                // from batch 2
+```
+is identical to:
+```
+update(01 00 00 00  02 00 00 00  03 00 00 00)   // single combined batch
+```
+
+#### Manual Computation
+
+```
+schema_json = '{"v":{"data_type":"Int32","nullable":false}}'
+schema_digest = SHA-256(schema_json)
+
+v_data_digest = SHA-256(0x010000000200000003000000)
+
+final_digest = SHA-256()
+final_digest.update( schema_digest )
+final_digest.update( v_data_digest.finalize() )
+output = 0x000001 ++ final_digest.finalize()
+```
+
+Therefore `hash(batch1 + batch2) == hash(combined)`.
+
+---
+
 ### Example K: Struct Column in a Record Batch
 
 **Schema**: `{person: Struct<age: Int32 non-null, name: LargeUtf8 non-null> non-nullable}`
