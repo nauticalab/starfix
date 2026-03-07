@@ -18,7 +18,7 @@ pub struct ArrowDigester {
 
 impl ArrowDigester {
     /// Create a new instance of `ArrowDigester` with SHA256 as the digester with the schema which will be enforce through each update.
-    pub fn new(schema: Schema) -> Self {
+    pub fn new(schema: &Schema) -> Self {
         Self {
             digester: ArrowDigesterCore::<Sha256>::new(schema),
         }

@@ -81,7 +81,7 @@ impl InternalPyArrowDigester {
             Schema::try_from(&ffi_schema).expect("Failed to convert FFI schema to Arrow schema")
         };
         Self {
-            digester: Arc::new(Mutex::new(ArrowDigester::new(schema))),
+            digester: Arc::new(Mutex::new(ArrowDigester::new(&schema))),
         }
     }
 

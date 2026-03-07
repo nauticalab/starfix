@@ -7,8 +7,9 @@ mod tests {
         array::{
             ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal32Array,
             Decimal64Array, DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
-            Int64Array, Int8Array, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
-            RecordBatch, StringArray, StructArray, Time32MillisecondArray, Time32SecondArray,
+            Int64Array, Int8Array, LargeBinaryArray, LargeListArray, LargeListBuilder,
+            LargeStringArray, LargeStringBuilder, ListArray, ListBuilder, RecordBatch, StringArray,
+            StringBuilder, StructArray, Time32MillisecondArray, Time32SecondArray,
             Time64MicrosecondArray, Time64NanosecondArray, UInt16Array, UInt32Array, UInt64Array,
             UInt8Array,
         },
@@ -72,7 +73,7 @@ mod tests {
         // Empty Table Hashing Check
 
         assert_eq!(
-            encode(ArrowDigester::new(schema.clone()).finalize()),
+            encode(ArrowDigester::new(&schema).finalize()),
             "0000016a44e0dc5c25d5ca0c53312a6afcffa6e07168afc7f16f5e16c8ca052f09f1bb"
         );
 
@@ -424,7 +425,7 @@ mod tests {
 
         let batch2 = RecordBatch::try_new(Arc::clone(&schema), vec![uids2, fake_data2]).unwrap();
         // Hash both record batches
-        let mut digester = ArrowDigester::new((*schema).clone());
+        let mut digester = ArrowDigester::new(schema.as_ref());
         digester.update(&batch1);
         digester.update(&batch2);
         assert_eq!(
@@ -507,7 +508,7 @@ mod tests {
         .unwrap();
 
         // Hash batches incrementally
-        let mut digester_batches = ArrowDigester::new((*schema).clone());
+        let mut digester_batches = ArrowDigester::new(schema.as_ref());
         digester_batches.update(&batch1);
         digester_batches.update(&batch2);
         let hash_batches = encode(digester_batches.finalize());
@@ -522,7 +523,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut digester_single = ArrowDigester::new((*schema).clone());
+        let mut digester_single = ArrowDigester::new(schema.as_ref());
         digester_single.update(&combined_batch);
         let hash_single = encode(digester_single.finalize());
 
@@ -559,7 +560,7 @@ mod tests {
         .unwrap();
 
         // Hash batches incrementally
-        let mut digester_batches = ArrowDigester::new((*schema).clone());
+        let mut digester_batches = ArrowDigester::new(schema.as_ref());
         digester_batches.update(&batch1);
         digester_batches.update(&batch2);
         let hash_batches = encode(digester_batches.finalize());
@@ -588,7 +589,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut digester_single = ArrowDigester::new((*schema).clone());
+        let mut digester_single = ArrowDigester::new(schema.as_ref());
         digester_single.update(&combined_batch);
         let hash_single = encode(digester_single.finalize());
 
@@ -753,12 +754,11 @@ mod tests {
 
     #[test]
     fn list_and_large_list_array_should_hash_equal() {
-        let list =
-            ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
-                Some(vec![Some(1), Some(2)]),
-                None,
-                Some(vec![Some(3)]),
-            ]);
+        let list = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(1), Some(2)]),
+            None,
+            Some(vec![Some(3)]),
+        ]);
         let large_list = LargeListArray::from_iter_primitive::<Int32Type, _, _>(vec![
             Some(vec![Some(1), Some(2)]),
             None,
@@ -788,9 +788,12 @@ mod tests {
 
         let batch1 = RecordBatch::try_new(
             schema1,
-            vec![Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(
-                vec![Some(vec![Some(10), Some(20)]), None],
-            )) as ArrayRef],
+            vec![
+                Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+                    Some(vec![Some(10), Some(20)]),
+                    None,
+                ])) as ArrayRef,
+            ],
         )
         .unwrap();
 
@@ -895,6 +898,180 @@ mod tests {
         );
     }
 
+    // ── Deep nested type normalization ──────────────────────────────────
+
+    #[test]
+    fn list_of_utf8_vs_large_list_of_large_utf8_array_should_hash_equal() {
+        // List(Utf8) vs LargeList(LargeUtf8) — normalization must be recursive
+        let list = {
+            let mut builder = ListBuilder::new(StringBuilder::new());
+            builder.values().append_value("hello");
+            builder.values().append_value("world");
+            builder.append(true);
+            builder.values().append_value("foo");
+            builder.append(true);
+            builder.finish()
+        };
+
+        let large_list = {
+            let mut builder = LargeListBuilder::new(LargeStringBuilder::new());
+            builder.values().append_value("hello");
+            builder.values().append_value("world");
+            builder.append(true);
+            builder.values().append_value("foo");
+            builder.append(true);
+            builder.finish()
+        };
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&list)),
+            encode(ArrowDigester::hash_array(&large_list)),
+            "List(Utf8) and LargeList(LargeUtf8) should produce same hash"
+        );
+    }
+
+    #[test]
+    fn list_of_utf8_vs_large_list_of_large_utf8_schema_should_hash_equal() {
+        let schema1 = Schema::new(vec![Field::new(
+            "col",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)).into()),
+            true,
+        )]);
+        let schema2 = Schema::new(vec![Field::new(
+            "col",
+            DataType::LargeList(Arc::new(Field::new("item", DataType::LargeUtf8, true)).into()),
+            true,
+        )]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema1)),
+            encode(ArrowDigester::hash_schema(&schema2)),
+            "List(Utf8) and LargeList(LargeUtf8) schemas should be logically equivalent"
+        );
+    }
+
+    #[test]
+    fn struct_with_list_utf8_vs_large_variants_record_batch_should_hash_equal() {
+        // Struct({items: List(Utf8), name: Utf8}) vs Struct({items: LargeList(LargeUtf8), name: LargeUtf8})
+        let schema1 = Arc::new(Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(
+                vec![
+                    Field::new(
+                        "items",
+                        DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)).into()),
+                        true,
+                    ),
+                    Field::new("name", DataType::Utf8, true),
+                ]
+                .into(),
+            ),
+            false,
+        )]));
+
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(
+                vec![
+                    Field::new(
+                        "items",
+                        DataType::LargeList(
+                            Arc::new(Field::new("item", DataType::LargeUtf8, true)).into(),
+                        ),
+                        true,
+                    ),
+                    Field::new("name", DataType::LargeUtf8, true),
+                ]
+                .into(),
+            ),
+            false,
+        )]));
+
+        // Build struct with List(Utf8)
+        let list1 = {
+            let mut builder = ListBuilder::new(StringBuilder::new());
+            builder.values().append_value("a");
+            builder.values().append_value("b");
+            builder.append(true);
+            builder.values().append_value("c");
+            builder.append(true);
+            builder.finish()
+        };
+        let names1 = StringArray::from(vec![Some("Alice"), Some("Bob")]);
+        let struct1 = StructArray::from(vec![
+            (
+                Arc::new(Field::new(
+                    "items",
+                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)).into()),
+                    true,
+                )),
+                Arc::new(list1) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("name", DataType::Utf8, true)),
+                Arc::new(names1) as ArrayRef,
+            ),
+        ]);
+
+        // Build struct with LargeList(LargeUtf8)
+        let list2 = {
+            let mut builder = LargeListBuilder::new(LargeStringBuilder::new());
+            builder.values().append_value("a");
+            builder.values().append_value("b");
+            builder.append(true);
+            builder.values().append_value("c");
+            builder.append(true);
+            builder.finish()
+        };
+        let names2 = LargeStringArray::from(vec![Some("Alice"), Some("Bob")]);
+        let struct2 = StructArray::from(vec![
+            (
+                Arc::new(Field::new(
+                    "items",
+                    DataType::LargeList(
+                        Arc::new(Field::new("item", DataType::LargeUtf8, true)).into(),
+                    ),
+                    true,
+                )),
+                Arc::new(list2) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("name", DataType::LargeUtf8, true)),
+                Arc::new(names2) as ArrayRef,
+            ),
+        ]);
+
+        let batch1 = RecordBatch::try_new(schema1, vec![Arc::new(struct1) as ArrayRef]).unwrap();
+        let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(struct2) as ArrayRef]).unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "Struct with List(Utf8) should hash same as Struct with LargeList(LargeUtf8)"
+        );
+    }
+
+    #[test]
+    fn streaming_with_type_equivalent_schemas_should_succeed() {
+        // Create digester with Utf8 schema, feed batch with LargeUtf8 schema
+        let schema_utf8 = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
+
+        let mut digester = ArrowDigester::new(&schema_utf8);
+
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                "col",
+                DataType::LargeUtf8,
+                true,
+            )])),
+            vec![Arc::new(LargeStringArray::from(vec![Some("hello"), None])) as ArrayRef],
+        )
+        .unwrap();
+
+        digester.update(&batch); // Should NOT panic — schemas are logically equivalent
+        let _hash = encode(digester.finalize());
+    }
+
     // ── Issue 6: Dictionary-encoded array equivalence ───────────────────
 
     #[test]
@@ -954,7 +1131,7 @@ mod tests {
             Field::new("b", DataType::Boolean, true),
         ]);
 
-        let mut digester = ArrowDigester::new(schema);
+        let mut digester = ArrowDigester::new(&schema);
 
         // Batch with columns in DIFFERENT order: [b, a]
         let reordered_schema = Arc::new(Schema::new(vec![
@@ -1004,12 +1181,12 @@ mod tests {
         .unwrap();
 
         // Digester fed batch in original order [a, b]
-        let mut digester1 = ArrowDigester::new(schema_ab.clone());
+        let mut digester1 = ArrowDigester::new(&schema_ab);
         digester1.update(&batch_ab);
         let hash1 = encode(digester1.finalize());
 
         // Digester fed batch in reversed order [b, a]
-        let mut digester2 = ArrowDigester::new(schema_ab);
+        let mut digester2 = ArrowDigester::new(&schema_ab);
         digester2.update(&batch_ba);
         let hash2 = encode(digester2.finalize());
 

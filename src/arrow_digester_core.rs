@@ -3,13 +3,13 @@
     clippy::todo,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
-use std::{collections::BTreeMap, iter::repeat_n};
+use std::{collections::BTreeMap, iter::repeat_n, sync::Arc};
 
 use arrow::{
     array::{
-        make_array, Array, BooleanArray, GenericBinaryArray, GenericListArray,
-        GenericStringArray, LargeBinaryArray, LargeListArray, LargeStringArray,
-        OffsetSizeTrait, RecordBatch, StructArray,
+        make_array, Array, BooleanArray, GenericBinaryArray, GenericListArray, GenericStringArray,
+        LargeBinaryArray, LargeListArray, LargeStringArray, OffsetSizeTrait, RecordBatch,
+        StructArray,
     },
     buffer::NullBuffer,
     compute::cast,
@@ -42,6 +42,55 @@ const fn is_list_type(data_type: &DataType) -> bool {
     matches!(data_type, DataType::List(_) | DataType::LargeList(_))
 }
 
+/// Recursively normalize a `DataType` to its canonical large equivalent.
+///
+/// - `Utf8` → `LargeUtf8`
+/// - `Binary` → `LargeBinary`
+/// - `List(field)` → `LargeList(normalized_field)`
+/// - `Dictionary(_, value_type)` → `normalize_data_type(value_type)`
+/// - `Struct`, `LargeList`, `FixedSizeList`, `Map` have their inner fields normalized recursively.
+fn normalize_data_type(data_type: &DataType) -> DataType {
+    match data_type {
+        DataType::Utf8 => DataType::LargeUtf8,
+        DataType::Binary => DataType::LargeBinary,
+        DataType::List(field) | DataType::LargeList(field) => {
+            DataType::LargeList(Arc::new(normalize_field(field)))
+        }
+        DataType::Struct(fields) => DataType::Struct(
+            fields
+                .iter()
+                .map(|f| Arc::new(normalize_field(f)))
+                .collect(),
+        ),
+        DataType::FixedSizeList(field, size) => {
+            DataType::FixedSizeList(Arc::new(normalize_field(field)), *size)
+        }
+        DataType::Map(field, sorted) => DataType::Map(Arc::new(normalize_field(field)), *sorted),
+        DataType::Dictionary(_, value_type) => normalize_data_type(value_type),
+        other => other.clone(),
+    }
+}
+
+/// Normalize a single field: keep name and nullability, normalize the data type recursively.
+fn normalize_field(field: &Field) -> Field {
+    Field::new(
+        field.name(),
+        normalize_data_type(field.data_type()),
+        field.is_nullable(),
+    )
+}
+
+/// Normalize all fields in a schema to their canonical large equivalents.
+fn normalize_schema(schema: &Schema) -> Schema {
+    Schema::new(
+        schema
+            .fields()
+            .iter()
+            .map(|f| Arc::new(normalize_field(f)))
+            .collect::<Vec<_>>(),
+    )
+}
+
 #[derive(Clone)]
 pub struct ArrowDigesterCore<D: Digest> {
     schema: Schema,
@@ -51,8 +100,15 @@ pub struct ArrowDigesterCore<D: Digest> {
 
 impl<D: Digest> ArrowDigesterCore<D> {
     /// Create a new instance of `ArrowDigesterCore` with the schema which will be enforce through each update.
-    pub fn new(schema: Schema) -> Self {
-        // Hash the schema first
+    #[expect(
+        clippy::shadow_reuse,
+        reason = "Intentional: shadow input with normalized version so all downstream code uses canonical types"
+    )]
+    pub fn new(schema: &Schema) -> Self {
+        // Normalize the schema so all internal state uses canonical large types
+        let schema = normalize_schema(schema);
+
+        // Hash the normalized schema
         let schema_digest = Self::hash_schema(&schema);
 
         // Flatten all nested fields into a single map, this allows us to hash each field individually and efficiently
@@ -141,10 +197,14 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 array
             };
 
+        // Normalize to canonical large types
+        let normalized_type = normalize_data_type(&effective_type);
+
         let mut final_digest = D::new();
 
-        // Use canonical type serialization for metadata
-        let canonical_type = Self::data_type_to_value(&effective_type);
+        // Use canonical type serialization for metadata (data_type_to_value also normalizes,
+        // but we pass the already-normalized type for consistency)
+        let canonical_type = Self::data_type_to_value(&normalized_type);
         let data_type_serialized = serde_json::to_string(&canonical_type)
             .expect("Failed to serialize data type to string");
 
@@ -152,8 +212,11 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.update(data_type_serialized);
 
         // Now we update it with the actual array data
-        let mut digest_buffer =
-            DigestBufferType::new(effective_array.is_nullable(), is_list_type(&effective_type));
+        // Note: array_digest_update will cast the array to match the normalized type
+        let mut digest_buffer = DigestBufferType::new(
+            effective_array.is_nullable(),
+            is_list_type(&normalized_type),
+        );
         Self::array_digest_update(&effective_type, effective_array, &mut digest_buffer);
         Self::finalize_digest(&mut final_digest, digest_buffer);
 
@@ -163,7 +226,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side.
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
-        let mut digester = Self::new(record_batch.schema().as_ref().clone());
+        let mut digester = Self::new(record_batch.schema().as_ref());
         digester.update(record_batch);
         digester.finalize()
     }
@@ -229,8 +292,13 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Convert a `DataType` to a JSON value, recursively converting any inner `Field`
     /// references to only include `name`, `data_type`, and `nullable`.
+    ///
+    /// Types are first normalized via `normalize_data_type` (Utf8→LargeUtf8, Binary→LargeBinary,
+    /// List→LargeList, Dictionary→value type) so the JSON always reflects canonical forms.
     fn data_type_to_value(data_type: &DataType) -> serde_json::Value {
-        let value = match data_type {
+        // Normalize first so all downstream serialization uses canonical types
+        let canonical = normalize_data_type(data_type);
+        let value = match &canonical {
             DataType::Struct(fields) => {
                 let mut sorted_fields: Vec<_> = fields.iter().collect();
                 sorted_fields.sort_by_key(|f| f.name().clone());
@@ -240,8 +308,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     .collect();
                 serde_json::json!({ "Struct": fields_json })
             }
-            // Canonicalize List → LargeList; drop Arrow-internal field name ("item")
-            DataType::List(field) | DataType::LargeList(field) => {
+            // After normalization, all list types are LargeList
+            DataType::LargeList(field) => {
                 serde_json::json!({ "LargeList": Self::element_type_to_value(field) })
             }
             DataType::FixedSizeList(field, size) => {
@@ -250,17 +318,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::Map(field, sorted) => {
                 serde_json::json!({ "Map": [Self::inner_field_to_value(field), sorted] })
             }
-            // Canonicalize Binary → LargeBinary
-            DataType::Binary => {
-                serde_json::to_value(&DataType::LargeBinary).expect("Failed to serialize data type")
-            }
-            // Canonicalize Utf8 → LargeUtf8
-            DataType::Utf8 => {
-                serde_json::to_value(&DataType::LargeUtf8).expect("Failed to serialize data type")
-            }
-            // Canonicalize Dictionary → value type
-            DataType::Dictionary(_, value_type) => Self::data_type_to_value(value_type.as_ref()),
-            // For all non-nested types, Arrow's default serde is sufficient
+            // For all non-nested types (including LargeUtf8, LargeBinary after normalization),
+            // Arrow's default serde is sufficient
             other => serde_json::to_value(other).expect("Failed to serialize data type"),
         };
         Self::sort_json_value(value)
@@ -362,6 +421,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
         clippy::too_many_lines,
         reason = "Comprehensive match on all data types"
     )]
+    #[expect(
+        clippy::unreachable,
+        reason = "Small type variants are normalized to large equivalents at the top of this function"
+    )]
     fn array_digest_update(
         data_type: &DataType,
         array: &dyn Array,
@@ -375,20 +438,20 @@ impl<D: Digest> ArrowDigesterCore<D> {
         let (effective_type, effective_array): (&DataType, &dyn Array) = match data_type {
             DataType::Utf8 => {
                 normalized_type = DataType::LargeUtf8;
-                cast_array = cast(array, &normalized_type)
-                    .expect("Failed to cast Utf8 to LargeUtf8");
+                cast_array =
+                    cast(array, &normalized_type).expect("Failed to cast Utf8 to LargeUtf8");
                 (&normalized_type, cast_array.as_ref())
             }
             DataType::Binary => {
                 normalized_type = DataType::LargeBinary;
-                cast_array = cast(array, &normalized_type)
-                    .expect("Failed to cast Binary to LargeBinary");
+                cast_array =
+                    cast(array, &normalized_type).expect("Failed to cast Binary to LargeBinary");
                 (&normalized_type, cast_array.as_ref())
             }
             DataType::List(field) => {
-                normalized_type = DataType::LargeList(field.clone());
-                cast_array = cast(array, &normalized_type)
-                    .expect("Failed to cast List to LargeList");
+                normalized_type = DataType::LargeList(Arc::clone(field));
+                cast_array =
+                    cast(array, &normalized_type).expect("Failed to cast List to LargeList");
                 (&normalized_type, cast_array.as_ref())
             }
             _ => (data_type, array),
@@ -942,7 +1005,7 @@ mod tests {
             ),
         ]);
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema.clone());
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
         assert_eq!(field_names.len(), 3);
@@ -1003,7 +1066,7 @@ mod tests {
         // [true, None, false, true] — valid values bit-packed Lsb0, null skipped
         let array = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1038,7 +1101,7 @@ mod tests {
         // [false, true, false] — all values bit-packed, no nulls
         let array = BooleanArray::from(vec![false, true, false]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1068,7 +1131,7 @@ mod tests {
         // [10, None, -3] — valid bytes: 0x0A, 0xFD
         let array = Int8Array::from(vec![Some(10_i8), None, Some(-3_i8)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int8, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int8, true)])),
@@ -1097,7 +1160,7 @@ mod tests {
         // [1, 2, 255]
         let array = UInt8Array::from(vec![1_u8, 2_u8, 255_u8]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt8, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt8, false)])),
@@ -1124,7 +1187,7 @@ mod tests {
         // -512 LE  = 00 fe
         let array = Int16Array::from(vec![Some(1000_i16), None, Some(-512_i16)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int16, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int16, true)])),
@@ -1153,7 +1216,7 @@ mod tests {
         // [100, 200, 65535]
         let array = UInt16Array::from(vec![100_u16, 200_u16, 0xFFFF_u16]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt16, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1188,7 +1251,7 @@ mod tests {
             half::f16::from_f32(-0.5),
         ]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float16, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1224,7 +1287,7 @@ mod tests {
 
         let schema = Schema::new(vec![Field::new("int32_col", DataType::Int32, true)]);
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
 
         digester.update(
             &RecordBatch::try_new(
@@ -1269,7 +1332,7 @@ mod tests {
         // [0, None, u32::MAX]
         let array = UInt32Array::from(vec![Some(0_u32), None, Some(u32::MAX)]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt32, true)])),
@@ -1302,7 +1365,7 @@ mod tests {
         // 2.5f32 LE: 00 00 20 40
         let array = Float32Array::from(vec![Some(1.0_f32), None, Some(2.5_f32)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1340,7 +1403,7 @@ mod tests {
             .with_precision_and_scale(9, 2)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1375,7 +1438,7 @@ mod tests {
             .with_precision_and_scale(9, 2)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1406,7 +1469,7 @@ mod tests {
         // [i64::MIN, None, 9_876_543_210]
         let array = Int64Array::from(vec![Some(i64::MIN), None, Some(9_876_543_210_i64)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int64, true)])),
@@ -1435,7 +1498,7 @@ mod tests {
         // [0, None, u64::MAX]
         let array = UInt64Array::from(vec![Some(0_u64), None, Some(u64::MAX)]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt64, true)])),
@@ -1466,7 +1529,7 @@ mod tests {
         // [1.0, -0.5, π]
         let array = Float64Array::from(vec![1.0_f64, -0.5_f64, f64::consts::PI]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float64, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1500,7 +1563,7 @@ mod tests {
             .with_precision_and_scale(18, 3)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1535,7 +1598,7 @@ mod tests {
             .with_precision_and_scale(18, 3)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1566,7 +1629,7 @@ mod tests {
         // Days since Unix epoch: [0, None, 19000]
         let array = Date32Array::from(vec![Some(0_i32), None, Some(19000_i32)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Date32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Date32, true)])),
@@ -1595,7 +1658,7 @@ mod tests {
         // Milliseconds since Unix epoch: [0, None, 1_000_000]
         let array = Date64Array::from(vec![Some(0_i64), None, Some(1_000_000_i64)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Date64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Date64, true)])),
@@ -1630,7 +1693,7 @@ mod tests {
             DataType::Time32(TimeUnit::Second),
             true,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1667,7 +1730,7 @@ mod tests {
             DataType::Time64(TimeUnit::Microsecond),
             true,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1705,7 +1768,7 @@ mod tests {
             .with_precision_and_scale(38, 5)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal128(38, 5), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1747,7 +1810,7 @@ mod tests {
         .with_precision_and_scale(76, 10)
         .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal256(76, 10), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1787,7 +1850,7 @@ mod tests {
         let array = builder.finish();
 
         let schema = Schema::new(vec![Field::new("col", DataType::FixedSizeBinary(4), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1825,7 +1888,7 @@ mod tests {
         // Null entries are skipped entirely in the data digest.
         let array = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
         let schema = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Binary, true)])),
@@ -1857,7 +1920,7 @@ mod tests {
         // [b"ab", b"cde"] — all valid, length prefix is usize LE
         let array = LargeBinaryArray::from(vec![b"ab".as_ref(), b"cde".as_ref()]);
         let schema = Schema::new(vec![Field::new("col", DataType::LargeBinary, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1891,7 +1954,7 @@ mod tests {
         // Null entries are skipped entirely in the data digest.
         let array = StringArray::from(vec![Some("foo"), None, Some("ba")]);
         let schema = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Utf8, true)])),
@@ -1923,7 +1986,7 @@ mod tests {
         // ["x", "yz"] — all valid, length prefix is u64 LE
         let array = LargeStringArray::from(vec!["x", "yz"]);
         let schema = Schema::new(vec![Field::new("col", DataType::LargeUtf8, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1971,7 +2034,7 @@ mod tests {
             DataType::List(Arc::clone(&item_field)),
             false,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2024,7 +2087,7 @@ mod tests {
             DataType::LargeList(Arc::clone(&item_field)),
             false,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
