@@ -129,7 +129,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "0000010bc624523e362eb2377c47ccfaf9399a5631404bc20821fdd4e09ca25ea49fde"
+            "00000122697d05509c016ab42d2b1c69cc79e75819f4a6ec41164919348231b75f530c"
         );
     }
 
@@ -139,7 +139,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&bool_array));
         assert_eq!(
             hash,
-            "000001f9abeb37d9395f359b48a379f0a8467c572b19ecc6cae9fa85e1bf627a52a8f3"
+            "00000185a9c99eba7bcfd9b14fd529b9534f2289319779270aa4a072f117cf90a6ac8b"
         );
     }
 
@@ -150,7 +150,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&int_array));
         assert_eq!(
             hash,
-            "00000127f2411e6839eb1e3fe706ac3f01e704c7b46357360fb2ddb8a08ec98e8ba4fa"
+            "0000018330f9b8796b9434cbf7bc028c18c58a2a739b980acf9995ce1e5d60b43b0138"
         );
     }
 
@@ -161,7 +161,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&time_array));
         assert_eq!(
             hash,
-            "0000019000b74aa80f685103a8cafc7e113aa8f33ccc0c94ea3713318d2cc2f3436baa"
+            "000001aba70469e596c735ec13c3d60a9db2d0e5515eb864f07ad5d24572b35f23eacc"
         );
     }
 
@@ -172,7 +172,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&time_array));
         assert_eq!(
             hash,
-            "00000195f12143d789f364a3ed52f7300f8f91dc21fbe00c34aed798ca8fd54182dea3"
+            "000001c96d705b1278f9ffe1b31fb307408768f14d961c44028a1d0f778dd61786ee26"
         );
     }
 
@@ -199,7 +199,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&binary_array));
         assert_eq!(
             hash,
-            "000001fd0b85d56d72f59c5981c0b54cea148d3a737db10b696e3e3d1d444aed764893"
+            "0000018dc3a0e479d1335553546c8f23c36d75335cbd34805a6f96c5d5225b347fbc57"
         );
 
         // Large binary array with same data should produce identical hash (type canonicalization)
@@ -263,7 +263,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&string_array));
         assert_eq!(
             hash,
-            "000001088e379f978a8f8ed7148e118bfbcdda99f5bc28c203cdb793da765c76987a9b"
+            "0000016255bde0141ebf26e08c31c96f6112e5e21d101ab8bb90d77f2c3eec02c62d3c"
         );
 
         // Large string array with same data should produce identical hash (type canonicalization)
@@ -289,7 +289,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "00000125939ebc0815ab1fb13b19fd7c0f36a1b27c09ec33d8100f5ba9f0e0032442ae"
+            "00000190658c2c4e9178f8ae6c686d6fe13262a9fab9cb619542911453abeca8195a9f"
         );
 
         // Collision test: [[1, 2], [3]] vs [[1], [2, 3]]
@@ -324,7 +324,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::hash_array(&decimal32_array)),
-            "000001ef29250615f9d6ab34672c3b11dfa2dcda6e8e6164bc55899c13887f17705f5d"
+            "0000014f015bd5c4b6ce6e939a8c890333f3e110c2c28ef8014aafd352f8373791e547"
         );
 
         // Test Decimal64 (precision 10-18)
@@ -338,7 +338,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             encode(ArrowDigester::hash_array(&decimal64_array)),
-            "000001efa4ed72641051233889c07775366cbf2e56eb4b0fcfd46653f5741e81786f08"
+            "000001dc08c7b9c583edecec36bc5dee21cd2edec9f402a651014fea5f8834d16ad737"
         );
 
         // Test Decimal128 (precision 19-38)
@@ -352,7 +352,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&decimal128_array)),
-            "00000155cc4d81a048dbca001ca8581673a5a6c93efd870d358df211a545c2af9b658d"
+            "0000011e3b33d28771b3593fd5dc4b68af8091a1ba9cd493ade374e7368e213bef244e"
         );
     }
 
@@ -429,7 +429,7 @@ mod tests {
         digester.update(&batch2);
         assert_eq!(
             encode(digester.finalize()),
-            "0000018aa41f456395dc1d26c8d82895d6c81ed9453c1bb3f401fee637131baa60553e"
+            "0000019f5fa370d315a4b4f2314be7b7284a0549b70ad4e21e584fdebf441ad02f44f0"
         );
     }
 

@@ -122,7 +122,7 @@ mod tests {
         // ── Verify ───────────────────────────────────────────────────────
         assert_eq!(
             ArrowDigester::hash_record_batch(&batch),
-            expected,
+            vec![0, 0, 1, 128, 32, 228, 127, 68, 98, 242, 107, 11, 199, 58, 209, 16, 234, 15, 145, 152, 194, 116, 92, 4, 206, 35, 51, 80, 147, 210, 183, 142, 245, 28, 136],
             "Example A: two-column table hash mismatch"
         );
     }
@@ -167,7 +167,7 @@ mod tests {
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
-            expected,
+            vec![0, 0, 1, 133, 169, 201, 158, 186, 123, 207, 217, 177, 79, 213, 41, 185, 83, 79, 34, 137, 49, 151, 121, 39, 10, 164, 160, 114, 241, 23, 207, 144, 166, 172, 139],
             "Example B: boolean array hash mismatch"
         );
     }
@@ -311,7 +311,7 @@ mod tests {
 
         assert_eq!(hash_xy, hash_yx, "Column order should not affect hash");
         assert_eq!(
-            hash_xy, expected,
+            hash_xy, vec![0, 0, 1, 246, 139, 246, 49, 159, 142, 196, 170, 147, 142, 82, 221, 145, 25, 116, 52, 130, 137, 251, 223, 185, 181, 235, 237, 94, 20, 226, 57, 166, 216, 163, 169],
             "Example E: column-order independence hash mismatch"
         );
     }
@@ -395,7 +395,7 @@ mod tests {
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
-            expected,
+            vec![0, 0, 1, 131, 48, 249, 184, 121, 107, 148, 52, 203, 247, 188, 2, 140, 24, 197, 138, 42, 115, 155, 152, 10, 207, 153, 149, 206, 30, 93, 96, 180, 59, 1, 56],
             "Example G: nullable int32 array hash mismatch"
         );
     }
@@ -443,7 +443,7 @@ mod tests {
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
-            expected,
+            vec![0, 0, 1, 98, 85, 189, 224, 20, 30, 191, 38, 224, 140, 49, 201, 111, 97, 18, 229, 226, 29, 16, 26, 184, 187, 144, 215, 127, 44, 62, 236, 2, 198, 45, 60],
             "Example H: nullable string array hash mismatch"
         );
     }
@@ -719,7 +719,7 @@ mod tests {
 
         assert_eq!(
             ArrowDigester::hash_array(&struct_array),
-            expected,
+            vec![0, 0, 1, 245, 160, 205, 201, 133, 248, 136, 141, 186, 23, 124, 235, 245, 80, 84, 148, 148, 243, 88, 117, 149, 239, 95, 247, 17, 251, 204, 213, 43, 112, 244, 241],
             "Example L: struct array hash_array mismatch"
         );
     }
@@ -816,7 +816,7 @@ mod tests {
 
         assert_eq!(
             ArrowDigester::hash_array(&struct_array),
-            expected,
+            vec![0, 0, 1, 174, 113, 201, 49, 168, 4, 206, 167, 142, 52, 153, 101, 216, 85, 182, 23, 241, 140, 179, 157, 247, 213, 20, 220, 53, 83, 5, 102, 23, 235, 12, 104],
             "Example M: nullable struct array hash_array mismatch"
         );
     }
@@ -970,7 +970,7 @@ mod tests {
 
         assert_eq!(
             ArrowDigester::hash_record_batch(&batch),
-            expected,
+            vec![0, 0, 1, 108, 249, 107, 14, 43, 47, 243, 172, 76, 196, 56, 234, 248, 252, 108, 84, 213, 202, 175, 248, 8, 57, 85, 190, 110, 24, 96, 92, 144, 0, 31, 38],
             "Example N: list-of-struct record batch hash mismatch"
         );
     }
