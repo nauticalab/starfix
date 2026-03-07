@@ -99,7 +99,7 @@ pub struct ArrowDigesterCore<D: Digest> {
 }
 
 impl<D: Digest> ArrowDigesterCore<D> {
-    /// Create a new instance of `ArrowDigesterCore` with the schema which will be enforce through each update.
+    /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
     #[expect(
         clippy::shadow_reuse,
         reason = "Intentional: shadow input with normalized version so all downstream code uses canonical types"
@@ -175,9 +175,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
             });
     }
 
-    /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side
-    /// For hash array, we don't have a schema to hash, however we do have field data type.
-    /// So similar to schema, we will hash based on datatype to encode the metadata information into the digest.....
+    /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side.
+    /// Unlike full table hashing, we don't have a schema to hash; however, we do have the field data type.
+    /// Similar to schema hashing, we hash based on the data type to encode metadata information into the digest.
     ///
     /// # Panics
     ///
@@ -224,7 +224,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.finalize().to_vec()
     }
 
-    /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side.
+    /// Hash a record batch directly without needing to create an `ArrowDigester` instance on the user side.
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
         let mut digester = Self::new(record_batch.schema().as_ref());
         digester.update(record_batch);
@@ -253,7 +253,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         reason = "Use for bit packing the null_bit_values"
     )]
     /// Finalize a single field digest into the final digest.
-    /// Helpers to reduce code duplication.
+    /// Helper to reduce code duplication.
     fn finalize_digest(final_digest: &mut D, digest: DigestBufferType<D>) {
         // Null bits first (if nullable)
         if let Some(null_bit_vec) = &digest.null_bits {
@@ -270,7 +270,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.update(digest.data.finalize());
     }
 
-    /// Serialize the schema into a `BTreeMap` for field name and its digest.
+    /// Serialize the schema into a canonical JSON string keyed by field name.
     ///
     /// # Panics
     /// This function will panic if JSON serialization of the schema fails.
@@ -363,7 +363,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Serialize the schema into a `BTreeMap` for field name and its digest.
+    /// Hash the schema by serializing it to a canonical JSON string and computing its digest.
     pub fn hash_schema(schema: &Schema) -> Vec<u8> {
         // Hash the entire thing to the digest
         D::digest(Self::serialized_schema(schema)).to_vec()
@@ -752,8 +752,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Internal recursive function to extract field names from nested structs effectively flattening the schema.
-    /// The format is `parent__child__grandchild__etc`... for nested fields and will be stored in `fields_digest_buffer`.
+    /// Internal recursive function to extract field names from nested structs, effectively flattening the schema.
+    /// Nested fields use `/`-delimited paths (e.g., `parent/child/grandchild`) and are stored in `fields_digest_buffer`.
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
