@@ -934,12 +934,12 @@ mod tests {
     fn list_of_utf8_vs_large_list_of_large_utf8_schema_should_hash_equal() {
         let schema1 = Schema::new(vec![Field::new(
             "col",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)).into()),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
             true,
         )]);
         let schema2 = Schema::new(vec![Field::new(
             "col",
-            DataType::LargeList(Arc::new(Field::new("item", DataType::LargeUtf8, true)).into()),
+            DataType::LargeList(Arc::new(Field::new("item", DataType::LargeUtf8, true))),
             true,
         )]);
 
@@ -959,7 +959,7 @@ mod tests {
                 vec![
                     Field::new(
                         "items",
-                        DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)).into()),
+                        DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
                         true,
                     ),
                     Field::new("name", DataType::Utf8, true),
@@ -975,9 +975,11 @@ mod tests {
                 vec![
                     Field::new(
                         "items",
-                        DataType::LargeList(
-                            Arc::new(Field::new("item", DataType::LargeUtf8, true)).into(),
-                        ),
+                        DataType::LargeList(Arc::new(Field::new(
+                            "item",
+                            DataType::LargeUtf8,
+                            true,
+                        ))),
                         true,
                     ),
                     Field::new("name", DataType::LargeUtf8, true),
@@ -1002,7 +1004,7 @@ mod tests {
             (
                 Arc::new(Field::new(
                     "items",
-                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)).into()),
+                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
                     true,
                 )),
                 Arc::new(list1) as ArrayRef,
@@ -1028,9 +1030,7 @@ mod tests {
             (
                 Arc::new(Field::new(
                     "items",
-                    DataType::LargeList(
-                        Arc::new(Field::new("item", DataType::LargeUtf8, true)).into(),
-                    ),
+                    DataType::LargeList(Arc::new(Field::new("item", DataType::LargeUtf8, true))),
                     true,
                 )),
                 Arc::new(list2) as ArrayRef,
