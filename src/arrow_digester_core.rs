@@ -7,9 +7,9 @@ use std::{collections::BTreeMap, iter::repeat_n};
 
 use arrow::{
     array::{
-        make_array, Array, BinaryArray, BooleanArray, GenericBinaryArray, GenericListArray,
-        GenericStringArray, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
-        OffsetSizeTrait, RecordBatch, StringArray, StructArray,
+        make_array, Array, BooleanArray, GenericBinaryArray, GenericListArray,
+        GenericStringArray, LargeBinaryArray, LargeListArray, LargeStringArray,
+        OffsetSizeTrait, RecordBatch, StructArray,
     },
     buffer::NullBuffer,
     compute::cast,
@@ -367,11 +367,38 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &dyn Array,
         digest: &mut DigestBufferType<D>,
     ) {
-        match data_type {
+        // Normalize small variants to their large equivalents so every code path
+        // goes through a single canonical representation.  The cast only widens
+        // offsets (i32 → i64); inner element types are normalised recursively
+        // when hash_list_array re-enters array_digest_update for each sub-array.
+        let (normalized_type, cast_array);
+        let (effective_type, effective_array): (&DataType, &dyn Array) = match data_type {
+            DataType::Utf8 => {
+                normalized_type = DataType::LargeUtf8;
+                cast_array = cast(array, &normalized_type)
+                    .expect("Failed to cast Utf8 to LargeUtf8");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::Binary => {
+                normalized_type = DataType::LargeBinary;
+                cast_array = cast(array, &normalized_type)
+                    .expect("Failed to cast Binary to LargeBinary");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::List(field) => {
+                normalized_type = DataType::LargeList(field.clone());
+                cast_array = cast(array, &normalized_type)
+                    .expect("Failed to cast List to LargeList");
+                (&normalized_type, cast_array.as_ref())
+            }
+            _ => (data_type, array),
+        };
+
+        match effective_type {
             DataType::Null => todo!(),
             DataType::Boolean => {
                 // Bool Array is stored a bit differently, so we can't use the standard fixed buffer approach
-                let bool_array = array
+                let bool_array = effective_array
                     .as_any()
                     .downcast_ref::<BooleanArray>()
                     .expect("Failed to downcast to BooleanArray");
@@ -397,77 +424,59 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     digest.data.update(bit_vec.as_raw_slice());
                 }
             }
-            DataType::Int8 | DataType::UInt8 => Self::hash_fixed_size_array(array, digest, 1),
+            DataType::Int8 | DataType::UInt8 => {
+                Self::hash_fixed_size_array(effective_array, digest, 1);
+            }
             DataType::Int16 | DataType::UInt16 | DataType::Float16 => {
-                Self::hash_fixed_size_array(array, digest, 2);
+                Self::hash_fixed_size_array(effective_array, digest, 2);
             }
             DataType::Int32
             | DataType::UInt32
             | DataType::Float32
             | DataType::Date32
             | DataType::Decimal32(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 4);
+                Self::hash_fixed_size_array(effective_array, digest, 4);
             }
             DataType::Int64
             | DataType::UInt64
             | DataType::Float64
             | DataType::Date64
             | DataType::Decimal64(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 8);
+                Self::hash_fixed_size_array(effective_array, digest, 8);
             }
             DataType::Timestamp(_, _) => todo!(),
-            DataType::Time32(_) => Self::hash_fixed_size_array(array, digest, 4),
-            DataType::Time64(_) => Self::hash_fixed_size_array(array, digest, 8),
+            DataType::Time32(_) => Self::hash_fixed_size_array(effective_array, digest, 4),
+            DataType::Time64(_) => Self::hash_fixed_size_array(effective_array, digest, 8),
             DataType::Duration(_) => todo!(),
             DataType::Interval(_) => todo!(),
-            DataType::Binary => Self::hash_binary_array(
-                array
-                    .as_any()
-                    .downcast_ref::<BinaryArray>()
-                    .expect("Failed to downcast to BinaryArray"),
-                digest,
-            ),
+            // Small variants are normalized above — these arms are unreachable
+            DataType::Binary | DataType::Utf8 | DataType::List(_) => {
+                unreachable!("Normalized to Large variant at the top of array_digest_update")
+            }
             DataType::FixedSizeBinary(element_size) => {
-                Self::hash_fixed_size_array(array, digest, *element_size);
+                Self::hash_fixed_size_array(effective_array, digest, *element_size);
             }
             DataType::LargeBinary => Self::hash_binary_array(
-                array
+                effective_array
                     .as_any()
                     .downcast_ref::<LargeBinaryArray>()
                     .expect("Failed to downcast to LargeBinaryArray"),
                 digest,
             ),
             DataType::BinaryView => todo!(),
-            DataType::Utf8 => Self::hash_string_array(
-                array
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .expect("Failed to downcast to StringArray"),
-                digest,
-            ),
             DataType::LargeUtf8 => Self::hash_string_array(
-                array
+                effective_array
                     .as_any()
                     .downcast_ref::<LargeStringArray>()
                     .expect("Failed to downcast to LargeStringArray"),
                 digest,
             ),
             DataType::Utf8View => todo!(),
-            DataType::List(field) => {
-                Self::hash_list_array(
-                    array
-                        .as_any()
-                        .downcast_ref::<ListArray>()
-                        .expect("Failed to downcast to ListArray"),
-                    field.data_type(),
-                    digest,
-                );
-            }
             DataType::ListView(_) => todo!(),
             DataType::FixedSizeList(_, _) => todo!(),
             DataType::LargeList(field) => {
                 Self::hash_list_array(
-                    array
+                    effective_array
                         .as_any()
                         .downcast_ref::<LargeListArray>()
                         .expect("Failed to downcast to LargeListArray"),
@@ -477,7 +486,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             }
             DataType::LargeListView(_) => todo!(),
             DataType::Struct(fields) => {
-                let struct_array = array
+                let struct_array = effective_array
                     .as_any()
                     .downcast_ref::<StructArray>()
                     .expect("Failed to downcast to StructArray");
@@ -541,15 +550,15 @@ impl<D: Digest> ArrowDigesterCore<D> {
             }
             DataType::Union(_, _) => todo!(),
             DataType::Dictionary(_, value_type) => {
-                let resolved = cast(array, value_type.as_ref())
+                let resolved = cast(effective_array, value_type.as_ref())
                     .expect("Failed to cast dictionary to plain array");
                 Self::array_digest_update(value_type.as_ref(), resolved.as_ref(), digest);
             }
             DataType::Decimal128(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 16);
+                Self::hash_fixed_size_array(effective_array, digest, 16);
             }
             DataType::Decimal256(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 32);
+                Self::hash_fixed_size_array(effective_array, digest, 32);
             }
             DataType::Map(_, _) => todo!(),
             DataType::RunEndEncoded(_, _) => todo!(),

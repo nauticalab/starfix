@@ -752,6 +752,66 @@ mod tests {
     }
 
     #[test]
+    fn list_and_large_list_array_should_hash_equal() {
+        let list =
+            ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+                Some(vec![Some(1), Some(2)]),
+                None,
+                Some(vec![Some(3)]),
+            ]);
+        let large_list = LargeListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(1), Some(2)]),
+            None,
+            Some(vec![Some(3)]),
+        ]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&list)),
+            encode(ArrowDigester::hash_array(&large_list)),
+            "List and LargeList arrays with same data should produce same hash"
+        );
+    }
+
+    #[test]
+    fn list_and_large_list_record_batch_should_hash_equal() {
+        let list_field = Field::new("item", DataType::Int32, true);
+        let schema1 = Arc::new(Schema::new(vec![Field::new(
+            "col",
+            DataType::List(Box::new(list_field.clone()).into()),
+            true,
+        )]));
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "col",
+            DataType::LargeList(Box::new(list_field).into()),
+            true,
+        )]));
+
+        let batch1 = RecordBatch::try_new(
+            schema1,
+            vec![Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(
+                vec![Some(vec![Some(10), Some(20)]), None],
+            )) as ArrayRef],
+        )
+        .unwrap();
+
+        let batch2 = RecordBatch::try_new(
+            schema2,
+            vec![
+                Arc::new(LargeListArray::from_iter_primitive::<Int32Type, _, _>(
+                    vec![Some(vec![Some(10), Some(20)]), None],
+                )) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "List and LargeList record batches with same data should produce same hash"
+        );
+    }
+
+    #[test]
 
     fn binary_and_large_binary_array_should_hash_equal() {
         let bin = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
@@ -775,6 +835,34 @@ mod tests {
             encode(ArrowDigester::hash_array(&arr)),
             encode(ArrowDigester::hash_array(&large_arr)),
             "Utf8 and LargeUtf8 arrays with same data should produce same hash"
+        );
+    }
+
+    #[test]
+    fn utf8_and_large_utf8_record_batch_should_hash_equal() {
+        let schema1 = Arc::new(Schema::new(vec![Field::new("col", DataType::Utf8, true)]));
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "col",
+            DataType::LargeUtf8,
+            true,
+        )]));
+
+        let batch1 = RecordBatch::try_new(
+            schema1,
+            vec![Arc::new(StringArray::from(vec![Some("abc"), None])) as ArrayRef],
+        )
+        .unwrap();
+
+        let batch2 = RecordBatch::try_new(
+            schema2,
+            vec![Arc::new(LargeStringArray::from(vec![Some("abc"), None])) as ArrayRef],
+        )
+        .unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "Utf8 and LargeUtf8 record batches with same data should produce same hash"
         );
     }
 
