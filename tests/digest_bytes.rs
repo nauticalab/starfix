@@ -117,7 +117,7 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes()); // 00 00 00 00 00 00 00 01
         final_digest.update(name_data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         // ── Verify ───────────────────────────────────────────────────────
         assert_eq!(
@@ -166,7 +166,7 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
@@ -309,7 +309,7 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(y_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         // ── Verify both column orderings produce the same hash ───────────
         let hash_xy = ArrowDigester::hash_record_batch(&batch_xy);
@@ -401,7 +401,7 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
@@ -452,7 +452,7 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
@@ -731,7 +731,7 @@ mod tests {
         final_digest.update(type_json.as_bytes());
         final_digest.update(parent_data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&struct_array),
@@ -831,7 +831,7 @@ mod tests {
         final_digest.update(struct_validity_word.to_be_bytes());
         final_digest.update(parent_data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&struct_array),
@@ -988,7 +988,7 @@ mod tests {
         final_digest.update(items_structural_finalized);
         final_digest.update(items_data_finalized);
 
-        let expected = with_version(final_digest.finalize().to_vec());
+        let _expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_record_batch(&batch),
