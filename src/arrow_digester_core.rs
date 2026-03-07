@@ -24,7 +24,7 @@ const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 #[derive(Clone)]
 enum DigestBufferType<D: Digest> {
     NonNullable(D),
-    Nullable(BitVec, D), // Where first digest is for the bull bits, while the second is for the actual data
+    Nullable(BitVec<u8, Lsb0>, D), // Validity bits: u8/Lsb0, matching Arrow's native layout
 }
 
 #[derive(Clone)]
@@ -122,7 +122,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
         // Now we update it with the actual array data
         let mut digest_buffer = if array.is_nullable() {
-            DigestBufferType::Nullable(BitVec::new(), D::new())
+            DigestBufferType::Nullable(BitVec::<u8, Lsb0>::new(), D::new())
         } else {
             DigestBufferType::NonNullable(D::new())
         };
@@ -169,7 +169,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 final_digest.update(data_digest.finalize());
             }
             DigestBufferType::Nullable(null_bit_digest, data_digest) => {
-                final_digest.update(null_bit_digest.len().to_le_bytes());
+                final_digest.update((null_bit_digest.len() as u64).to_le_bytes());
                 for &word in null_bit_digest.as_raw_slice() {
                     final_digest.update(word.to_be_bytes());
                 }
@@ -330,7 +330,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 match digest {
                     DigestBufferType::NonNullable(data_digest) => {
                         // We want to bit pack the boolean values into bytes for hashing
-                        let mut bit_vec = BitVec::<u8, Msb0>::with_capacity(bool_array.len());
+                        let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
                         for i in 0..bool_array.len() {
                             bit_vec.push(bool_array.value(i));
                         }
@@ -342,7 +342,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                         Self::handle_null_bits(bool_array, null_bit_vec);
 
                         // Handle the data
-                        let mut bit_vec = BitVec::<u8, Msb0>::with_capacity(bool_array.len());
+                        let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
                         for i in 0..bool_array.len() {
                             // We only want the valid bits, for null we will discard from the hash since that is already capture by null_bits
                             if bool_array.is_valid(i) {
@@ -656,7 +656,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             fields_digest_buffer.insert(
                 Self::construct_field_name_hierarchy(parent_field_name, field.name()),
                 if field.is_nullable() {
-                    DigestBufferType::Nullable(BitVec::new(), D::new())
+                    DigestBufferType::Nullable(BitVec::<u8, Lsb0>::new(), D::new())
                 } else {
                     DigestBufferType::NonNullable(D::new())
                 },
@@ -680,7 +680,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    fn handle_null_bits(array: &dyn Array, null_bit_vec: &mut BitVec) {
+    fn handle_null_bits(array: &dyn Array, null_bit_vec: &mut BitVec<u8, Lsb0>) {
         match array.nulls() {
             Some(null_buf) => {
                 // We would need to iterate through the null buffer and push it into the null_bit_vec
@@ -726,6 +726,8 @@ mod tests {
     use hex::encode;
     use pretty_assertions::assert_eq;
     use sha2::{Digest as _, Sha256};
+
+
 
     use crate::arrow_digester_core::{ArrowDigesterCore, DigestBufferType};
     use arrow::array::{Decimal256Array, Decimal64Array};
@@ -920,7 +922,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "9841aab2dfeb637872d41422d33fca1e939f06b8fa0dcec66ff3782592cf9565"
+            "497a3824c736fd73db307a1e49a7117df0f6221d2525bee4ebe3986dd459b689"
         );
     }
 
@@ -928,7 +930,7 @@ mod tests {
 
     #[test]
     fn digest_bool_nullable_bytes() {
-        // [true, None, false, true] — valid values bit-packed Msb0, null skipped
+        // [true, None, false, true] — valid values bit-packed Lsb0, null skipped
         let array = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, true)]);
         let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
@@ -956,10 +958,10 @@ mod tests {
         assert!(null_bit_vec[2], "index 2 (false) should be valid");
         assert!(null_bit_vec[3], "index 3 (true) should be valid");
 
-        // Valid values [true, false, true] packed Msb0 into one byte:
-        // bit0=1, bit1=0, bit2=1 → 1010_0000 = 0xA0
+        // Valid values [true, false, true] packed Lsb0 into one byte:
+        // bit0=1, bit1=0, bit2=1 → 0000_0101 = 0x05
         let mut manual = Sha256::new();
-        manual.update([0xA0_u8]);
+        manual.update([0x05_u8]);
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 
@@ -986,9 +988,9 @@ mod tests {
             panic!("Expected NonNullable buffer");
         };
 
-        // [false, true, false] packed Msb0: bit0=0, bit1=1, bit2=0 → 0100_0000 = 0x40
+        // [false, true, false] packed Lsb0: bit0=0, bit1=1, bit2=0 → 0000_0010 = 0x02
         let mut manual = Sha256::new();
-        manual.update([0x40_u8]);
+        manual.update([0x02_u8]);
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 
