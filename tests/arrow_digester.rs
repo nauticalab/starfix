@@ -73,7 +73,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(schema.clone()).finalize()),
-            "0000019c75bd0c40bd2fb15e878418c151c0b792c966476b35ded7d0f6fd1922cf5a00"
+            "000001a5b5cd3fade0d81c59f10f99461aaaf6b970f116c82a4e7d5a70af17f008709b"
         );
 
         let batch = RecordBatch::try_new(
@@ -129,7 +129,7 @@ mod tests {
         // Hash the record batch
         assert_eq!(
             encode(ArrowDigester::hash_record_batch(&batch)),
-            "0000019944840b176dd3a88382dd08d77b50084d2b63b805c113780b8810babf01bba1"
+            "000001907c152d6b459901d86f1555b60846f4a5b646f6d8c5c6962014505eeaa39296"
         );
     }
 
@@ -199,10 +199,10 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&binary_array));
         assert_eq!(
             hash,
-            "000001c73893c594350c05117a934571e7a480693447a319e269b36fa03c470383f2be"
+            "000001331f179fa074a02afbb060d5f38e776fb63d69494650934bafa51f6d5264f576"
         );
 
-        // Test large binary array with same data to ensure consistency
+        // Large binary array with same data should produce the same hash (type normalization)
         let large_binary_array = LargeBinaryArray::from(vec![
             Some(b"hello".as_ref()),
             None,
@@ -210,7 +210,7 @@ mod tests {
             Some(b"".as_ref()),
         ]);
 
-        assert_ne!(
+        assert_eq!(
             hex::encode(ArrowDigester::hash_array(&large_binary_array)),
             hash
         );
@@ -263,14 +263,14 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&string_array));
         assert_eq!(
             hash,
-            "00000150f4ed059207a4606f71b278be3dd53869c65a22549d900f90c35da4df5c309e"
+            "0000017d2325032dd496c5ccbce50ea6afd7edf8e10d0f1695a5b35d1e8f3759b1b3e6"
         );
 
-        // Test large string array with same data to ensure consistency
+        // Large string array with same data should produce the same hash (type normalization)
         let large_string_array =
             LargeStringArray::from(vec![Some("hello"), None, Some("world"), Some("")]);
 
-        assert_ne!(
+        assert_eq!(
             hex::encode(ArrowDigester::hash_array(&large_string_array)),
             hash
         );
@@ -289,7 +289,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "00000105fc3ecc3e20fea732e2a4bedbbd58ab40b5d1f19ca324b5f3d8116b21c0d649"
+            "00000186ba22789af5e728982c0ed5c78dcc382e8cc9124bcdbd794638ee05a79f6796"
         );
 
         // Collision test: [[1, 2], [3]] vs [[1], [2, 3]]
@@ -707,7 +707,6 @@ mod tests {
     // ── Issue 5: Type canonicalization (Binary/LargeBinary, Utf8/LargeUtf8, List/LargeList) ──
 
     #[test]
-    #[ignore = "Bug: no type canonicalization for Binary vs LargeBinary (Issue 5)"]
     fn binary_and_large_binary_schema_should_hash_equal() {
         let schema1 = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
         let schema2 = Schema::new(vec![Field::new("col", DataType::LargeBinary, true)]);
@@ -720,7 +719,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Bug: no type canonicalization for Utf8 vs LargeUtf8 (Issue 5)"]
     fn utf8_and_large_utf8_schema_should_hash_equal() {
         let schema1 = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
         let schema2 = Schema::new(vec![Field::new("col", DataType::LargeUtf8, true)]);
@@ -733,7 +731,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Bug: no type canonicalization for List vs LargeList (Issue 5)"]
     fn list_and_large_list_schema_should_hash_equal() {
         let list_field = Field::new("item", DataType::Int32, true);
         let schema1 = Schema::new(vec![Field::new(
@@ -755,7 +752,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Bug: no type canonicalization for Binary vs LargeBinary in hash_array (Issue 5)"]
     fn binary_and_large_binary_array_should_hash_equal() {
         let bin = BinaryArray::from(vec![
             Some(b"hello".as_ref()),
@@ -776,7 +772,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Bug: no type canonicalization for Utf8 vs LargeUtf8 in hash_array (Issue 5)"]
     fn utf8_and_large_utf8_array_should_hash_equal() {
         let arr = StringArray::from(vec![Some("hello"), None, Some("world")]);
         let large_arr = LargeStringArray::from(vec![Some("hello"), None, Some("world")]);
@@ -789,7 +784,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Bug: no type canonicalization for Binary vs LargeBinary in hash_record_batch (Issue 5)"]
     fn binary_and_large_binary_record_batch_should_hash_equal() {
         let schema1 = Arc::new(Schema::new(vec![Field::new("col", DataType::Binary, true)]));
         let schema2 = Arc::new(Schema::new(vec![Field::new(

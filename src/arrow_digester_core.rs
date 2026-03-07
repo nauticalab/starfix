@@ -114,7 +114,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
         let mut final_digest = D::new();
 
-        let data_type_serialized = serde_json::to_string(&array.data_type())
+        let normalized_type = Self::normalize_data_type(array.data_type());
+        let data_type_serialized = serde_json::to_string(&normalized_type)
             .expect("Failed to serialize data type to string");
 
         // Update the digest buffer with the array metadata and field data
@@ -198,19 +199,32 @@ impl<D: Digest> ArrowDigesterCore<D> {
         serde_json::to_string(&fields_digest).expect("Failed to serialize field_digest to bytes")
     }
 
+    /// Normalize a `DataType` to its canonical logical form.
+    ///
+    /// Types that differ only in offset size (i32 vs i64) are logically equivalent:
+    /// - `Utf8` → `LargeUtf8`
+    /// - `Binary` → `LargeBinary`
+    /// - `List` → `LargeList`
+    fn normalize_data_type(data_type: &DataType) -> DataType {
+        match data_type {
+            DataType::Utf8 => DataType::LargeUtf8,
+            DataType::Binary => DataType::LargeBinary,
+            DataType::List(field) => DataType::LargeList(field.clone()),
+            _ => data_type.clone(),
+        }
+    }
+
     /// Convert a `DataType` to a JSON value, recursively converting any inner `Field`
     /// references to only include `name`, `data_type`, and `nullable`.
     fn data_type_to_value(data_type: &DataType) -> serde_json::Value {
-        match data_type {
+        let data_type = Self::normalize_data_type(data_type);
+        match &data_type {
             DataType::Struct(fields) => {
                 let fields_json: Vec<serde_json::Value> = fields
                     .iter()
                     .map(|f| Self::inner_field_to_value(f))
                     .collect();
                 serde_json::json!({ "Struct": fields_json })
-            }
-            DataType::List(field) => {
-                serde_json::json!({ "List": Self::inner_field_to_value(field) })
             }
             DataType::LargeList(field) => {
                 serde_json::json!({ "LargeList": Self::inner_field_to_value(field) })
@@ -922,7 +936,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "497a3824c736fd73db307a1e49a7117df0f6221d2525bee4ebe3986dd459b689"
+            "6adca05cdb6925aaa0c06e8a159c8d5ce0fa7ff8a57c05c476a59c56a7111311"
         );
     }
 

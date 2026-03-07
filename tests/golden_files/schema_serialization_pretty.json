@@ -1,6 +1,6 @@
 {
   "binary_name": {
-    "data_type": "Binary",
+    "data_type": "LargeBinary",
     "nullable": true
   },
   "bool_name": {
@@ -54,7 +54,7 @@
           "data_type": {
             "Struct": [
               {
-                "data_type": "Utf8",
+                "data_type": "LargeUtf8",
                 "name": "middle_field",
                 "nullable": true
               },
@@ -129,7 +129,7 @@
   },
   "list_name": {
     "data_type": {
-      "List": {
+      "LargeList": {
         "data_type": "Int32",
         "name": "item",
         "nullable": true
@@ -146,7 +146,7 @@
           "nullable": false
         },
         {
-          "data_type": "Utf8",
+          "data_type": "LargeUtf8",
           "name": "struct_field2",
           "nullable": true
         }
@@ -195,7 +195,7 @@
     "nullable": false
   },
   "utf8_name": {
-    "data_type": "Utf8",
+    "data_type": "LargeUtf8",
     "nullable": true
   }
 }
