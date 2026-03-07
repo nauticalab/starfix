@@ -114,7 +114,7 @@ mod tests {
 
         // Field "name" (nullable → bit_count + validity words + data digest)
         final_digest.update(bit_count.to_le_bytes()); // 02 00 00 00 00 00 00 00
-        final_digest.update(validity_word.to_be_bytes()); // 00 00 00 00 00 00 00 01
+        final_digest.update(validity_word.to_be_bytes()); // 01
         final_digest.update(name_data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
