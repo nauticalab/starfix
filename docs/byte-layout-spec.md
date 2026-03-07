@@ -130,9 +130,9 @@ If a nullable field has no actual nulls (null buffer absent), all elements are m
 
 ### 3.2 Boolean Type
 
-Boolean values are **bit-packed** using **MSB-first** (`Msb0`) ordering into bytes.
+Boolean values are **bit-packed** using **LSB-first** (`Lsb0`) ordering into bytes.
 
-**Non-nullable**: All values are packed sequentially into a `BitVec<u8, Msb0>`, then the raw bytes are fed into the data digest.
+**Non-nullable**: All values are packed sequentially into a `BitVec<u8, Lsb0>`, then the raw bytes are fed into the data digest.
 
 **Nullable**:
 1. Extend the validity `BitVec` as usual.
@@ -141,8 +141,8 @@ Boolean values are **bit-packed** using **MSB-first** (`Msb0`) ordering into byt
 
 **Example**: `[true, NULL, false, true]` (nullable, 4 elements)
 - Validity bits: `[1, 0, 1, 1]`
-- Data bits (valid only): `[true, false, true]` → Msb0 packed: `1_0_1_00000` = `0xA0`
-- Bytes fed to data digest: `[0xA0]`
+- Data bits (valid only): `[true, false, true]` → Lsb0 packed: `00000_1_0_1` = `0x05`
+- Bytes fed to data digest: `[0x05]`
 
 ### 3.3 Variable-Length Types (Binary, String)
 
@@ -229,9 +229,9 @@ When a struct appears as a standalone array (`hash_array`) or as a sub-array wit
    - Hash the child recursively via `array_digest_update`.
    - **Finalize the child digest** and write the resulting bytes into the parent's data stream (in the order: null_bits, structural, data):
      - Non-nullable, non-list child: `SHA-256(child_data).finalize()` (32 bytes)
-     - Nullable, non-list child: `bit_count LE (8B) || validity_words BE (8B each) || SHA-256(child_data).finalize() (32B)`
+     - Nullable, non-list child: `bit_count LE (8B) || validity_words BE (1B each) || SHA-256(child_data).finalize() (32B)`
      - Non-nullable list child: `SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
-     - Nullable list child: `bit_count LE (8B) || validity_words BE (8B each) || SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
+     - Nullable list child: `bit_count LE (8B) || validity_words BE (1B each) || SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
 
 The parent's data stream thus contains the concatenation of all children's finalized bytes (in alphabetical order).
 
@@ -262,9 +262,9 @@ Only the data digest is finalized (32 bytes).
 ### 4.2 Nullable, Non-List Field
 
 ```
-final_digest.update( bit_count.to_le_bytes() )           // 8 bytes (usize LE = u64 LE on 64-bit)
-for each word in validity_bitvec.as_raw_slice():          // each word is usize (8 bytes on 64-bit)
-    final_digest.update( word.to_be_bytes() )             // 8 bytes big-endian per word
+final_digest.update( bit_count.to_le_bytes() )           // 8 bytes (u64 LE)
+for each word in validity_bitvec.as_raw_slice():          // each word is u8 (1 byte)
+    final_digest.update( word.to_be_bytes() )             // 1 byte per word (trivially big-endian)
 final_digest.update( SHA-256(data_bytes).finalize() )     // 32 bytes
 ```
 
@@ -278,18 +278,18 @@ final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes (leaf
 ### 4.4 Nullable List Field
 
 ```
-final_digest.update( bit_count.to_le_bytes() )                // 8 bytes
+final_digest.update( bit_count.to_le_bytes() )                // 8 bytes (u64 LE)
 for each word in validity_bitvec.as_raw_slice():
-    final_digest.update( word.to_be_bytes() )                  // 8 bytes per word
+    final_digest.update( word.to_be_bytes() )                  // 1 byte per word (u8)
 final_digest.update( SHA-256(structural_bytes).finalize() )    // 32 bytes (element counts)
 final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes (leaf values)
 ```
 
 **Validity BitVec details** (applies to all nullable variants):
-- Storage type: `usize` (8 bytes on 64-bit platforms).
+- Storage type: `u8` (1 byte per word).
 - Bit order: `Lsb0` (least significant bit first within each word).
-- `bit_count` = total number of elements (valid + null), serialized as `usize` little-endian.
-- Each storage word is serialized as `usize` big-endian.
+- `bit_count` = total number of elements (valid + null), serialized as `u64` little-endian (8 bytes).
+- Each storage word is serialized as `u8` big-endian (trivially 1 byte).
 - The last word may have unused high bits (zero-padded).
 
 ---
@@ -390,17 +390,17 @@ final_digest.update( age_data_digest.finalize() )   // 32 bytes
 
 Values: `["Alice", NULL]`
 
-**Validity bits** (Lsb0 in usize words):
+**Validity bits** (Lsb0 in u8 words):
 - Element 0 ("Alice"): valid → bit = 1
 - Element 1 (NULL): null → bit = 0
 - BitVec contents: bits `[1, 0]`, bit_count = 2
-- As usize (Lsb0): bit 0 = 1, bit 1 = 0 → binary `...0000_0001` = 1
-- `as_raw_slice()` = `[1_usize]`
+- As u8 (Lsb0): bit 0 = 1, bit 1 = 0 → binary `0000_0001` = 1
+- `as_raw_slice()` = `[1_u8]`
 
 Validity serialization:
 ```
-bit_count LE:  02 00 00 00 00 00 00 00     (2 as usize little-endian)
-word 0 BE:     00 00 00 00 00 00 00 01     (1 as usize big-endian)
+bit_count LE:  02 00 00 00 00 00 00 00     (2 as u64 little-endian)
+word 0 BE:     01                           (1 as u8)
 ```
 
 **Data bytes** (only valid elements):
@@ -413,8 +413,8 @@ name_data_digest = SHA-256(0x0500000000000000_416c696365)
 
 Finalization into final_digest (nullable):
 ```
-final_digest.update( 0x0200000000000000 )                   // bit count
-final_digest.update( 0x0000000000000001 )                   // word 0 BE
+final_digest.update( 0x0200000000000000 )                   // bit count (u64 LE)
+final_digest.update( 0x01 )                                  // word 0 (u8)
 final_digest.update( name_data_digest.finalize() )           // 32 bytes
 ```
 
@@ -426,8 +426,8 @@ Fields in alphabetical order: `age`, then `name`.
 final_digest = SHA-256()
 final_digest.update( schema_digest )                          // 32 bytes
 final_digest.update( age_data_digest.finalize() )             // 32 bytes (non-nullable)
-final_digest.update( 0x0200000000000000 )                     // name bit count
-final_digest.update( 0x0000000000000001 )                     // name validity word
+final_digest.update( 0x0200000000000000 )                     // name bit count (u64 LE)
+final_digest.update( 0x01 )                                   // name validity word (u8)
 final_digest.update( name_data_digest.finalize() )            // 32 bytes
 raw_hash = final_digest.finalize()
 output = 0x000001 ++ raw_hash
@@ -451,18 +451,18 @@ Note: `serde_json::to_string` of a JSON string value includes the surrounding qu
 
 #### Step 2: Data
 
-**Validity bits** (Lsb0 in usize):
+**Validity bits** (Lsb0 in u8):
 - `[1, 0, 1, 1]` → bits: b0=1, b1=0, b2=1, b3=1
-- As usize (Lsb0): binary `...0000_1101` = 13
-- `as_raw_slice()` = `[13_usize]`
+- As u8 (Lsb0): binary `0000_1101` = 13
+- `as_raw_slice()` = `[13_u8]`
 
-**Data bits** (Msb0 packed, valid values only):
+**Data bits** (Lsb0 packed, valid values only):
 - Valid values: `[true, false, true]` (3 values)
-- Msb0 packing: bit7=true(1), bit6=false(0), bit5=true(1), bits4-0=0
-- Byte: `10100000` = `0xA0`
+- Lsb0 packing: bit0=true(1), bit1=false(0), bit2=true(1), bits3-7=0
+- Byte: `00000101` = `0x05`
 
 ```
-data_digest = SHA-256(0xA0)
+data_digest = SHA-256(0x05)
 ```
 
 #### Step 3: Finalization
@@ -470,8 +470,8 @@ data_digest = SHA-256(0xA0)
 ```
 final_digest = SHA-256()
 final_digest.update(b'"Boolean"')                             // type metadata
-final_digest.update( 0x0400000000000000 )                     // 4 bits (bit count LE)
-final_digest.update( 0x000000000000000D )                     // 13 as usize BE
+final_digest.update( 0x0400000000000000 )                     // 4 bits (bit count as u64 LE)
+final_digest.update( 0x0D )                                   // 13 as u8
 final_digest.update( data_digest.finalize() )                 // 32 bytes
 raw_hash = final_digest.finalize()
 output = 0x000001 ++ raw_hash
@@ -578,7 +578,7 @@ Both produce the same canonical schema JSON:
 
 Both produce the same field digests (fields processed alphabetically: `x` then `y`):
 - Field `x`: `SHA-256(0x0a000000)` (10 as i32 LE)
-- Field `y`: validity `[1]` (1 bit, 1 word), data `0x80` (true packed Msb0)
+- Field `y`: validity `[1]` (1 bit, 1 word), data `0x01` (true packed Lsb0)
 
 Therefore `hash_record_batch(batch1) == hash_record_batch(batch2)`.
 
@@ -613,9 +613,9 @@ final_digest.update(b'"Int32"')     // 7 bytes
 
 #### Step 2: Data
 
-**Validity bits** (Lsb0 in usize):
+**Validity bits** (Lsb0 in u8):
 - `[1, 0, 1, 1]` → bits: b0=1, b1=0, b2=1, b3=1
-- As usize (Lsb0): binary `...0000_1101` = 13
+- As u8 (Lsb0): binary `0000_1101` = 13
 - bit_count = 4
 
 **Data bytes** (only valid elements):
@@ -632,8 +632,8 @@ data_digest = SHA-256(0x2a000000_f9ffffff_00000000)
 ```
 final_digest = SHA-256()
 final_digest.update(b'"Int32"')                                 // type metadata
-final_digest.update( 0x0400000000000000 )                       // 4 bits (bit count LE)
-final_digest.update( 0x000000000000000D )                       // 13 as usize BE
+final_digest.update( 0x0400000000000000 )                       // 4 bits (bit count as u64 LE)
+final_digest.update( 0x0D )                                     // 13 as u8
 final_digest.update( data_digest.finalize() )                   // 32 bytes
 raw_hash = final_digest.finalize()
 output = 0x000001 ++ raw_hash
@@ -655,7 +655,7 @@ final_digest.update(b'"LargeUtf8"')     // 12 bytes
 
 #### Step 2: Data
 
-**Validity bits** (Lsb0 in usize):
+**Validity bits** (Lsb0 in u8):
 - `[1, 0, 1, 1]` → 0b1101 = 13
 - bit_count = 4
 
@@ -673,8 +673,8 @@ data_digest = SHA-256(len+"hello" + len+"world" + len+"")
 ```
 final_digest = SHA-256()
 final_digest.update(b'"LargeUtf8"')
-final_digest.update( 0x0400000000000000 )                       // bit_count=4 LE
-final_digest.update( 0x000000000000000D )                       // validity=13 BE
+final_digest.update( 0x0400000000000000 )                       // bit_count=4 as u64 LE
+final_digest.update( 0x0D )                                     // validity=13 as u8
 final_digest.update( data_digest.finalize() )                   // 32 bytes
 raw_hash = final_digest.finalize()
 output = 0x000001 ++ raw_hash
@@ -715,7 +715,7 @@ No data was fed:
 final_digest = SHA-256()
 final_digest.update( schema_digest )                             // 32 bytes
 final_digest.update( SHA-256("").finalize() )                    // field "a" (non-nullable, 32 bytes)
-final_digest.update( 0x0000000000000000 )                        // field "b" bit_count=0 LE
+final_digest.update( 0x0000000000000000 )                        // field "b" bit_count=0 (u64 LE)
 // no validity words (raw_slice is empty for 0-length BitVec)
 final_digest.update( SHA-256("").finalize() )                    // field "b" data (32 bytes)
 output = 0x000001 ++ final_digest.finalize()
@@ -835,8 +835,8 @@ child_a_finalized = child_a_data_digest.finalize()     // 32 bytes (non-nullable
 
 **Child "b"** (Boolean, non-nullable):
 ```
-// [true, false] → Msb0: bit7=1, bit6=0 → 0x80
-child_b_data_digest = SHA-256(0x80)
+// [true, false] → Lsb0: bit0=1, bit1=0 → 0x01
+child_b_data_digest = SHA-256(0x01)
 child_b_finalized = child_b_data_digest.finalize()     // 32 bytes
 ```
 
@@ -876,7 +876,7 @@ Same struct type JSON as above (with appropriate fields):
 
 Struct validity: `[valid, null, valid]` → bits `[1, 0, 1]`
 - bit_count = 3
-- usize word (Lsb0): `0b101` = 5
+- u8 word (Lsb0): `0b101` = 5
 
 This goes into the parent's BitVec (the top-level digest for `hash_array`).
 
@@ -889,8 +889,8 @@ This goes into the parent's BitVec (the top-level digest for `hash_array`).
 
 ```
 child_a_data_digest = SHA-256(0x0a000000_1e000000)     // [10, 30] as i32 LE
-child_a_finalized = 0x0300000000000000                  // bit_count=3 LE
-                 || 0x0000000000000005                  // validity word=5 BE
+child_a_finalized = 0x0300000000000000                  // bit_count=3 (u64 LE)
+                 || 0x05                                // validity word=5 (u8)
                  || child_a_data_digest.finalize()      // 32 bytes
 ```
 
@@ -903,8 +903,8 @@ child_b_data_digest = SHA-256(
     0x0100000000000000 "x"     // len=1 + "x"
     0x0100000000000000 "z"     // len=1 + "z"
 )
-child_b_finalized = 0x0300000000000000                  // bit_count=3 LE
-                 || 0x0000000000000005                  // validity word=5 BE
+child_b_finalized = 0x0300000000000000                  // bit_count=3 (u64 LE)
+                 || 0x05                                // validity word=5 (u8)
                  || child_b_data_digest.finalize()      // 32 bytes
 ```
 
@@ -919,8 +919,8 @@ parent_data_digest = SHA-256( child_a_finalized || child_b_finalized )
 ```
 final_digest = SHA-256()
 final_digest.update( type_json_bytes )                   // type metadata
-final_digest.update( 0x0300000000000000 )                // struct bit_count=3 LE
-final_digest.update( 0x0000000000000005 )                // struct validity word=5 BE
+final_digest.update( 0x0300000000000000 )                // struct bit_count=3 (u64 LE)
+final_digest.update( 0x05 )                              // struct validity word=5 (u8)
 final_digest.update( parent_data_digest.finalize() )     // 32 bytes
 output = 0x000001 ++ final_digest.finalize()
 ```
@@ -957,7 +957,7 @@ Canonical JSON (element type omits Arrow-internal field name "item"):
 
 Total BitVec: `[1, 1, 1, 1, 1]` — 5 bits, all valid.
 - bit_count = 5
-- usize word (Lsb0): `0b11111` = 31
+- u8 word (Lsb0): `0b11111` = 31
 
 **Structural digest** — receives element counts for each valid list element:
 
@@ -1002,8 +1002,8 @@ final_digest = SHA-256()
 final_digest.update( schema_digest )                              // 32 bytes
 
 // items field finalization (nullable list = null_bits + structural + data)
-final_digest.update( 0x0500000000000000 )                         // bit_count=5 LE
-final_digest.update( 0x000000000000001F )                         // validity word=31 BE
+final_digest.update( 0x0500000000000000 )                         // bit_count=5 (u64 LE)
+final_digest.update( 0x1F )                                       // validity word=31 (u8)
 final_digest.update( items_structural_digest.finalize() )          // 32 bytes (element counts)
 final_digest.update( items_data_digest.finalize() )                // 32 bytes (leaf data)
 
@@ -1014,6 +1014,6 @@ output = 0x000001 ++ final_digest.finalize()
 
 ## 8. Platform Considerations
 
-- **Integer sizes**: All length prefixes use `u64` (8 bytes). Validity bit counts and validity words use `usize`, which is 8 bytes on 64-bit platforms. This means hashes are **platform-dependent** if `usize` differs (32-bit vs 64-bit).
-- **Byte order**: Data values use little-endian. Validity words use big-endian. Bit counts use little-endian.
+- **Integer sizes**: All length prefixes use `u64` (8 bytes, LE). Validity bitmaps use `BitVec<u8, Lsb0>` (1 byte per word). Bit counts use `u64` (8 bytes, LE). Hashes are **platform-independent**.
+- **Byte order**: Data values use little-endian. Validity words use big-endian (trivially 1 byte for `u8`). Bit counts use little-endian.
 - **Floating point**: IEEE 754 representation is hashed directly. `NaN` values with different bit patterns produce different hashes. `+0.0` and `-0.0` produce different hashes.

@@ -86,12 +86,12 @@ mod tests {
         // ── Step 3: Field "name" (LargeUtf8, nullable) ───────────────────
         // Values: ["Alice", NULL]
         //
-        // Validity BitVec (Lsb0, usize storage):
+        // Validity BitVec (Lsb0, u8 storage):
         //   bit 0 = 1 (valid), bit 1 = 0 (null)
-        //   → usize word = 0b01 = 1
+        //   → u8 word = 0b01 = 1
         //   bit_count = 2
-        let bit_count: usize = 2;
-        let validity_word: usize = 1; // bits: [1, 0] in Lsb0
+        let bit_count: u64 = 2;
+        let validity_word: u8 = 1; // bits: [1, 0] in Lsb0
 
         // Data bytes (only valid elements):
         //   "Alice" → len=5 as u64 LE, then UTF-8 bytes
@@ -117,15 +117,12 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes()); // 00 00 00 00 00 00 00 01
         final_digest.update(name_data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         // ── Verify ───────────────────────────────────────────────────────
         assert_eq!(
             ArrowDigester::hash_record_batch(&batch),
-            vec![
-                0, 0, 1, 128, 32, 228, 127, 68, 98, 242, 107, 11, 199, 58, 209, 16, 234, 15, 145,
-                152, 194, 116, 92, 4, 206, 35, 51, 80, 147, 210, 183, 142, 245, 28, 136
-            ],
+            expected,
             "Example A: two-column table hash mismatch"
         );
     }
@@ -144,18 +141,17 @@ mod tests {
         // serde_json::to_string(json!("Boolean")) → "\"Boolean\""
         let type_json = b"\"Boolean\"";
 
-        // ── Validity bits (Lsb0, usize storage) ─────────────────────────
+        // ── Validity bits (Lsb0, u8 storage) ──────────────────────────
         // [valid, null, valid, valid] → bits [1, 0, 1, 1]
-        // Lsb0 in usize: bit0=1, bit1=0, bit2=1, bit3=1 → 0b1101 = 13
-        let bit_count: usize = 4;
-        let validity_word: usize = 0b1101; // = 13
+        // Lsb0 in u8: bit0=1, bit1=0, bit2=1, bit3=1 → 0b1101 = 13
+        let bit_count: u64 = 4;
+        let validity_word: u8 = 0b1101; // = 13
 
-        // ── Data bits (Msb0 packed, valid values only) ───────────────────
+        // ── Data bits (Lsb0 packed, valid values only) ───────────────────
         // Valid values: [true, false, true] → 3 bits
-        // Msb0: bit7=1(true), bit6=0(false), bit5=1(true), bits4-0=0
-        // Byte: 0b1010_0000 = 0xA0
+        // Lsb0: bit0=1(true), bit1=0(false), bit2=1(true) → 0b101 = 0x05
         let mut data_digest = Sha256::new();
-        data_digest.update([0xA0_u8]);
+        data_digest.update([0x05_u8]);
         let data_finalized = data_digest.finalize();
 
         // ── Final combination ────────────────────────────────────────────
@@ -166,14 +162,11 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
-            vec![
-                0, 0, 1, 133, 169, 201, 158, 186, 123, 207, 217, 177, 79, 213, 41, 185, 83, 79, 34,
-                137, 49, 151, 121, 39, 10, 164, 160, 114, 241, 23, 207, 144, 166, 172, 139
-            ],
+            expected,
             "Example B: boolean array hash mismatch"
         );
     }
@@ -291,12 +284,12 @@ mod tests {
 
         // Field "y" (Boolean, nullable): value true (valid)
         // Validity: [1] → bit_count=1, word=1 (Lsb0)
-        // Data: [true] Msb0 → bit7=1 → 0x80
-        let bit_count: usize = 1;
-        let validity_word: usize = 1;
+        // Data: [true] Lsb0 → bit0=1 → 0x01
+        let bit_count: u64 = 1;
+        let validity_word: u8 = 1;
 
         let mut y_data = Sha256::new();
-        y_data.update([0x80_u8]); // true in Msb0 = 1000_0000
+        y_data.update([0x01_u8]); // true in Lsb0 = 0000_0001
         let y_finalized = y_data.finalize();
 
         // Final combination: schema, then fields alphabetically (x, y)
@@ -309,7 +302,7 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(y_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         // ── Verify both column orderings produce the same hash ───────────
         let hash_xy = ArrowDigester::hash_record_batch(&batch_xy);
@@ -317,11 +310,7 @@ mod tests {
 
         assert_eq!(hash_xy, hash_yx, "Column order should not affect hash");
         assert_eq!(
-            hash_xy,
-            vec![
-                0, 0, 1, 246, 139, 246, 49, 159, 142, 196, 170, 147, 142, 82, 221, 145, 25, 116,
-                52, 130, 137, 251, 223, 185, 181, 235, 237, 94, 20, 226, 57, 166, 216, 163, 169
-            ],
+            hash_xy, expected,
             "Example E: column-order independence hash mismatch"
         );
     }
@@ -379,10 +368,10 @@ mod tests {
         // ── Type metadata ────────────────────────────────────────────────
         let type_json = b"\"Int32\"";
 
-        // ── Validity bits (Lsb0, usize) ─────────────────────────────────
+        // ── Validity bits (Lsb0, u8) ──────────────────────────────────
         // [valid, null, valid, valid] → bits [1, 0, 1, 1] → 0b1101 = 13
-        let bit_count: usize = 4;
-        let validity_word: usize = 0b1101; // 13
+        let bit_count: u64 = 4;
+        let validity_word: u8 = 0b1101; // 13
 
         // ── Data (only valid elements, in order) ─────────────────────────
         // 42 as i32 LE:  2a 00 00 00
@@ -401,14 +390,11 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
-            vec![
-                0, 0, 1, 131, 48, 249, 184, 121, 107, 148, 52, 203, 247, 188, 2, 140, 24, 197, 138,
-                42, 115, 155, 152, 10, 207, 153, 149, 206, 30, 93, 96, 180, 59, 1, 56
-            ],
+            expected,
             "Example G: nullable int32 array hash mismatch"
         );
     }
@@ -427,10 +413,10 @@ mod tests {
         // Utf8 → LargeUtf8
         let type_json = b"\"LargeUtf8\"";
 
-        // ── Validity bits (Lsb0, usize) ─────────────────────────────────
+        // ── Validity bits (Lsb0, u8) ──────────────────────────────────
         // [valid, null, valid, valid] → bits [1, 0, 1, 1] → 0b1101 = 13
-        let bit_count: usize = 4;
-        let validity_word: usize = 0b1101;
+        let bit_count: u64 = 4;
+        let validity_word: u8 = 0b1101;
 
         // ── Data (only valid elements) ───────────────────────────────────
         // "hello" → len=5 u64 LE + "hello"
@@ -452,14 +438,11 @@ mod tests {
         final_digest.update(validity_word.to_be_bytes());
         final_digest.update(data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&array),
-            vec![
-                0, 0, 1, 98, 85, 189, 224, 20, 30, 191, 38, 224, 140, 49, 201, 111, 97, 18, 229,
-                226, 29, 16, 26, 184, 187, 144, 215, 127, 44, 62, 236, 2, 198, 45, 60
-            ],
+            expected,
             "Example H: nullable string array hash mismatch"
         );
     }
@@ -489,7 +472,7 @@ mod tests {
         // bit_count = 0 (no elements)
         // as_raw_slice() = [] (no words)
         // data_digest = SHA-256 of empty input
-        let bit_count: usize = 0;
+        let bit_count: u64 = 0;
         let b_data_finalized = Sha256::digest(b"");
 
         // ── Final ────────────────────────────────────────────────────────
@@ -710,9 +693,9 @@ mod tests {
         let child_a_finalized = child_a_data.finalize();
 
         // ── Child "b" (Boolean, non-nullable) ────────────────────────────
-        // Values: [true, false] → Msb0: bit7=1(true), bit6=0(false) → 0x80
+        // Values: [true, false] → Lsb0: bit0=1(true), bit1=0(false) → 0x01
         let mut child_b_data = Sha256::new();
-        child_b_data.update([0x80_u8]);
+        child_b_data.update([0x01_u8]);
         let child_b_finalized = child_b_data.finalize();
 
         // ── Parent data digest ───────────────────────────────────────────
@@ -731,14 +714,11 @@ mod tests {
         final_digest.update(type_json.as_bytes());
         final_digest.update(parent_data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&struct_array),
-            vec![
-                0, 0, 1, 245, 160, 205, 201, 133, 248, 136, 141, 186, 23, 124, 235, 245, 80, 84,
-                148, 148, 243, 88, 117, 149, 239, 95, 247, 17, 251, 204, 213, 43, 112, 244, 241
-            ],
+            expected,
             "Example L: struct array hash_array mismatch"
         );
     }
@@ -778,16 +758,16 @@ mod tests {
         // ── Type metadata ────────────────────────────────────────────────
         let type_json = r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}"#;
 
-        // ── Struct-level validity (Lsb0, usize) ─────────────────────────
+        // ── Struct-level validity (Lsb0, u8) ──────────────────────────
         // [valid, null, valid] → bits [1, 0, 1] → 0b101 = 5
-        let struct_bit_count: usize = 3;
-        let struct_validity_word: usize = 0b101; // 5
+        let struct_bit_count: u64 = 3;
+        let struct_validity_word: u8 = 0b101; // 5
 
         // ── Child "a" (Int32, effectively nullable due to struct nulls) ──
         // Combined validity: struct AND child = [1, 0, 1] (child has no nulls of its own)
         // Valid data: [10, 30] (row 1 skipped)
-        let child_a_bit_count: usize = 3;
-        let child_a_validity_word: usize = 0b101;
+        let child_a_bit_count: u64 = 3;
+        let child_a_validity_word: u8 = 0b101;
 
         let mut child_a_data = Sha256::new();
         child_a_data.update(10_i32.to_le_bytes());
@@ -796,8 +776,8 @@ mod tests {
         let child_a_data_finalized = child_a_data.finalize();
 
         // ── Child "b" (LargeUtf8, effectively nullable due to struct nulls)
-        let child_b_bit_count: usize = 3;
-        let child_b_validity_word: usize = 0b101;
+        let child_b_bit_count: u64 = 3;
+        let child_b_validity_word: u8 = 0b101;
 
         let mut child_b_data = Sha256::new();
         child_b_data.update(1_u64.to_le_bytes()); // "x" len
@@ -831,14 +811,11 @@ mod tests {
         final_digest.update(struct_validity_word.to_be_bytes());
         final_digest.update(parent_data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_array(&struct_array),
-            vec![
-                0, 0, 1, 174, 113, 201, 49, 168, 4, 206, 167, 142, 52, 153, 101, 216, 85, 182, 23,
-                241, 140, 179, 157, 247, 213, 20, 220, 53, 83, 5, 102, 23, 235, 12, 104
-            ],
+            expected,
             "Example M: nullable struct array hash_array mismatch"
         );
     }
@@ -927,8 +904,8 @@ mod tests {
         //   Element 0 struct (2 rows, no nulls): → [1, 1]
         //   Element 1 struct (1 row, no nulls): → [1]
         // Total BitVec: [1, 1, 1, 1, 1] → 5 bits, all valid
-        let items_bit_count: usize = 5;
-        let items_validity_word: usize = 0b11111; // 31
+        let items_bit_count: u64 = 5;
+        let items_validity_word: u8 = 0b11111; // 31
 
         // ── Structural digest: element counts (sizes) ────────────────────
         let mut items_structural = Sha256::new();
@@ -988,14 +965,11 @@ mod tests {
         final_digest.update(items_structural_finalized);
         final_digest.update(items_data_finalized);
 
-        let _expected = with_version(final_digest.finalize().to_vec());
+        let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
             ArrowDigester::hash_record_batch(&batch),
-            vec![
-                0, 0, 1, 108, 249, 107, 14, 43, 47, 243, 172, 76, 196, 56, 234, 248, 252, 108, 84,
-                213, 202, 175, 248, 8, 57, 85, 190, 110, 24, 96, 92, 144, 0, 31, 38
-            ],
+            expected,
             "Example N: list-of-struct record batch hash mismatch"
         );
     }

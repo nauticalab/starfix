@@ -93,8 +93,8 @@ fn normalize_schema(schema: &Schema) -> Schema {
 
 #[derive(Clone)]
 pub struct ArrowDigesterCore<D: Digest> {
-    schema: Schema,
     schema_digest: Vec<u8>,
+    serialized_schema: String,
     fields_digest_buffer: BTreeMap<String, DigestBufferType<D>>,
 }
 
@@ -117,10 +117,12 @@ impl<D: Digest> ArrowDigesterCore<D> {
             Self::extract_fields_name(field, "", &mut fields_digest_buffer);
         });
 
+        let serialized_schema = Self::serialized_schema(&schema);
+
         // Store it in the new struct for now
         Self {
-            schema,
             schema_digest,
+            serialized_schema,
             fields_digest_buffer,
         }
     }
@@ -129,8 +131,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     pub fn update(&mut self, record_batch: &RecordBatch) {
         // Verify schema matches logically (same fields regardless of order, with type canonicalization)
         assert!(
-            Self::serialized_schema(record_batch.schema().as_ref())
-                == Self::serialized_schema(&self.schema),
+            Self::serialized_schema(record_batch.schema().as_ref()) == self.serialized_schema,
             "Record batch schema does not match ArrowDigester schema"
         );
 
@@ -434,6 +435,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // goes through a single canonical representation.  The cast only widens
         // offsets (i32 → i64); inner element types are normalised recursively
         // when hash_list_array re-enters array_digest_update for each sub-array.
+        // These variables extend the lifetime of cast results. They are only
+        // initialized (and read) in branches that perform a cast; the default
+        // branch never touches them, which Rust's initialization analysis accepts.
         let (normalized_type, cast_array);
         let (effective_type, effective_array): (&DataType, &dyn Array) = match data_type {
             DataType::Utf8 => {
