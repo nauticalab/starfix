@@ -3,10 +3,6 @@
     clippy::todo,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
-#![expect(
-    clippy::big_endian_bytes,
-    reason = "Validity bytes are deliberately written in big-endian order for cross-platform consistency"
-)]
 use std::{collections::BTreeMap, iter::repeat_n, sync::Arc};
 
 use arrow::{
@@ -288,7 +284,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if let Some(null_bit_vec) = &digest.null_bits {
             final_digest.update((null_bit_vec.len() as u64).to_le_bytes());
             for &word in null_bit_vec.as_raw_slice() {
-                final_digest.update(word.to_be_bytes());
+                final_digest.update(word.to_le_bytes());
             }
         }
         // Structural digest (if list type) — sizes separated from leaf data
@@ -1131,7 +1127,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if let Some(null_bit_vec) = &child.null_bits {
             Self::update_data_digest(parent, (null_bit_vec.len() as u64).to_le_bytes());
             for &word in null_bit_vec.as_raw_slice() {
-                Self::update_data_digest(parent, word.to_be_bytes());
+                Self::update_data_digest(parent, word.to_le_bytes());
             }
         }
         // Structural digest (if list child)
@@ -2678,7 +2674,7 @@ mod tests {
 
         // Entry "x": null_bits V,I,V → bit_count=3, validity=0b101=5
         final_digest.update(3_u64.to_le_bytes());
-        final_digest.update(5_u8.to_be_bytes());
+        final_digest.update(5_u8.to_le_bytes());
 
         // Entry "x/": structural only [2, 3]
         let mut x_structural = Sha256::new();
@@ -2689,7 +2685,7 @@ mod tests {
         // Entry "x//a": null_bits V,I,V,V,V → bit_count=5, validity=0b11101=29
         //   data: [1, 3, 4, 5] as i32 LE
         final_digest.update(5_u64.to_le_bytes());
-        final_digest.update(29_u8.to_be_bytes());
+        final_digest.update(29_u8.to_le_bytes());
         let mut xa_data = Sha256::new();
         xa_data.update(1_i32.to_le_bytes());
         xa_data.update(3_i32.to_le_bytes());
@@ -2699,7 +2695,7 @@ mod tests {
 
         // Entry "x//b/g": null_bits V,V,I,V,V → bit_count=5, validity=0b11011=27
         final_digest.update(5_u64.to_le_bytes());
-        final_digest.update(27_u8.to_be_bytes());
+        final_digest.update(27_u8.to_le_bytes());
 
         // Entry "x//b/g/": structural [2, 1, 0, 1], data [10, 20, 30, 50] as i32 LE
         let mut xbg_structural = Sha256::new();

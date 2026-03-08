@@ -114,7 +114,7 @@ mod tests {
 
         // Field "name" (nullable → bit_count + validity words + data digest)
         final_digest.update(bit_count.to_le_bytes()); // 02 00 00 00 00 00 00 00
-        final_digest.update(validity_word.to_be_bytes()); // 01
+        final_digest.update(validity_word.to_le_bytes()); // 01
         final_digest.update(name_data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -159,7 +159,7 @@ mod tests {
         final_digest.update(type_json);
         // Nullable finalization
         final_digest.update(bit_count.to_le_bytes());
-        final_digest.update(validity_word.to_be_bytes());
+        final_digest.update(validity_word.to_le_bytes());
         final_digest.update(data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -299,7 +299,7 @@ mod tests {
         final_digest.update(x_finalized);
         // y (nullable)
         final_digest.update(bit_count.to_le_bytes());
-        final_digest.update(validity_word.to_be_bytes());
+        final_digest.update(validity_word.to_le_bytes());
         final_digest.update(y_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -387,7 +387,7 @@ mod tests {
         let mut final_digest = Sha256::new();
         final_digest.update(type_json);
         final_digest.update(bit_count.to_le_bytes());
-        final_digest.update(validity_word.to_be_bytes());
+        final_digest.update(validity_word.to_le_bytes());
         final_digest.update(data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -435,7 +435,7 @@ mod tests {
         let mut final_digest = Sha256::new();
         final_digest.update(type_json);
         final_digest.update(bit_count.to_le_bytes());
-        final_digest.update(validity_word.to_be_bytes());
+        final_digest.update(validity_word.to_le_bytes());
         final_digest.update(data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -794,11 +794,11 @@ mod tests {
         let mut parent_data = Sha256::new();
         // Child "a" finalized (nullable)
         parent_data.update(child_a_bit_count.to_le_bytes());
-        parent_data.update(child_a_validity_word.to_be_bytes());
+        parent_data.update(child_a_validity_word.to_le_bytes());
         parent_data.update(child_a_data_finalized);
         // Child "b" finalized (nullable)
         parent_data.update(child_b_bit_count.to_le_bytes());
-        parent_data.update(child_b_validity_word.to_be_bytes());
+        parent_data.update(child_b_validity_word.to_le_bytes());
         parent_data.update(child_b_data_finalized);
         let parent_data_finalized = parent_data.finalize();
 
@@ -808,7 +808,7 @@ mod tests {
         final_digest.update(type_json.as_bytes());
         // Struct-level nullable finalization
         final_digest.update(struct_bit_count.to_le_bytes());
-        final_digest.update(struct_validity_word.to_be_bytes());
+        final_digest.update(struct_validity_word.to_le_bytes());
         final_digest.update(parent_data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -907,7 +907,7 @@ mod tests {
 
         // Entry "items": null_bits V,V → bit_count=2, validity=0b11=3
         final_digest.update(2_u64.to_le_bytes());
-        final_digest.update(3_u8.to_be_bytes());
+        final_digest.update(3_u8.to_le_bytes());
 
         // Entry "items/": structural [2, 1]
         let mut items_structural = Sha256::new();
