@@ -2865,4 +2865,46 @@ mod tests {
             "Batch split independence failed for recursive list/struct decomposition"
         );
     }
+
+    #[test]
+    fn hash_array_list_of_struct() {
+        // Verify hash_array works with List<Struct<...>> using the composite path.
+        // This should produce a deterministic hash without panicking.
+        let inner_struct = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::new(Int32Array::from(vec![1, 2, 3])) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("b", DataType::Int32, false)),
+                Arc::new(Int32Array::from(vec![10, 20, 30])) as ArrayRef,
+            ),
+        ]);
+
+        let list_array = LargeListArray::new(
+            Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, false),
+                        Field::new("b", DataType::Int32, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            )),
+            OffsetBuffer::new(vec![0_i64, 2, 3].into()),
+            Arc::new(inner_struct) as ArrayRef,
+            Some(vec![true, true].into()),
+        );
+
+        let hash1 = ArrowDigesterCore::<Sha256>::hash_array(&list_array);
+        let hash2 = ArrowDigesterCore::<Sha256>::hash_array(&list_array);
+        assert_eq!(hash1, hash2, "hash_array should be deterministic");
+        assert_eq!(
+            hash1.len(),
+            32,
+            "core hash_array should return 32 bytes (SHA-256)"
+        );
+    }
 }
