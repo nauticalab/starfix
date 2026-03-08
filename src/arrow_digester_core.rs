@@ -7,9 +7,8 @@ use std::{collections::BTreeMap, iter::repeat_n, sync::Arc};
 
 use arrow::{
     array::{
-        make_array, Array, BooleanArray, GenericBinaryArray, GenericListArray, GenericStringArray,
-        LargeBinaryArray, LargeListArray, LargeStringArray, OffsetSizeTrait, RecordBatch,
-        StructArray,
+        make_array, Array, BooleanArray, GenericBinaryArray, GenericStringArray, LargeBinaryArray,
+        LargeListArray, LargeStringArray, OffsetSizeTrait, RecordBatch, StructArray,
     },
     buffer::NullBuffer,
     compute::cast,
@@ -29,18 +28,6 @@ struct DigestBufferType<D: Digest> {
 }
 
 impl<D: Digest> DigestBufferType<D> {
-    /// Create a buffer with all components present (legacy constructor).
-    #[deprecated(
-        note = "Use new_data_only, new_structural_only, new_list_leaf, or new_validity_only"
-    )]
-    fn new(nullable: bool, structured: bool) -> Self {
-        Self {
-            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
-            structural: structured.then(D::new),
-            data: Some(D::new()),
-        }
-    }
-
     /// Create a buffer for a leaf field (data + optional `null_bits`).
     fn new_data_only(nullable: bool) -> Self {
         Self {
@@ -85,10 +72,6 @@ impl<D: Digest> DigestBufferType<D> {
             None => panic!("data digest not present on this entry"),
         }
     }
-}
-
-const fn is_list_type(data_type: &DataType) -> bool {
-    matches!(data_type, DataType::List(_) | DataType::LargeList(_))
 }
 
 /// Recursively normalize a `DataType` to its canonical large equivalent.
@@ -204,6 +187,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Unlike full table hashing, we don't have a schema to hash; however, we do have the field data type.
     /// Similar to schema hashing, we hash based on the data type to encode metadata information into the digest.
     ///
+    /// Uses the same recursive decomposition as the record-batch path so that data hashing
+    /// is consistent regardless of which API is used.
+    ///
     /// # Panics
     ///
     /// This function will panic if JSON serialization of the data type fails.
@@ -233,19 +219,33 @@ impl<D: Digest> ArrowDigesterCore<D> {
         let data_type_serialized = serde_json::to_string(&canonical_type)
             .expect("Failed to serialize data type to string");
 
-        // Update the digest buffer with the array metadata and field data
+        // Update the digest with array metadata
         final_digest.update(data_type_serialized);
 
-        // Now we update it with the actual array data
-        // Note: array_digest_update will cast the array to match the normalized type
-        let mut digest_buffer = DigestBufferType::new(
+        // Build BTreeMap entries from the type tree (same decomposition as record-batch path)
+        let mut fields = BTreeMap::new();
+        Self::extract_type_entries(
+            &effective_type,
             effective_array.is_nullable(),
-            is_list_type(&normalized_type),
+            "",
+            &mut fields,
         );
-        Self::array_digest_update(&effective_type, effective_array, &mut digest_buffer);
-        Self::finalize_digest(&mut final_digest, digest_buffer);
 
-        // Finalize and return the digest
+        // Traverse and populate entries
+        Self::traverse_and_update(
+            &effective_type,
+            effective_array.is_nullable(),
+            effective_array,
+            "",
+            None,
+            &mut fields,
+        );
+
+        // Finalize all entries into the digest (same order as record-batch finalize)
+        for (_, digest) in fields {
+            Self::finalize_digest(&mut final_digest, digest);
+        }
+
         final_digest.finalize().to_vec()
     }
 
@@ -651,7 +651,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     )]
     #[expect(
         clippy::unreachable,
-        reason = "Small type variants are normalized to large equivalents at the top of this function"
+        reason = "Small types are normalized to large equivalents; List/Struct are handled by traverse_and_update"
     )]
     fn array_digest_update(
         data_type: &DataType,
@@ -660,11 +660,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
     ) {
         // Normalize small variants to their large equivalents so every code path
         // goes through a single canonical representation.  The cast only widens
-        // offsets (i32 → i64); inner element types are normalised recursively
-        // when hash_list_array re-enters array_digest_update for each sub-array.
-        // These variables extend the lifetime of cast results. They are only
-        // initialized (and read) in branches that perform a cast; the default
-        // branch never touches them, which Rust's initialization analysis accepts.
+        // offsets (i32 → i64).  These variables extend the lifetime of cast
+        // results.  They are only initialized (and read) in branches that perform
+        // a cast; the default branch never touches them.
         let (normalized_type, cast_array);
         let (effective_type, effective_array): (&DataType, &dyn Array) = match data_type {
             DataType::Utf8 => {
@@ -768,80 +766,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::Utf8View => todo!(),
             DataType::ListView(_) => todo!(),
             DataType::FixedSizeList(_, _) => todo!(),
-            DataType::LargeList(field) => {
-                Self::hash_list_array(
-                    effective_array
-                        .as_any()
-                        .downcast_ref::<LargeListArray>()
-                        .expect("Failed to downcast to LargeListArray"),
-                    field.data_type(),
-                    digest,
-                );
+            // List and Struct types are handled by the recursive decomposition path
+            // (traverse_and_update → traverse_list / traverse_struct). They should
+            // never reach array_digest_update directly.
+            DataType::LargeList(_) | DataType::Struct(_) => {
+                unreachable!(
+                    "List and Struct types are decomposed by traverse_and_update; \
+                     they should not reach array_digest_update"
+                )
             }
             DataType::LargeListView(_) => todo!(),
-            DataType::Struct(fields) => {
-                let struct_array = effective_array
-                    .as_any()
-                    .downcast_ref::<StructArray>()
-                    .expect("Failed to downcast to StructArray");
-
-                // Push struct-level nulls to parent's BitVec (same pattern as other types)
-                if let Some(ref mut null_bits) = digest.null_bits {
-                    Self::handle_null_bits(struct_array, null_bits);
-                }
-
-                // Sort children alphabetically by field name
-                let mut sorted_fields: Vec<_> = fields.iter().enumerate().collect();
-                sorted_fields.sort_by_key(|(_, f)| f.name().clone());
-
-                for (idx, child_field) in &sorted_fields {
-                    let child_array = struct_array.column(*idx);
-
-                    // Child is effectively nullable if the child field is nullable
-                    // OR the struct itself has nulls (struct-level nulls propagate down)
-                    let effectively_nullable =
-                        child_field.is_nullable() || struct_array.nulls().is_some();
-
-                    let mut child_digest = DigestBufferType::new(
-                        effectively_nullable,
-                        is_list_type(child_field.data_type()),
-                    );
-
-                    if let Some(struct_nulls) = struct_array.nulls() {
-                        // Propagate struct-level nulls into the child array by combining
-                        // struct validity with child validity: combined = struct AND child
-                        let combined_nulls = child_array.nulls().map_or_else(
-                            || struct_nulls.clone(),
-                            |child_nulls| {
-                                NullBuffer::new(struct_nulls.inner() & child_nulls.inner())
-                            },
-                        );
-                        let child_data = child_array.to_data();
-                        let null_count = combined_nulls.null_count();
-                        let new_data = child_data
-                            .into_builder()
-                            .null_count(null_count)
-                            .null_bit_buffer(Some(combined_nulls.into_inner().into_inner()))
-                            .build()
-                            .expect("Failed to rebuild child array with combined null buffer");
-                        let combined_child = make_array(new_data);
-                        Self::array_digest_update(
-                            child_field.data_type(),
-                            combined_child.as_ref(),
-                            &mut child_digest,
-                        );
-                    } else {
-                        Self::array_digest_update(
-                            child_field.data_type(),
-                            child_array.as_ref(),
-                            &mut child_digest,
-                        );
-                    }
-
-                    // Finalize child digest into parent's data stream
-                    Self::finalize_child_into_data(digest, child_digest);
-                }
-            }
             DataType::Union(_, _) => todo!(),
             DataType::Dictionary(_, value_type) => {
                 let resolved = cast(effective_array, value_type.as_ref())
@@ -960,36 +894,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    fn hash_list_array(
-        array: &GenericListArray<impl OffsetSizeTrait>,
-        field_data_type: &DataType,
-        digest: &mut DigestBufferType<D>,
-    ) {
-        // Handle null bits first (if nullable)
-        if let Some(ref mut null_bits) = digest.null_bits {
-            Self::handle_null_bits(array, null_bits);
-        }
-
-        let null_buf = array.nulls();
-        for i in 0..array.len() {
-            if null_buf.is_none_or(|nb| nb.is_valid(i)) {
-                let sub = array.value(i);
-                let size_bytes = (sub.len() as u64).to_le_bytes();
-
-                // Write element count to structural digest (separating structure from leaf data).
-                // If no structural digest exists, fall back to data digest for backward compat.
-                if let Some(ref mut structural) = digest.structural {
-                    structural.update(size_bytes);
-                } else {
-                    digest.data_mut().update(size_bytes);
-                }
-
-                // Recurse into sub-array — leaf data goes to data digest
-                Self::array_digest_update(field_data_type, sub.as_ref(), digest);
-            }
-        }
-    }
-
     /// Recursively extract field entries from the type tree.
     ///
     /// - **List**: creates a structural-only entry at `path/`, then recurses into
@@ -1102,33 +1006,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
             field_name.to_owned()
         } else {
             format!("{parent_field_name}{DELIMITER_FOR_NESTED_FIELD}{field_name}")
-        }
-    }
-
-    /// Write bytes directly into the data/leaf digest portion of the buffer, bypassing null-bit tracking.
-    /// Used to write length prefixes that sit in the data stream but are not nullable values.
-    fn update_data_digest(digest: &mut DigestBufferType<D>, data: impl AsRef<[u8]>) {
-        digest.data_mut().update(data);
-    }
-
-    /// Finalize a child's digest and write the resulting bytes into the parent's data stream.
-    /// Used for composite types (structs) where each child is independently hashed and then
-    /// its finalized representation is fed into the parent digest.
-    fn finalize_child_into_data(parent: &mut DigestBufferType<D>, child: DigestBufferType<D>) {
-        // Null bits first (if nullable child)
-        if let Some(null_bit_vec) = &child.null_bits {
-            Self::update_data_digest(parent, (null_bit_vec.len() as u64).to_le_bytes());
-            for &word in null_bit_vec.as_raw_slice() {
-                Self::update_data_digest(parent, word.to_le_bytes());
-            }
-        }
-        // Structural digest (if list child)
-        if let Some(structural) = child.structural {
-            Self::update_data_digest(parent, structural.finalize());
-        }
-        // Data/leaf digest (if present)
-        if let Some(data) = child.data {
-            Self::update_data_digest(parent, data.finalize());
         }
     }
 
@@ -2860,8 +2737,8 @@ mod tests {
 
     #[test]
     fn hash_array_list_of_struct() {
-        // Verify hash_array works with List<Struct<...>> using the composite path.
-        // This should produce a deterministic hash without panicking.
+        // Verify hash_array works with List<Struct<...>> using the same recursive
+        // decomposition as the record-batch path.
         let inner_struct = StructArray::from(vec![
             (
                 Arc::new(Field::new("a", DataType::Int32, false)),

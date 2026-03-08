@@ -290,7 +290,7 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "00000190658c2c4e9178f8ae6c686d6fe13262a9fab9cb619542911453abeca8195a9f"
+            "000001dc359d563a1ed210eb271b314612ea8343f0a0b0955b9053a9eb47962d27163c"
         );
 
         // Collision test: [[1, 2], [3]] vs [[1], [2, 3]]

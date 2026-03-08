@@ -238,20 +238,7 @@ Struct fields are **transparent** — they do not create a BTreeMap entry. Inste
 
 **Path naming:** Struct adds `/fieldname` to the path. Combined with list's trailing `/`, this produces paths like `items//id` (list `/` + struct `/id`).
 
-### 6.6 Struct Types (`hash_array` API — Composite Path)
-
-When a struct appears as a standalone array via `hash_array`, it uses **composite hashing** — each child field is hashed independently with its own `DigestBufferType`, then the child's finalized digest bytes are fed into the parent's data stream via `finalize_child_into_data`.
-
-**Algorithm:**
-1. Push struct-level nulls to the parent's validity bitmap (if nullable).
-2. Sort child fields alphabetically by field name.
-3. For each child (in sorted order):
-   a. Create a new `DigestBufferType` for the child. The child is considered **effectively nullable** if the child field is nullable OR the struct itself has nulls.
-   b. If the struct has nulls, propagate them: combined validity = struct validity AND child validity.
-   c. Hash the child array into its own `DigestBufferType` via `array_digest_update`.
-   d. Finalize the child digest and feed the result into the parent's data digest via `finalize_child_into_data`.
-
-### 6.7 Dictionary-Encoded Arrays
+### 6.6 Dictionary-Encoded Arrays
 
 Dictionary-encoded arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked using Arrow's `cast` kernel so that the resulting data stream is identical to what a non-dictionary-encoded array with the same logical values would produce.
 
@@ -304,16 +291,16 @@ output = [0x00, 0x00, 0x01] || final_digest   // 3 + 32 = 35 bytes total
 
 ## 8. Standalone `hash_array` Function
 
-`hash_array` hashes a single array without a full schema context. Its digest is:
+`hash_array` hashes a single array without a full schema context. It uses the **same recursive decomposition** as the record-batch path (`extract_type_entries` + `traverse_and_update`), ensuring consistent hashing regardless of which API is used.
 
 ```
 final = SHA256(
     serde_json::to_string(data_type_to_value(effective_type))   // canonical type JSON string
-    || finalized_field_digest                                    // same finalize_digest rules
+    || for each BTreeMap entry: finalize_digest(entry)           // same decomposition as record-batch
 )
 ```
 
-If the input is a dictionary array, it is first resolved to its plain value type via `cast`. The effective type is then serialized using `data_type_to_value` (with type canonicalization and recursive key sorting), converted to a JSON string, and fed into the digest before the field data.
+If the input is a dictionary array, it is first resolved to its plain value type via `cast`. The effective type is then serialized using `data_type_to_value` (with type canonicalization and recursive key sorting), converted to a JSON string, and fed into the digest before the decomposed field entries.
 
 ---
 

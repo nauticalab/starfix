@@ -681,34 +681,31 @@ mod tests {
         //                       {"data_type":"Boolean","name":"b","nullable":false}]}
         let type_json = r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Boolean","name":"b","nullable":false}]}"#;
 
-        // ── Child "a" (Int32, non-nullable) ──────────────────────────────
-        // Values: [1, 2]
-        let mut child_a_data = Sha256::new();
-        child_a_data.update(1_i32.to_le_bytes());
-        child_a_data.update(2_i32.to_le_bytes());
-        let child_a_finalized = child_a_data.finalize();
+        // ── Decomposition ────────────────────────────────────────────────
+        // Struct is transparent: no BTreeMap entry for the struct itself.
+        // Children become separate entries, finalized directly into the
+        // final digest (no parent_data wrapper).
+        //
+        // BTreeMap entries (sorted by key): "a", "b"
 
-        // ── Child "b" (Boolean, non-nullable) ────────────────────────────
+        // ── Entry "a" (Int32, non-nullable) ──────────────────────────────
+        // data = SHA256(1_i32_le, 2_i32_le)
+        let mut data_a = Sha256::new();
+        data_a.update(1_i32.to_le_bytes());
+        data_a.update(2_i32.to_le_bytes());
+
+        // ── Entry "b" (Boolean, non-nullable) ────────────────────────────
         // Values: [true, false] → Lsb0: bit0=1(true), bit1=0(false) → 0x01
-        let mut child_b_data = Sha256::new();
-        child_b_data.update([0x01_u8]);
-        let child_b_finalized = child_b_data.finalize();
-
-        // ── Parent data digest ───────────────────────────────────────────
-        // Children sorted by name: "a" then "b"
-        // Each child is non-nullable, so finalized = SHA256(data).finalize() (32 bytes)
-        let mut parent_data = Sha256::new();
-        // Child "a" finalized (non-nullable → just data digest)
-        parent_data.update(child_a_finalized);
-        // Child "b" finalized (non-nullable → just data digest)
-        parent_data.update(child_b_finalized);
-        let parent_data_finalized = parent_data.finalize();
+        let mut data_b = Sha256::new();
+        data_b.update([0x01_u8]);
 
         // ── Final combination ────────────────────────────────────────────
-        // Struct is non-nullable → NonNullable finalization
+        // type_json → finalize_digest("a") → finalize_digest("b")
+        // Each entry: non-nullable → no null_bits, no structural, just data.finalize()
         let mut final_digest = Sha256::new();
         final_digest.update(type_json.as_bytes());
-        final_digest.update(parent_data_finalized);
+        final_digest.update(data_a.finalize());
+        final_digest.update(data_b.finalize());
 
         let expected = with_version(final_digest.finalize().to_vec());
 
@@ -745,7 +742,6 @@ mod tests {
                 ),
             ],
             // Struct-level validity: [valid, null, valid]
-            // Buffer from NullBuffer: true=valid, false=null
             NullBuffer::from(vec![true, false, true])
                 .into_inner()
                 .into_inner(),
@@ -754,58 +750,38 @@ mod tests {
         // ── Type metadata ────────────────────────────────────────────────
         let type_json = r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}"#;
 
-        // ── Struct-level validity (Lsb0, u8) ──────────────────────────
-        // [valid, null, valid] → bits [1, 0, 1] → 0b101 = 5
-        let struct_bit_count: u64 = 3;
-        let struct_validity_word: u8 = 0b101; // 5
+        // ── Decomposition ────────────────────────────────────────────────
+        // Struct is transparent: no BTreeMap entry. Struct-level nulls
+        // [1, 0, 1] are AND-propagated to children for data hashing.
+        // Children "a" and "b" are non-nullable per their Field definitions,
+        // so their entries have no null_bits — but null rows are skipped
+        // in the data stream.
+        //
+        // BTreeMap entries (sorted by key): "a", "b"
 
-        // ── Child "a" (Int32, effectively nullable due to struct nulls) ──
-        // Combined validity: struct AND child = [1, 0, 1] (child has no nulls of its own)
-        // Valid data: [10, 30] (row 1 skipped)
-        let child_a_bit_count: u64 = 3;
-        let child_a_validity_word: u8 = 0b101;
+        // ── Entry "a" (Int32, non-nullable) ──────────────────────────────
+        // Struct nulls propagated: rows 0,2 valid → data = [10, 30]
+        let mut data_a = Sha256::new();
+        data_a.update(10_i32.to_le_bytes());
+        // row 1: skipped (struct null)
+        data_a.update(30_i32.to_le_bytes());
 
-        let mut child_a_data = Sha256::new();
-        child_a_data.update(10_i32.to_le_bytes());
-        // row 1: skipped (null)
-        child_a_data.update(30_i32.to_le_bytes());
-        let child_a_data_finalized = child_a_data.finalize();
-
-        // ── Child "b" (LargeUtf8, effectively nullable due to struct nulls)
-        let child_b_bit_count: u64 = 3;
-        let child_b_validity_word: u8 = 0b101;
-
-        let mut child_b_data = Sha256::new();
-        child_b_data.update(1_u64.to_le_bytes()); // "x" len
-        child_b_data.update(b"x");
-        // row 1: skipped (null)
-        child_b_data.update(1_u64.to_le_bytes()); // "z" len
-        child_b_data.update(b"z");
-        let child_b_data_finalized = child_b_data.finalize();
-
-        // ── Parent data digest ───────────────────────────────────────────
-        // Children sorted by name: "a", "b"
-        // Each child is effectively nullable → finalized as:
-        //   bit_count LE + validity_words BE + data_digest.finalize()
-        let mut parent_data = Sha256::new();
-        // Child "a" finalized (nullable)
-        parent_data.update(child_a_bit_count.to_le_bytes());
-        parent_data.update(child_a_validity_word.to_le_bytes());
-        parent_data.update(child_a_data_finalized);
-        // Child "b" finalized (nullable)
-        parent_data.update(child_b_bit_count.to_le_bytes());
-        parent_data.update(child_b_validity_word.to_le_bytes());
-        parent_data.update(child_b_data_finalized);
-        let parent_data_finalized = parent_data.finalize();
+        // ── Entry "b" (LargeUtf8, non-nullable) ─────────────────────────
+        // Struct nulls propagated: rows 0,2 valid → data = ["x", "z"]
+        let mut data_b = Sha256::new();
+        data_b.update(1_u64.to_le_bytes()); // "x" len
+        data_b.update(b"x");
+        // row 1: skipped (struct null)
+        data_b.update(1_u64.to_le_bytes()); // "z" len
+        data_b.update(b"z");
 
         // ── Final combination ────────────────────────────────────────────
-        // Struct is nullable → parent finalization includes struct validity
+        // type_json → finalize_digest("a") → finalize_digest("b")
+        // Each entry: non-nullable → no null_bits, no structural, just data.finalize()
         let mut final_digest = Sha256::new();
         final_digest.update(type_json.as_bytes());
-        // Struct-level nullable finalization
-        final_digest.update(struct_bit_count.to_le_bytes());
-        final_digest.update(struct_validity_word.to_le_bytes());
-        final_digest.update(parent_data_finalized);
+        final_digest.update(data_a.finalize());
+        final_digest.update(data_b.finalize());
 
         let expected = with_version(final_digest.finalize().to_vec());
 

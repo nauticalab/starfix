@@ -217,23 +217,7 @@ Struct fields are **transparent** in the record-batch path — they do not creat
 
 **Example**: A struct field `address` with children `city` (LargeUtf8) and `zip` (Int32) creates two leaf entries: `address/city` and `address/zip`. No entry exists for `address` itself.
 
-### 3.6 Struct Types (`hash_array` API — Composite Path)
-
-When a struct appears as a standalone array via `hash_array`, it is hashed **compositely** (not decomposed):
-
-1. **Struct-level nulls**: If nullable, push struct-level validity into the parent's `BitVec`.
-
-2. **Children sorted alphabetically** by field name.
-
-3. **For each child** (in sorted order):
-   - Create a fresh digest buffer for the child. The child is **effectively nullable** if either the child field is nullable OR the struct has null rows. The child gets a **structural digest** if it is a list type.
-   - If the struct has null rows, **propagate struct nulls** to the child: `combined_valid(i) = struct_valid(i) AND child_valid(i)`.
-   - Hash the child recursively via `array_digest_update`.
-   - **Finalize the child digest** and write the resulting bytes into the parent's data stream (in the order: null_bits, structural, data).
-
-The parent's data stream contains the concatenation of all children's finalized bytes (in alphabetical order).
-
-### 3.7 Dictionary-Encoded Arrays
+### 3.6 Dictionary-Encoded Arrays
 
 Dictionary arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked so that the data stream is identical to a non-dictionary array with the same logical values.
 
@@ -328,7 +312,7 @@ output = [0x00, 0x00, 0x01] ++ raw_hash   // 35 bytes
 
 ## 6. `hash_array` API
 
-The `hash_array` function hashes a single array (without a schema context). It works slightly differently from the record-batch path:
+The `hash_array` function hashes a single array (without a schema context). It uses the **same recursive decomposition** as the record-batch path, ensuring consistent hashing regardless of which API is used:
 
 ```
 final_digest = SHA-256()
@@ -338,14 +322,15 @@ canonical_type = data_type_to_value(effective_data_type)
 json_string = JSON.serialize(canonical_type)     // compact, keys sorted
 final_digest.update( json_string.as_bytes() )
 
-// 2. Data (with structural separation for list types)
-digest_buffer = {
-    null_bits:  BitVec if nullable, else absent
-    structural: SHA-256() if list type, else absent
-    data:       SHA-256()
-}
-array_digest_update(effective_data_type, effective_array, digest_buffer)
-finalize digest_buffer into final_digest (see Section 4)
+// 2. Build BTreeMap entries from the type tree (same as record-batch path)
+fields = extract_type_entries(effective_data_type, nullable, root_path="")
+
+// 3. Traverse and populate entries
+traverse_and_update(effective_data_type, nullable, effective_array, "", fields)
+
+// 4. Finalize all entries into the digest (same order as record-batch finalize)
+for (_, entry) in fields:
+    finalize_digest(final_digest, entry)   // see Section 4
 
 raw_hash = final_digest.finalize()    // 32 bytes
 output = [0x00, 0x00, 0x01] ++ raw_hash   // 35 bytes
@@ -822,11 +807,13 @@ output = 0x000001 ++ final_digest.finalize()
 
 ---
 
-### Example L: Struct Array via hash_array (non-nullable)
+### Example L: Struct Array via hash_array (non-nullable, decomposed)
 
 **Array**: `StructArray [{a: 1, b: true}, {a: 2, b: false}]`
 
 Children: `a: Int32 non-null`, `b: Boolean non-null`. Struct is non-nullable.
+
+`hash_array` uses the same recursive decomposition as the record-batch path. Struct is transparent — no BTreeMap entry for the struct itself. Children become separate entries.
 
 #### Step 1: Type Metadata
 
@@ -835,105 +822,79 @@ Canonical type JSON (struct fields sorted alphabetically, keys sorted):
 {"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Boolean","name":"b","nullable":false}]}
 ```
 
-#### Step 2: Composite Data
+#### Step 2: Decomposed Entries
 
-Children sorted by name: `a`, then `b`.
+BTreeMap entries (sorted by key): `"a"`, `"b"`
 
-**Child "a"** (Int32, non-nullable):
+**Entry "a"** (Int32, non-nullable → data-only):
 ```
-child_a_data_digest = SHA-256(0x01000000_02000000)    // [1, 2] as i32 LE
-child_a_finalized = child_a_data_digest.finalize()     // 32 bytes (non-nullable)
+data_a = SHA-256(0x01000000_02000000)    // [1, 2] as i32 LE
 ```
 
-**Child "b"** (Boolean, non-nullable):
+**Entry "b"** (Boolean, non-nullable → data-only):
 ```
 // [true, false] → Lsb0: bit0=1, bit1=0 → 0x01
-child_b_data_digest = SHA-256(0x01)
-child_b_finalized = child_b_data_digest.finalize()     // 32 bytes
+data_b = SHA-256(0x01)
 ```
 
-**Parent data stream**: `child_a_finalized || child_b_finalized`
+#### Step 3: Finalization
 
-```
-parent_data_digest = SHA-256( child_a_finalized || child_b_finalized )
-```
-
-#### Step 3: Finalization (non-nullable)
+Each entry is non-nullable → no null_bits, no structural, just data.finalize().
 
 ```
 final_digest = SHA-256()
-final_digest.update( type_json_bytes )                   // type metadata
-final_digest.update( parent_data_digest.finalize() )     // 32 bytes
+final_digest.update( type_json_bytes )       // type metadata
+final_digest.update( data_a.finalize() )     // entry "a": 32 bytes
+final_digest.update( data_b.finalize() )     // entry "b": 32 bytes
 output = 0x000001 ++ final_digest.finalize()
 ```
 
 ---
 
-### Example M: Nullable Struct Array via hash_array (struct-level nulls)
+### Example M: Nullable Struct Array via hash_array (struct-level nulls, decomposed)
 
 **Array**: `StructArray [Some({a: 10, b: "x"}), None, Some({a: 30, b: "z"})]`
 
 Children: `a: Int32 non-null`, `b: LargeUtf8 non-null`. Struct is **nullable**.
 
-Row 1 is a null struct — children's data at row 1 is undefined and must be skipped.
+Row 1 is a null struct. Struct is transparent — its null is AND-propagated to children for data hashing. Since children are non-nullable per their Field definitions, their entries have no null_bits — but null rows are skipped in the data stream.
 
 #### Step 1: Type Metadata
 
-Same struct type JSON as above (with appropriate fields):
 ```
 {"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}
 ```
 
-#### Step 2: Struct-Level Validity
+#### Step 2: Decomposed Entries (with struct-null propagation)
 
-Struct validity: `[valid, null, valid]` → bits `[1, 0, 1]`
-- bit_count = 3
-- u8 word (Lsb0): `0b101` = 5
+BTreeMap entries (sorted by key): `"a"`, `"b"`
 
-This goes into the parent's BitVec (the top-level digest for `hash_array`).
-
-#### Step 3: Composite Data (children with struct-null propagation)
-
-**Child "a"** (Int32, effectively nullable due to struct nulls):
-- Combined validity: struct AND child = `[1, 0, 1]` (child has no nulls)
-- Valid data: `[10, 30]` (row 1 skipped)
-- bit_count = 3, validity_word = 5
+**Entry "a"** (Int32, non-nullable → data-only):
+- Struct nulls propagated: rows 0, 2 valid → data: `[10, 30]`
 
 ```
-child_a_data_digest = SHA-256(0x0a000000_1e000000)     // [10, 30] as i32 LE
-child_a_finalized = 0x0300000000000000                  // bit_count=3 (u64 LE)
-                 || 0x05                                // validity word=5 (u8)
-                 || child_a_data_digest.finalize()      // 32 bytes
+data_a = SHA-256(0x0a000000_1e000000)     // [10, 30] as i32 LE
 ```
 
-**Child "b"** (LargeUtf8, effectively nullable):
-- Combined validity: `[1, 0, 1]`
-- Valid data: `"x"`, `"z"` (row 1 skipped)
+**Entry "b"** (LargeUtf8, non-nullable → data-only):
+- Struct nulls propagated: rows 0, 2 valid → data: `"x"`, `"z"`
 
 ```
-child_b_data_digest = SHA-256(
+data_b = SHA-256(
     0x0100000000000000 "x"     // len=1 + "x"
     0x0100000000000000 "z"     // len=1 + "z"
 )
-child_b_finalized = 0x0300000000000000                  // bit_count=3 (u64 LE)
-                 || 0x05                                // validity word=5 (u8)
-                 || child_b_data_digest.finalize()      // 32 bytes
 ```
 
-**Parent data stream**: `child_a_finalized || child_b_finalized`
+#### Step 3: Finalization
 
-```
-parent_data_digest = SHA-256( child_a_finalized || child_b_finalized )
-```
-
-#### Step 4: Finalization (nullable)
+Each entry is non-nullable → no null_bits, no structural, just data.finalize().
 
 ```
 final_digest = SHA-256()
-final_digest.update( type_json_bytes )                   // type metadata
-final_digest.update( 0x0300000000000000 )                // struct bit_count=3 (u64 LE)
-final_digest.update( 0x05 )                              // struct validity word=5 (u8)
-final_digest.update( parent_data_digest.finalize() )     // 32 bytes
+final_digest.update( type_json_bytes )       // type metadata
+final_digest.update( data_a.finalize() )     // entry "a": 32 bytes
+final_digest.update( data_b.finalize() )     // entry "b": 32 bytes
 output = 0x000001 ++ final_digest.finalize()
 ```
 
