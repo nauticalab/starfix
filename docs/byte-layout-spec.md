@@ -91,17 +91,27 @@ schema_digest = SHA-256(b'{"age":{"data_type":"Int32","nullable":false},"name":{
 
 ## 3. Field Data Serialization
 
-Each leaf field in the schema is hashed independently into its own SHA-256 digest. Struct fields are flattened: a struct field `address` with children `city` and `zip` becomes two leaf fields `address/city` and `address/zip`.
+The schema is recursively decomposed into a `BTreeMap` of entries. **Leaf fields** and **list intermediate nodes** get their own entries. **Struct fields are transparent** — they do not create entries themselves; instead, their null validity is AND-propagated to descendant entries, and their children are recursively traversed.
 
-Each leaf field has a **digest buffer** containing up to three components:
+Each entry has a **digest buffer** containing up to three **optional** components:
 
 | Component | Present when | Purpose |
 |-----------|-------------|---------|
 | `null_bits` (BitVec) | field is nullable | Tracks which elements are valid vs null |
-| `structural` (SHA-256) | field is a list type (`List` or `LargeList`) | Accumulates element counts (structure) |
-| `data` (SHA-256) | always | Accumulates leaf data bytes |
+| `structural` (SHA-256) | entry is a list type (`List` or `LargeList`) | Accumulates element counts (structure) |
+| `data` (SHA-256) | leaf fields and list-leaf entries | Accumulates leaf data bytes |
 
-A field is nullable if the Arrow field's `nullable` flag is `true`. A field is "structured" if its (canonical) data type is `List` or `LargeList`.
+There are four entry types:
+
+| Entry type | `null_bits` | `structural` | `data` | Example |
+|------------|:-----------:|:------------:|:------:|---------|
+| **data-only** | — | — | yes | Non-nullable leaf field (e.g., `Int32`) |
+| **validity + data** | yes | — | yes | Nullable leaf field |
+| **validity-only** | yes | — | — | Nullable parent whose descendants have their own entries |
+| **structural-only** | — | yes | — | Non-nullable list whose value type is a struct or nested list |
+| **list_leaf** | optional | yes | yes | List whose value type is a leaf (e.g., `List<Int32>`) |
+
+**Naming convention**: Struct adds `/fieldname` to the path. List adds a trailing `/`. Nested lists add `//`, etc.
 
 This separation of structural information from leaf data ensures that list element boundaries are hashed independently from the values they contain. For example, `[[1,2],[3]]` and `[[1],[2,3]]` differ in their structural digest (element counts `[2,1]` vs `[1,2]`) even though their leaf data digest is identical (`[1,2,3]`).
 
@@ -162,24 +172,27 @@ The length prefix is **always `u64`** (8 bytes, little-endian) regardless of the
 2. For valid elements: feed length prefix + raw bytes.
 3. For null elements: **skip entirely** — no bytes fed to data digest.
 
-### 3.4 List Types
+### 3.4 List Types (Record-Batch Path)
 
 **Types**: `List(field)`, `LargeList(field)`.
 
-List types use **structural hashing**: element counts are written to a separate `structural` SHA-256 digest, while leaf data from sub-arrays flows into the `data` digest. This separation prevents collisions between differently-grouped lists (e.g., `[[1,2],[3]]` vs `[[1],[2,3]]`).
+List columns are **recursively decomposed** into separate BTreeMap entries. A list creates an intermediate entry at `path/` (path + delimiter). The value type is then recursively traversed to create further entries.
 
-For each valid list element (a sub-array):
+**Decomposition by value type:**
 
-1. **Structural digest** receives: `[sub-array element count as u64 little-endian: 8 bytes]`
-2. **Data digest** receives: recursive serialization of the sub-array's leaf values
+- **`List<leaf>`** (e.g., `List<Int32>`): The entry at `path/` is a **list-leaf** with both structural and data digests. List lengths go to structural; leaf values go to data.
+- **`List<Struct<...>>`**: The entry at `path/` is **structural-only** (list lengths). The struct is transparent, and each struct child creates its own entry at `path//childname`.
+- **`List<List<...>>`**: The entry at `path/` is structural-only. The inner list creates another entry at `path//`, and so on recursively.
 
-**Nullable**: Extend validity `BitVec`; skip null list entries entirely (no bytes to either digest).
+**Nullable list columns**: The column-level entry at `path` (without trailing `/`) is **validity-only**, recording which rows are null vs valid. Null list elements are not traversed — no structural or data bytes are written for them.
 
-Sub-array elements are hashed recursively using the same rules. If a list contains nested lists (e.g., `List<List<Int32>>`), each nesting level writes its element counts to the same structural digest, and only the innermost leaf values reach the data digest.
+**Traversal**: For each non-null list element, write the sub-array length (u64 LE) to the structural digest at `path/`, then recurse into the sub-array using the value type.
 
 #### Concrete Example: Structural vs Leaf Separation
 
-For `LargeList<Int32>` with data `[[1,2],[3]]`:
+For `LargeList<Int32>` (non-nullable) with data `[[1,2],[3]]`:
+
+The single entry at `col/` is a list-leaf:
 
 ```
 structural digest receives:
@@ -192,50 +205,35 @@ data digest receives:
     03 00 00 00                  (3 as i32 LE)
 ```
 
-Compare with `[[1],[2,3]]`:
+Compare with `[[1],[2,3]]`: same data digest but different structural digest — so the final hashes differ.
 
-```
-structural digest receives:
-    01 00 00 00 00 00 00 00     (element 0: 1 item)
-    02 00 00 00 00 00 00 00     (element 1: 2 items)
+### 3.5 Struct Types (Record-Batch Path)
 
-data digest receives:
-    01 00 00 00                  (same leaf bytes)
-    02 00 00 00
-    03 00 00 00
-```
+Struct fields are **transparent** in the record-batch path — they do not create a BTreeMap entry. Instead:
 
-The data digests are identical, but the structural digests differ — so the final hashes differ.
+1. **Children are traversed** in alphabetical order by field name.
+2. **Struct-level nulls are AND-propagated** to all descendant entries. If a struct row is null, none of its children's data is hashed for that row, and the null is reflected in each descendant's effective validity.
+3. Each child is recursively decomposed (leaf → data entry, list → structural entry, nested struct → recurse further).
 
-### 3.5 Struct Types
+**Example**: A struct field `address` with children `city` (LargeUtf8) and `zip` (Int32) creates two leaf entries: `address/city` and `address/zip`. No entry exists for `address` itself.
 
-Struct fields are handled differently depending on context:
+### 3.6 Struct Types (`hash_array` API — Composite Path)
 
-#### Record-Batch Path (field decomposition)
+When a struct appears as a standalone array via `hash_array`, it is hashed **compositely** (not decomposed):
 
-In the record-batch path (`hash_record_batch`, streaming `update`/`finalize`), struct fields are **decomposed into leaf fields**. Each leaf field within the struct is extracted and hashed independently under its own path key (e.g., `address/city`, `address/zip`). These paths live in a `BTreeMap`, so they are always processed in alphabetical order. The struct itself does not appear as a separate entry.
-
-#### Composite Path (`hash_array`, list sub-arrays)
-
-When a struct appears as a standalone array (`hash_array`) or as a sub-array within a list, it is hashed **compositely**:
-
-1. **Struct-level nulls**: If the parent digest is Nullable, push struct-level validity into the parent's `BitVec` (same as all other types via `handle_null_bits`).
+1. **Struct-level nulls**: If nullable, push struct-level validity into the parent's `BitVec`.
 
 2. **Children sorted alphabetically** by field name.
 
 3. **For each child** (in sorted order):
    - Create a fresh digest buffer for the child. The child is **effectively nullable** if either the child field is nullable OR the struct has null rows. The child gets a **structural digest** if it is a list type.
-   - If the struct has null rows, **propagate struct nulls** to the child: `combined_valid(i) = struct_valid(i) AND child_valid(i)`. This ensures undefined data at null struct positions is never hashed.
+   - If the struct has null rows, **propagate struct nulls** to the child: `combined_valid(i) = struct_valid(i) AND child_valid(i)`.
    - Hash the child recursively via `array_digest_update`.
-   - **Finalize the child digest** and write the resulting bytes into the parent's data stream (in the order: null_bits, structural, data):
-     - Non-nullable, non-list child: `SHA-256(child_data).finalize()` (32 bytes)
-     - Nullable, non-list child: `bit_count LE (8B) || validity_words BE (1B each) || SHA-256(child_data).finalize() (32B)`
-     - Non-nullable list child: `SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
-     - Nullable list child: `bit_count LE (8B) || validity_words BE (1B each) || SHA-256(child_structural).finalize() (32B) || SHA-256(child_data).finalize() (32B)`
+   - **Finalize the child digest** and write the resulting bytes into the parent's data stream (in the order: null_bits, structural, data).
 
-The parent's data stream thus contains the concatenation of all children's finalized bytes (in alphabetical order).
+The parent's data stream contains the concatenation of all children's finalized bytes (in alphabetical order).
 
-### 3.6 Dictionary-Encoded Arrays
+### 3.7 Dictionary-Encoded Arrays
 
 Dictionary arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked so that the data stream is identical to a non-dictionary array with the same logical values.
 
@@ -243,53 +241,67 @@ Dictionary arrays are **resolved to their plain equivalent** before hashing. The
 
 ## 4. Field Digest Finalization
 
-After all record batches have been fed, each field's digest buffer is finalized and fed into the **final combining digest**. The three components are written in this fixed order:
+After all record batches have been fed, each entry's digest buffer is finalized and fed into the **final combining digest**. Each entry may have up to three optional components, written in this fixed order (skipping absent components):
 
 ```
-1. null_bits    (if present — nullable fields only)
-2. structural   (if present — list fields only)
-3. data         (always present)
+1. null_bits    (if present — nullable entries only)
+2. structural   (if present — list entries only)
+3. data         (if present — leaf and list-leaf entries only)
 ```
 
-### 4.1 Non-Nullable, Non-List Field
+### 4.1 Data-Only Entry
 
 ```
 final_digest.update( SHA-256(data_bytes).finalize() )    // 32 bytes
 ```
 
-Only the data digest is finalized (32 bytes).
-
-### 4.2 Nullable, Non-List Field
+### 4.2 Validity + Data Entry (Nullable Leaf)
 
 ```
 final_digest.update( bit_count.to_le_bytes() )           // 8 bytes (u64 LE)
 for each word in validity_bitvec.as_raw_slice():          // each word is u8 (1 byte)
-    final_digest.update( word.to_be_bytes() )             // 1 byte per word (trivially big-endian)
+    final_digest.update( word.to_le_bytes() )             // 1 byte per word (u8, LE is trivial)
 final_digest.update( SHA-256(data_bytes).finalize() )     // 32 bytes
 ```
 
-### 4.3 Non-Nullable List Field
+### 4.3 Validity-Only Entry
+
+```
+final_digest.update( bit_count.to_le_bytes() )           // 8 bytes (u64 LE)
+for each word in validity_bitvec.as_raw_slice():
+    final_digest.update( word.to_le_bytes() )             // 1 byte per word (u8)
+```
+
+No structural or data digest is written.
+
+### 4.4 Structural-Only Entry
+
+```
+final_digest.update( SHA-256(structural_bytes).finalize() )   // 32 bytes (element counts)
+```
+
+### 4.5 List-Leaf Entry (Structural + Data)
 
 ```
 final_digest.update( SHA-256(structural_bytes).finalize() )   // 32 bytes (element counts)
 final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes (leaf values)
 ```
 
-### 4.4 Nullable List Field
+If nullable, prepend null_bits before structural:
 
 ```
 final_digest.update( bit_count.to_le_bytes() )                // 8 bytes (u64 LE)
 for each word in validity_bitvec.as_raw_slice():
-    final_digest.update( word.to_be_bytes() )                  // 1 byte per word (u8)
-final_digest.update( SHA-256(structural_bytes).finalize() )    // 32 bytes (element counts)
-final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes (leaf values)
+    final_digest.update( word.to_le_bytes() )                  // 1 byte per word (u8)
+final_digest.update( SHA-256(structural_bytes).finalize() )    // 32 bytes
+final_digest.update( SHA-256(data_bytes).finalize() )          // 32 bytes
 ```
 
-**Validity BitVec details** (applies to all nullable variants):
+**Validity BitVec details** (applies to all entries with `null_bits`):
 - Storage type: `u8` (1 byte per word).
 - Bit order: `Lsb0` (least significant bit first within each word).
 - `bit_count` = total number of elements (valid + null), serialized as `u64` little-endian (8 bytes).
-- Each storage word is serialized as `u8` big-endian (trivially 1 byte).
+- Each storage word is serialized as `u8` little-endian (trivially 1 byte).
 - The last word may have unused high bits (zero-padded).
 
 ---
@@ -400,7 +412,7 @@ Values: `["Alice", NULL]`
 Validity serialization:
 ```
 bit_count LE:  02 00 00 00 00 00 00 00     (2 as u64 little-endian)
-word 0 BE:     01                           (1 as u8)
+word 0 LE:     01                           (1 as u8)
 ```
 
 **Data bytes** (only valid elements):
@@ -927,7 +939,7 @@ output = 0x000001 ++ final_digest.finalize()
 
 ---
 
-### Example N: List-of-Struct in a Record Batch
+### Example N: List-of-Struct in a Record Batch (Recursive Decomposition)
 
 **Schema**: `{items: LargeList<Struct<id: Int32 non-null, label: LargeUtf8 non-null>> nullable}`
 
@@ -938,7 +950,16 @@ output = 0x000001 ++ final_digest.finalize()
 | `[{id: 1, label: "a"}, {id: 2, label: "b"}]` |
 | `[{id: 3, label: "c"}]` |
 
-The list column is a single field "items" in the BTreeMap. Its sub-arrays are struct arrays, hashed compositely via `array_digest_update(Struct)`.
+The list-of-struct column is **recursively decomposed** into four BTreeMap entries:
+
+| Path | Entry type | Components |
+|------|-----------|------------|
+| `items` | validity-only | null_bits: `[V, V]` (2 bits) |
+| `items/` | structural-only | list lengths: `[2, 1]` |
+| `items//id` | data-only | leaf values: `[1, 2, 3]` as i32 LE |
+| `items//label` | data-only | leaf values: `len+"a"`, `len+"b"`, `len+"c"` |
+
+Note the path naming: `items` (column) → `items/` (list adds `/`) → `items//id` (struct adds `/id`, producing `//` because parent ends in `/`).
 
 #### Step 1: Schema Digest
 
@@ -947,65 +968,59 @@ Canonical JSON (element type omits Arrow-internal field name "item"):
 {"items":{"data_type":{"LargeList":{"data_type":{"Struct":[{"data_type":"Int32","name":"id","nullable":false},{"data_type":"LargeUtf8","name":"label","nullable":false}]},"nullable":false}},"nullable":true}}
 ```
 
-#### Step 2: Field "items" (nullable list — has null_bits, structural, and data)
+#### Step 2: Traversal
 
-**Validity BitVec** (`null_bits`) — accumulates null bits from the list **and** all recursive sub-arrays that share this digest:
+The top-down recursive traversal processes each row:
 
-1. List-level: `handle_null_bits(list)` → `[1, 1]` (both list elements valid)
-2. Element 0 struct (2 rows, no nulls): `handle_null_bits(struct)` → `[1, 1]`
-3. Element 1 struct (1 row, no nulls): `handle_null_bits(struct)` → `[1]`
+**Row 0** (valid list, 2 elements):
+- `items` entry: push `valid` to null_bits
+- `items/` entry: write `2_u64.to_le_bytes()` to structural
+- Recurse into sub-array `[{id:1, label:"a"}, {id:2, label:"b"}]`:
+  - Struct is transparent — recurse into children (sorted: "id", "label"):
+    - `items//id` entry: write `1_i32.to_le_bytes()`, `2_i32.to_le_bytes()` to data
+    - `items//label` entry: write `len+"a"`, `len+"b"` to data
 
-Total BitVec: `[1, 1, 1, 1, 1]` — 5 bits, all valid.
-- bit_count = 5
-- u8 word (Lsb0): `0b11111` = 31
-
-**Structural digest** — receives element counts for each valid list element:
-
-```
-items_structural receives:
-    0x0200000000000000     // element 0: 2 struct rows (u64 LE)
-    0x0100000000000000     // element 1: 1 struct row (u64 LE)
-```
-
-**Data digest** — receives composite struct data (no element count prefixes):
-
-For each list element, the struct children are sorted alphabetically and their finalized digests are written into the data stream:
-
-**Element 0** (2 struct rows):
-
-Struct children (sorted: "id", "label"):
-- Child "id" (Int32, non-nullable): `SHA-256(0x01000000_02000000).finalize()` — 32 bytes
-- Child "label" (LargeUtf8, non-nullable): `SHA-256(0x0100000000000000 "a" 0x0100000000000000 "b").finalize()` — 32 bytes
-
-**Element 1** (1 struct row):
-
-- Child "id": `SHA-256(0x03000000).finalize()` — 32 bytes
-- Child "label": `SHA-256(0x0100000000000000 "c").finalize()` — 32 bytes
-
-```
-items_data_digest = SHA-256(
-    SHA-256([1,2] as i32 LE).finalize()    // element 0 child "id"
-    || SHA-256(len+"a"+len+"b").finalize()  // element 0 child "label"
-    || SHA-256([3] as i32 LE).finalize()   // element 1 child "id"
-    || SHA-256(len+"c").finalize()          // element 1 child "label"
-)
-```
-
-Note: element counts are **not** in the data digest — they are in the structural digest.
+**Row 1** (valid list, 1 element):
+- `items` entry: push `valid` to null_bits
+- `items/` entry: write `1_u64.to_le_bytes()` to structural
+- Recurse into sub-array `[{id:3, label:"c"}]`:
+  - `items//id` entry: write `3_i32.to_le_bytes()` to data
+  - `items//label` entry: write `len+"c"` to data
 
 #### Step 3: Final Combination
 
-Finalization order: null_bits → structural → data (see Section 4.4).
+Entries are finalized in BTreeMap (alphabetical) order:
 
 ```
 final_digest = SHA-256()
 final_digest.update( schema_digest )                              // 32 bytes
 
-// items field finalization (nullable list = null_bits + structural + data)
-final_digest.update( 0x0500000000000000 )                         // bit_count=5 (u64 LE)
-final_digest.update( 0x1F )                                       // validity word=31 (u8)
-final_digest.update( items_structural_digest.finalize() )          // 32 bytes (element counts)
-final_digest.update( items_data_digest.finalize() )                // 32 bytes (leaf data)
+// Entry "items" (validity-only)
+final_digest.update( 0x0200000000000000 )                         // bit_count=2 (u64 LE)
+final_digest.update( 0x03 )                                       // validity word: 0b11 = 3 (u8)
+
+// Entry "items/" (structural-only)
+items_structural = SHA-256(
+    0x0200000000000000                                            // row 0: 2 elements
+    0x0100000000000000                                            // row 1: 1 element
+)
+final_digest.update( items_structural.finalize() )                // 32 bytes
+
+// Entry "items//id" (data-only)
+id_data = SHA-256(
+    0x01000000                                                    // 1 as i32 LE
+    0x02000000                                                    // 2 as i32 LE
+    0x03000000                                                    // 3 as i32 LE
+)
+final_digest.update( id_data.finalize() )                         // 32 bytes
+
+// Entry "items//label" (data-only)
+label_data = SHA-256(
+    0x0100000000000000 0x61                                       // len=1 + "a"
+    0x0100000000000000 0x62                                       // len=1 + "b"
+    0x0100000000000000 0x63                                       // len=1 + "c"
+)
+final_digest.update( label_data.finalize() )                      // 32 bytes
 
 output = 0x000001 ++ final_digest.finalize()
 ```
@@ -1015,5 +1030,5 @@ output = 0x000001 ++ final_digest.finalize()
 ## 8. Platform Considerations
 
 - **Integer sizes**: All length prefixes use `u64` (8 bytes, LE). Validity bitmaps use `BitVec<u8, Lsb0>` (1 byte per word). Bit counts use `u64` (8 bytes, LE). Hashes are **platform-independent**.
-- **Byte order**: Data values use little-endian. Validity words use big-endian (trivially 1 byte for `u8`). Bit counts use little-endian.
+- **Byte order**: All values use little-endian. Validity words are `u8` (1 byte, so endianness is trivial). Bit counts use little-endian.
 - **Floating point**: IEEE 754 representation is hashed directly. `NaN` values with different bit patterns produce different hashes. `+0.0` and `-0.0` produce different hashes.
