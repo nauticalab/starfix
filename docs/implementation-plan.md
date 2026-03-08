@@ -14,7 +14,7 @@ This plan addresses all identified gaps in the Starfix hashing implementation, o
 
 ### 1.1 Implement `Timestamp` data hashing
 
-**Current state:** `todo!()` at `arrow_digester_core.rs:514`. Schema serialization already works (falls through to Arrow serde: `{"Timestamp":["Nanosecond","UTC"]}`).
+**Current state:** `todo!()` in `array_digest_update` for `DataType::Timestamp`. Schema serialization already works (falls through to Arrow serde: `{"Timestamp":["Nanosecond","UTC"]}`).
 
 **Implementation:** Timestamp is always `i64` (8 bytes LE), regardless of unit or timezone.
 
@@ -40,7 +40,7 @@ However, there is a subtler question: should `Timestamp(Nanosecond, Some("UTC"))
 
 ### 1.2 Implement `Duration` data hashing
 
-**Current state:** `todo!()` at line 517. Schema serialization works (`{"Duration":"Millisecond"}`).
+**Current state:** `todo!()` in `array_digest_update` for `DataType::Duration`. Schema serialization works (`{"Duration":"Millisecond"}`).
 
 **Implementation:** Duration is always `i64` (8 bytes LE).
 
@@ -59,7 +59,7 @@ DataType::Duration(_) => Self::hash_fixed_size_array(effective_array, digest, 8)
 
 ### 1.3 Implement `Interval` data hashing
 
-**Current state:** `todo!()` at line 518.
+**Current state:** `todo!()` in `array_digest_update` for `DataType::Interval`.
 
 **Implementation:** Element size depends on the IntervalUnit variant:
 
@@ -86,7 +86,7 @@ DataType::Interval(unit) => {
 
 ### 1.4 Implement `FixedSizeList` data hashing
 
-**Current state:** `todo!()` at line 543. Schema normalization and serialization already work correctly (`{"FixedSizeList":[<element>, size]}`). Normalization recurses into the inner field but does **not** collapse `FixedSizeList` → `LargeList`.
+**Current state:** `todo!()` in `array_digest_update` for `DataType::FixedSizeList`. Schema normalization and serialization already work correctly (`{"FixedSizeList":[<element>, size]}`). Normalization recurses into the inner field but does **not** collapse `FixedSizeList` → `LargeList`.
 
 **Design decision — Should `FixedSizeList(Int32, 3)` be equivalent to `LargeList(Int32)`?**
 **Recommended: No.** They are semantically different types (fixed-length vs variable-length). A `FixedSizeList` guarantees every element has exactly N items; a `LargeList` does not. Keep them as distinct types in the hash. This is consistent with how FixedSizeBinary is already handled (kept separate from LargeBinary).
@@ -130,7 +130,7 @@ If **(C)**: schema JSON stays as `{"FixedSizeList":[..., n]}` (preserving the si
 
 ### 1.5 Implement `Map` data hashing
 
-**Current state:** `todo!()` at line 630. Schema normalization and serialization work (`{"Map":[<field>, sorted]}`).
+**Current state:** `todo!()` in `array_digest_update` for `DataType::Map`. Schema normalization and serialization work (`{"Map":[<field>, sorted]}`).
 
 **Background:** A `Map` in Arrow is physically stored as `LargeList<Struct<key, value>>`. The Arrow `MapArray` wraps a `ListArray` of `StructArray` entries.
 
@@ -198,7 +198,7 @@ DataType::Map(field, _) => {
 
 ### 2.1 Implement `Null` type
 
-**Current state:** `todo!()` at line 465.
+**Current state:** `todo!()` in `array_digest_update` for `DataType::Null`.
 
 **Design decision:** A `Null` column has no data — every element is null. The only information to hash is the validity bitmap (all zeros) and the count.
 
@@ -260,7 +260,7 @@ DataType::Null => {
 
 ### 3.1 Implement `Union` types (Dense and Sparse)
 
-**Current state:** `todo!()` at line 618.
+**Current state:** `todo!()` in `array_digest_update` for `DataType::Union`.
 
 **Design decision — This is the hardest type to hash correctly:**
 
@@ -301,7 +301,7 @@ DataType::Union(fields, mode) => {
 
 ### 3.2 Implement `RunEndEncoded`
 
-**Current state:** `todo!()` at line 631.
+**Current state:** `todo!()` in `array_digest_update` for `DataType::RunEndEncoded`.
 
 **Design decision:** RunEndEncoded is a compression format. Like Dictionary, the logical values are what matter.
 
@@ -406,6 +406,18 @@ Recommended implementation sequence (respecting dependencies):
 13. **3.5** (fuzz testing) — after all types implemented
 
 Items 1-7 can likely be done in a single PR. Items 8-11 may warrant individual PRs due to design decisions. Items 12-13 are infrastructure additions.
+
+---
+
+## Python Bindings
+
+The Python interface should be provided via **PyO3 bindings** to the Rust library (not a parallel pure-Python implementation). This lives in the separate `nauticalab/starfix-python` repository.
+
+**TODO:**
+- Configure PyO3/maturin build for the starfix crate
+- Expose `ArrowDigester`, `hash_array`, `hash_record_batch`, `hash_table` to Python
+- Use `arrow-rs` ↔ `pyarrow` interop via `arrow::pyarrow` feature or `pyo3-arrow`
+- Publish to PyPI as `starfix`
 
 ---
 

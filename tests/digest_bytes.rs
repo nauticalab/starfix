@@ -14,10 +14,6 @@ mod tests {
     )]
     #![expect(clippy::redundant_clone, reason = "Clones for clarity in test setup")]
     #![expect(clippy::absolute_paths, reason = "One-off use in test")]
-    #![expect(
-        clippy::big_endian_bytes,
-        reason = "Starfix spec requires BE serialization of validity words"
-    )]
 
     use std::sync::Arc;
 
@@ -826,10 +822,11 @@ mod tests {
     //   Row 0: [{id: 1, label: "a"}, {id: 2, label: "b"}]   (2 elements)
     //   Row 1: [{id: 3, label: "c"}]                          (1 element)
     //
-    //   The list column is decomposed into leaf fields:
-    //   "items" in the BTreeMap (the list field itself, not its inner struct fields).
-    //   But the list's sub-arrays ARE struct arrays, which are now hashed
-    //   compositely via array_digest_update(Struct).
+    //   Recursively decomposed into separate BTreeMap entries:
+    //   "items"       → validity-only (null_bits: [V, V])
+    //   "items/"      → structural-only (list lengths: [2, 1])
+    //   "items//id"   → data-only ([1, 2, 3] as i32 LE)
+    //   "items//label"→ data-only (["a", "b", "c"] as LargeUtf8)
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]

@@ -273,10 +273,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.finalize().to_vec()
     }
 
-    #[expect(
-        clippy::big_endian_bytes,
-        reason = "Use for bit packing the null_bit_values"
-    )]
     /// Finalize a single field digest into the final digest.
     /// Helper to reduce code duplication.
     fn finalize_digest(final_digest: &mut D, digest: DigestBufferType<D>) {
@@ -1118,10 +1114,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Finalize a child's digest and write the resulting bytes into the parent's data stream.
     /// Used for composite types (structs) where each child is independently hashed and then
     /// its finalized representation is fed into the parent digest.
-    #[expect(
-        clippy::big_endian_bytes,
-        reason = "Use for bit packing the null_bit_values"
-    )]
     fn finalize_child_into_data(parent: &mut DigestBufferType<D>, child: DigestBufferType<D>) {
         // Null bits first (if nullable child)
         if let Some(null_bit_vec) = &child.null_bits {

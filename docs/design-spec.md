@@ -130,19 +130,25 @@ schema_digest = SHA256(canonical_json_string)
 
 ## 5. DigestBufferType
 
-Each field has a `DigestBufferType` struct with three components:
+Each entry in the BTreeMap has a `DigestBufferType` struct with three **optional** components:
 
 ```rust
 struct DigestBufferType<D: Digest> {
-    null_bits: Option<BitVec<u8, Lsb0>>,  // None for non-nullable fields
-    structural: Option<D>,                  // Some for list-type fields only
-    data: D,                                // always present
+    null_bits: Option<BitVec<u8, Lsb0>>,  // Present for nullable entries
+    structural: Option<D>,                  // Present for list-type entries
+    data: Option<D>,                        // Present for leaf and list-leaf entries
 }
 ```
 
-- **`null_bits`**: Validity bitmap. Present (Some) for nullable fields, absent (None) for non-nullable.
-- **`structural`**: A separate running digest for list element counts. Present only for list-type fields (`List`, `LargeList`). This separates structure (how elements are partitioned into lists) from leaf data.
-- **`data`**: The running digest for actual data bytes (leaf values).
+- **`null_bits`**: Validity bitmap. Present for nullable fields, absent for non-nullable.
+- **`structural`**: A separate running digest for list element counts. Present for list-type entries. Separates structure (how elements are partitioned into lists) from leaf data.
+- **`data`**: The running digest for actual data bytes (leaf values). Present for leaf and list-leaf entries, absent for validity-only and structural-only entries.
+
+There are four entry types, constructed via dedicated constructors:
+- **`new_data_only(nullable)`**: Leaf field (e.g., `Int32`). Has `data`, optionally `null_bits`.
+- **`new_structural_only(nullable)`**: List intermediate node above a struct or nested list. Has `structural`, optionally `null_bits`.
+- **`new_list_leaf(nullable)`**: List whose value type is a leaf (e.g., `List<Int32>`). Has `structural` + `data`, optionally `null_bits`.
+- **`new_validity_only()`**: Nullable parent whose descendants have their own entries. Has `null_bits` only.
 
 ---
 
@@ -207,46 +213,45 @@ The length prefix is **always u64** (8 bytes, little-endian) regardless of the o
 2. For valid elements: feed length prefix + raw bytes.
 3. For null elements: **skip entirely** — no sentinel bytes. Null information is captured by the validity bitmap.
 
-### 6.4 List Types
+### 6.4 List Types (Record-Batch Path)
 
 **Types:** `List(field)`, `LargeList(field)`.
 
-Each list element (a sub-array) is serialized by writing:
-1. The sub-array element count as `u64` little-endian (8 bytes) into the **structural digest**.
-2. The sub-array elements recursively into the **data digest** (via `array_digest_update`).
+List columns are **recursively decomposed** into separate BTreeMap entries. A list creates an intermediate entry at `path/` (path + delimiter). The value type is then recursively traversed.
 
-This separation of structure (element counts) from leaf data into distinct digests ensures that the list partitioning information doesn't interleave with the actual data bytes.
+**Decomposition by value type:**
+- **`List<leaf>`** (e.g., `List<Int32>`): Entry at `path/` is a **list-leaf** with both structural and data digests.
+- **`List<Struct<...>>`**: Entry at `path/` is **structural-only**. The struct is transparent, and each struct child creates its own entry at `path//childname`.
+- **`List<List<...>>`**: Entry at `path/` is structural-only. The inner list creates another entry at `path//`.
 
-**Nullable path:** Same as other types — extend validity bitmap, skip null list entries entirely.
+**Nullable list columns:** A **validity-only** entry is created at `path` (without trailing `/`), recording which rows are null vs valid. Null list elements are not traversed.
 
-The sub-array elements are hashed recursively using `array_digest_update`, so nested lists and nested structs within lists follow the same rules.
+**Traversal:** For each non-null list element, write the sub-array length (u64 LE) to the structural digest at `path/`, then recurse into the sub-array.
 
-### 6.5 Struct Types
+### 6.5 Struct Types (Record-Batch Path)
 
-Struct types use **composite hashing** — each child field is hashed independently with its own `DigestBufferType`, then the child's finalized digest bytes are fed into the parent's data stream.
+Struct fields are **transparent** — they do not create a BTreeMap entry. Instead:
+
+1. **Children are traversed** in alphabetical order by field name.
+2. **Struct-level nulls are AND-propagated** to all descendant entries via `combine_nulls`. If a struct row is null, none of its children's data is hashed for that row.
+3. Each child is recursively decomposed (leaf → data entry, list → structural entry, nested struct → recurse further).
+
+**Path naming:** Struct adds `/fieldname` to the path. Combined with list's trailing `/`, this produces paths like `items//id` (list `/` + struct `/id`).
+
+### 6.6 Struct Types (`hash_array` API — Composite Path)
+
+When a struct appears as a standalone array via `hash_array`, it uses **composite hashing** — each child field is hashed independently with its own `DigestBufferType`, then the child's finalized digest bytes are fed into the parent's data stream via `finalize_child_into_data`.
 
 **Algorithm:**
 1. Push struct-level nulls to the parent's validity bitmap (if nullable).
 2. Sort child fields alphabetically by field name.
 3. For each child (in sorted order):
    a. Create a new `DigestBufferType` for the child. The child is considered **effectively nullable** if the child field is nullable OR the struct itself has nulls.
-   b. If the struct has nulls, propagate them: combined validity = struct validity AND child validity. Rebuild the child array with the combined null buffer.
+   b. If the struct has nulls, propagate them: combined validity = struct validity AND child validity.
    c. Hash the child array into its own `DigestBufferType` via `array_digest_update`.
    d. Finalize the child digest and feed the result into the parent's data digest via `finalize_child_into_data`.
 
-**`finalize_child_into_data`** writes the following into the parent's data digest:
-```
-[child null_bits length as u64 LE]   // only if child is nullable
-[child null_bits raw bytes (BE)]     // only if child is nullable
-[child structural digest finalized]  // only if child is a list type
-[child data digest finalized]        // always (32 bytes for SHA-256)
-```
-
-This means struct fields are NOT flattened into the top-level `BTreeMap`. Only leaf (non-struct) fields appear in the `BTreeMap`. However, within the `update()` path, top-level structs are traversed to reach their leaf children, and nested structs encountered during `array_digest_update` (e.g., structs inside lists) use the composite hashing approach.
-
-**Important:** For the top-level `BTreeMap` field extraction (`extract_fields_name`), struct fields ARE flattened — each leaf field gets its own entry with a `/`-delimited path. But when `array_digest_update` encounters a `DataType::Struct` during recursive processing (e.g., inside a list), it uses the composite approach with `finalize_child_into_data`.
-
-### 6.6 Dictionary-Encoded Arrays
+### 6.7 Dictionary-Encoded Arrays
 
 Dictionary-encoded arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked using Arrow's `cast` kernel so that the resulting data stream is identical to what a non-dictionary-encoded array with the same logical values would produce.
 
@@ -258,21 +263,21 @@ This ensures that `DictionaryArray<Int32, Utf8>(indices=[0,1,0], dict=["a","b"])
 
 ### 7.1 Field Digest Finalization
 
-Each field's `DigestBufferType` is finalized and fed into the combined final digest via `finalize_digest`:
+Each entry's `DigestBufferType` is finalized and fed into the combined final digest via `finalize_digest`. Each component is written only if present:
 
 ```
 // If nullable (null_bits is Some):
 feed: validity_bitmap_length as u64 LE    // 8 bytes (number of bits)
-feed: validity_bitmap raw bytes (BE)      // ceil(length/8) bytes (u8 words, each to_be_bytes which is identity for u8)
+feed: validity_bitmap raw bytes (LE)      // ceil(length/8) bytes (u8 words, to_le_bytes is identity for u8)
 
 // If list type (structural is Some):
 feed: SHA256_finalize(structural_digest)  // 32 bytes
 
-// Always:
+// If leaf/list-leaf (data is Some):
 feed: SHA256_finalize(data_digest)        // 32 bytes
 ```
 
-The validity bitmap uses `BitVec<u8, Lsb0>` storage. Each `u8` word is serialized via `to_be_bytes()` (which is identity for single-byte words). The bit count (not byte count) is written as the length prefix.
+The validity bitmap uses `BitVec<u8, Lsb0>` storage. Each `u8` word is serialized via `to_le_bytes()` (identity for single-byte words). The bit count (not byte count) is written as the length prefix.
 
 ### 7.2 Combined Final Digest
 
