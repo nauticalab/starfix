@@ -1,6 +1,6 @@
 {
   "binary_name": {
-    "data_type": "Binary",
+    "data_type": "LargeBinary",
     "nullable": true
   },
   "bool_name": {
@@ -46,18 +46,8 @@
     "data_type": {
       "Struct": [
         {
-          "data_type": "Int32",
-          "name": "outer_field",
-          "nullable": false
-        },
-        {
           "data_type": {
             "Struct": [
-              {
-                "data_type": "Utf8",
-                "name": "middle_field",
-                "nullable": true
-              },
               {
                 "data_type": {
                   "Struct": [
@@ -75,10 +65,20 @@
                 },
                 "name": "inner",
                 "nullable": false
+              },
+              {
+                "data_type": "LargeUtf8",
+                "name": "middle_field",
+                "nullable": true
               }
             ]
           },
           "name": "middle",
+          "nullable": false
+        },
+        {
+          "data_type": "Int32",
+          "name": "outer_field",
           "nullable": false
         }
       ]
@@ -117,7 +117,6 @@
     "data_type": {
       "LargeList": {
         "data_type": "Int32",
-        "name": "item",
         "nullable": true
       }
     },
@@ -129,9 +128,8 @@
   },
   "list_name": {
     "data_type": {
-      "List": {
+      "LargeList": {
         "data_type": "Int32",
-        "name": "item",
         "nullable": true
       }
     },
@@ -146,7 +144,7 @@
           "nullable": false
         },
         {
-          "data_type": "Utf8",
+          "data_type": "LargeUtf8",
           "name": "struct_field2",
           "nullable": true
         }
@@ -195,7 +193,7 @@
     "nullable": false
   },
   "utf8_name": {
-    "data_type": "Utf8",
+    "data_type": "LargeUtf8",
     "nullable": true
   }
 }

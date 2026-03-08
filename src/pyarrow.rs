@@ -67,10 +67,10 @@ pub struct InternalPyArrowDigester {
 
 #[uniffi::export]
 impl InternalPyArrowDigester {
-    /// Create a new instance of `PyArrowDigester` with SHA256 as the digester with the schema which will be enforce through each update
+    /// Create a new instance of `PyArrowDigester` with SHA-256 as the digest algorithm. The schema will be enforced on each update.
     ///
     /// # Panics
-    /// The pointer must be a valid Arrow schema from Python's pyarrow, if failed to convert, it will panic
+    /// The pointer must be a valid Arrow schema from Python's pyarrow. Panics if conversion fails.
 
     #[uniffi::constructor]
     pub fn new(schema_ptr: u64) -> Self {
@@ -81,7 +81,7 @@ impl InternalPyArrowDigester {
             Schema::try_from(&ffi_schema).expect("Failed to convert FFI schema to Arrow schema")
         };
         Self {
-            digester: Arc::new(Mutex::new(ArrowDigester::new(schema))),
+            digester: Arc::new(Mutex::new(ArrowDigester::new(&schema))),
         }
     }
 
@@ -117,7 +117,7 @@ impl InternalPyArrowDigester {
     /// Consume the digester and finalize the hash computation
     ///
     /// # Panics
-    /// If failed to acquire lock on digester
+    /// Panics if it fails to acquire the lock on the digester.
     pub fn finalize(&self) -> Vec<u8> {
         self.digester
             .lock()
