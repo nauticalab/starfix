@@ -807,35 +807,118 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Internal recursive function to extract field names from nested structs, effectively flattening the schema.
-    /// Nested fields use `/`-delimited paths (e.g., `parent/child/grandchild`) and are stored in `fields_digest_buffer`.
+    /// Recursively extract field entries from the type tree.
+    ///
+    /// - **List**: creates a structural-only entry at `path/`, then recurses into
+    ///   the value type. If the column field is nullable, also creates a
+    ///   validity-only entry at the field path (before the `/`).
+    /// - **Struct**: transparent — recurses into each child field with `path/childname`.
+    ///   No entry for the struct itself. Struct null propagation is handled at
+    ///   traversal time.
+    /// - **Leaf (non-list, non-struct)**: creates a data entry at the current path.
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
-        // Check if field is a nested type of struct
-        if let DataType::Struct(fields) = field.data_type() {
-            // We will add fields in alphabetical order
-            fields.into_iter().for_each(|field_inner| {
-                Self::extract_fields_name(
-                    field_inner,
-                    Self::construct_field_name_hierarchy(parent_field_name, field.name()).as_str(),
-                    fields_digest_buffer,
-                );
-            });
-        } else {
-            // Base case, just add the the combine field name to the map
-            fields_digest_buffer.insert(
-                Self::construct_field_name_hierarchy(parent_field_name, field.name()),
-                DigestBufferType::new(field.is_nullable(), is_list_type(field.data_type())),
-            );
+        let path = Self::construct_field_name_hierarchy(parent_field_name, field.name());
+        Self::extract_type_entries(
+            field.data_type(),
+            field.is_nullable(),
+            &path,
+            fields_digest_buffer,
+        );
+    }
+
+    /// Core recursive type walker — creates `BTreeMap` entries based on the type tree.
+    ///
+    /// `nullable` reflects whether the current position is nullable (from the `Field`).
+    fn extract_type_entries(
+        data_type: &DataType,
+        nullable: bool,
+        path: &str,
+        fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let canonical = normalize_data_type(data_type);
+
+        match &canonical {
+            DataType::Struct(fields) => {
+                // Struct is transparent — no entry, just recurse into children.
+                for child_field in fields.iter() {
+                    let child_path = Self::construct_field_name_hierarchy(path, child_field.name());
+                    Self::extract_type_entries(
+                        child_field.data_type(),
+                        child_field.is_nullable(),
+                        &child_path,
+                        fields_digest_buffer,
+                    );
+                }
+            }
+            DataType::LargeList(value_field) | DataType::List(value_field) => {
+                // For a nullable field that is a list, create a validity-only entry
+                // at the field path (column-level or field-level null tracking).
+                if nullable {
+                    fields_digest_buffer
+                        .insert(path.to_owned(), DigestBufferType::new_validity_only());
+                }
+
+                // List level: create entry at path + "/"
+                let list_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                let inner_type = value_field.data_type();
+                let inner_canonical = normalize_data_type(inner_type);
+
+                match &inner_canonical {
+                    DataType::Struct(_) => {
+                        // List<Struct<...>>: list entry is structural-only,
+                        // struct children become separate entries
+                        fields_digest_buffer.insert(
+                            list_path.clone(),
+                            DigestBufferType::new_structural_only(value_field.is_nullable()),
+                        );
+                        // Recurse into the struct's children
+                        Self::extract_type_entries(
+                            inner_type,
+                            value_field.is_nullable(),
+                            &list_path,
+                            fields_digest_buffer,
+                        );
+                    }
+                    DataType::LargeList(_) | DataType::List(_) => {
+                        // List<List<...>>: list entry is structural-only,
+                        // recurse into the inner list
+                        fields_digest_buffer.insert(
+                            list_path.clone(),
+                            DigestBufferType::new_structural_only(value_field.is_nullable()),
+                        );
+                        Self::extract_type_entries(
+                            inner_type,
+                            value_field.is_nullable(),
+                            &list_path,
+                            fields_digest_buffer,
+                        );
+                    }
+                    _ => {
+                        // List<Primitive>: list entry is both structural + data (leaf)
+                        fields_digest_buffer.insert(
+                            list_path,
+                            DigestBufferType::new_list_leaf(value_field.is_nullable()),
+                        );
+                    }
+                }
+            }
+            _ => {
+                // Leaf type (non-struct, non-list): create data entry
+                fields_digest_buffer
+                    .insert(path.to_owned(), DigestBufferType::new_data_only(nullable));
+            }
         }
     }
 
     fn construct_field_name_hierarchy(parent_field_name: &str, field_name: &str) -> String {
         if parent_field_name.is_empty() {
             field_name.to_owned()
+        } else if parent_field_name.ends_with(DELIMITER_FOR_NESTED_FIELD) {
+            format!("{parent_field_name}{field_name}")
         } else {
             format!("{parent_field_name}{DELIMITER_FOR_NESTED_FIELD}{field_name}")
         }
@@ -2211,5 +2294,93 @@ mod tests {
         assert!(buf.null_bits.is_some());
         assert!(buf.structural.is_none());
         assert!(buf.data.is_none());
+    }
+
+    #[test]
+    fn extract_fields_list_of_struct() {
+        // List<Struct<a: Int32, b: String>>
+        let schema = Schema::new(vec![Field::new(
+            "x",
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, false),
+                        Field::new("b", DataType::LargeUtf8, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+            true, // column is nullable
+        )]);
+
+        let digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
+
+        // Should have: "x" (validity-only), "x/" (structural), "x/a" (data), "x/b" (data)
+        assert_eq!(
+            field_names.len(),
+            4,
+            "Expected 4 entries, got: {field_names:?}"
+        );
+        assert!(field_names.contains(&&"x".to_owned()));
+        assert!(field_names.contains(&&"x/".to_owned()));
+        assert!(field_names.contains(&&"x/a".to_owned()));
+        assert!(field_names.contains(&&"x/b".to_owned()));
+    }
+
+    #[test]
+    fn extract_fields_nested_list_struct_list() {
+        // x: Nullable<List<Struct<a: Nullable<Int32>, b: Struct<g: Nullable<List<Int32>>, h: Int32>>>>
+        let schema = Schema::new(vec![Field::new(
+            "x",
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, true),
+                        Field::new(
+                            "b",
+                            DataType::Struct(
+                                vec![
+                                    Field::new(
+                                        "g",
+                                        DataType::LargeList(Arc::new(Field::new(
+                                            "item",
+                                            DataType::Int32,
+                                            false,
+                                        ))),
+                                        true,
+                                    ),
+                                    Field::new("h", DataType::Int32, false),
+                                ]
+                                .into(),
+                            ),
+                            false,
+                        ),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+            true,
+        )]);
+
+        let digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
+
+        // Expected entries: "x", "x/", "x/a", "x/b/g", "x/b/g/", "x/b/h"
+        assert_eq!(
+            field_names.len(),
+            6,
+            "Expected 6 entries, got: {field_names:?}"
+        );
+        assert!(field_names.contains(&&"x".to_owned()));
+        assert!(field_names.contains(&&"x/".to_owned()));
+        assert!(field_names.contains(&&"x/a".to_owned()));
+        assert!(field_names.contains(&&"x/b/g".to_owned()));
+        assert!(field_names.contains(&&"x/b/g/".to_owned()));
+        assert!(field_names.contains(&&"x/b/h".to_owned()));
     }
 }
