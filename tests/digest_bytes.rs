@@ -8,10 +8,6 @@
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
-    #![expect(
-        clippy::similar_names,
-        reason = "child_a/child_b naming is clear in test context"
-    )]
     #![expect(clippy::redundant_clone, reason = "Clones for clarity in test setup")]
     #![expect(clippy::absolute_paths, reason = "One-off use in test")]
 
