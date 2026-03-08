@@ -3,6 +3,10 @@
     clippy::todo,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
+#![expect(
+    clippy::big_endian_bytes,
+    reason = "Validity bytes are deliberately written in big-endian order for cross-platform consistency"
+)]
 use std::{collections::BTreeMap, iter::repeat_n, sync::Arc};
 
 use arrow::{
@@ -503,7 +507,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
         // For each row, write structural info and recurse into non-null elements
         for i in 0..list_array.len() {
-            let is_valid = effective_nulls.as_ref().map_or(true, |nb| nb.is_valid(i));
+            let is_valid = effective_nulls.as_ref().is_none_or(|nb| nb.is_valid(i));
             if is_valid {
                 let sub_array = list_array.value(i);
                 let sub_len = sub_array.len() as u64;
@@ -515,9 +519,11 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     }
                 }
 
-                // Recurse into the sub-array (value type)
+                // Recurse into the sub-array using the ORIGINAL value type
+                // (not canonical) so traverse_and_update can normalize internally.
+                let original_value_type = sub_array.data_type();
                 Self::traverse_and_update(
-                    value_field.data_type(),
+                    original_value_type,
                     value_field.is_nullable(),
                     sub_array.as_ref(),
                     &list_path,
@@ -530,7 +536,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     fn traverse_struct(
         array: &dyn Array,
-        struct_fields: &arrow_schema::Fields,
+        _struct_fields: &arrow_schema::Fields,
         nullable: bool,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
@@ -548,8 +554,11 @@ impl<D: Digest> ArrowDigesterCore<D> {
             ancestor_struct_nulls.cloned()
         };
 
-        // Visit children alphabetically
-        let mut sorted_children: Vec<(usize, &Field)> = struct_fields
+        // Use the ORIGINAL struct array's fields (not the canonical ones from
+        // the type tree) so that data_type matches the actual child array.
+        // traverse_and_update will normalize types internally.
+        let original_fields = struct_array.fields();
+        let mut sorted_children: Vec<(usize, &Field)> = original_fields
             .iter()
             .enumerate()
             .map(|(i, f)| (i, f.as_ref()))
@@ -580,7 +589,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     ) {
         let entry = fields
             .get_mut(path)
-            .unwrap_or_else(|| panic!("No entry for leaf path: {path}"));
+            .expect("entry must exist for leaf path");
 
         // Compute effective validity (own nulls AND ancestor struct nulls)
         let effective_nulls = Self::combine_nulls(array.nulls(), ancestor_struct_nulls);
@@ -598,7 +607,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
 
         // Hash leaf data with combined null buffer
-        if let Some(ref effective) = effective_nulls {
+        if let Some(effective) = &effective_nulls {
             let child_data = array.to_data();
             let null_count = effective.null_count();
             let new_data = child_data
@@ -1026,7 +1035,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         match &canonical {
             DataType::Struct(fields) => {
                 // Struct is transparent — no entry, just recurse into children.
-                for child_field in fields.iter() {
+                for child_field in fields {
                     let child_path = Self::construct_field_name_hierarchy(path, child_field.name());
                     Self::extract_type_entries(
                         child_field.data_type(),
@@ -1184,6 +1193,7 @@ mod tests {
 
     use crate::arrow_digester_core::ArrowDigesterCore;
     use arrow::array::{Decimal256Array, Decimal64Array};
+    use arrow::buffer::OffsetBuffer;
     use arrow_buffer::i256;
 
     #[expect(
@@ -2333,10 +2343,9 @@ mod tests {
 
     // ── List<Int32> / LargeList<Int32> ─────────────────────────────────────
     //
-    // Each outer element is prefixed by its inner element count (u64 LE), then the
-    // raw bytes of the inner array (no length limit — the implementation hashes from
-    // the element's offset to the end of the shared child buffer).
-    // Using a single outer element avoids buffer-bleed from preceding elements.
+    // With recursive decomposition, a non-nullable List<Int32 nullable> column
+    // creates a single entry at "col/" (list_leaf) with structural (element counts),
+    // data (leaf values), and null_bits (item nullability).
 
     #[test]
     fn digest_list_non_nullable_bytes() {
@@ -2367,8 +2376,13 @@ mod tests {
             .unwrap(),
         );
 
-        let buf = &digester.fields_digest_buffer["col"];
-        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        // Non-nullable column → no "col" entry; list_leaf entry at "col/"
+        let buf = &digester.fields_digest_buffer["col/"];
+        // Items are nullable → null_bits present (all valid in this case)
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable items");
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec.iter().all(|b| *b), "All items should be valid");
+
         let structural_digest = buf
             .structural
             .as_ref()
@@ -2377,7 +2391,7 @@ mod tests {
 
         // Structural digest: element count (sizes separated from leaf data)
         let mut manual_structural = Sha256::new();
-        manual_structural.update(3_u64.to_le_bytes()); // element count prefix
+        manual_structural.update(3_u64.to_le_bytes());
         assert_eq!(
             structural_digest.clone().finalize(),
             manual_structural.finalize()
@@ -2420,8 +2434,12 @@ mod tests {
             .unwrap(),
         );
 
-        let buf = &digester.fields_digest_buffer["col"];
-        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        // Non-nullable column → no "col" entry; list_leaf entry at "col/"
+        let buf = &digester.fields_digest_buffer["col/"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable items");
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec.iter().all(|b| *b), "All items should be valid");
+
         let structural_digest = buf
             .structural
             .as_ref()
@@ -2588,7 +2606,7 @@ mod tests {
         );
         let a_field = Field::new("a", DataType::Int32, true); // a is nullable
         let struct_type = DataType::Struct(vec![a_field.clone(), b_field.clone()].into());
-        let item_field = Field::new("item", struct_type.clone(), false);
+        let item_field = Field::new("item", struct_type, false);
         let x_field = Field::new(
             "x",
             DataType::LargeList(Arc::new(item_field.clone())),
@@ -2608,7 +2626,7 @@ mod tests {
         // with validity [true, true, false, true, true]
         let g_list = LargeListArray::new(
             Arc::new(Field::new("item", DataType::Int32, false)),
-            arrow::buffer::OffsetBuffer::new(vec![0_i64, 2, 3, 3, 3, 4].into()),
+            OffsetBuffer::new(vec![0_i64, 2, 3, 3, 3, 4].into()),
             Arc::new(g_values) as ArrayRef,
             Some(vec![true, true, false, true, true].into()), // g null at struct element 2
         );
@@ -2631,7 +2649,7 @@ mod tests {
         // Offsets: [0, 2, 2, 5] (row 1 is null but offset still present)
         let outer_list = LargeListArray::new(
             Arc::new(item_field),
-            arrow::buffer::OffsetBuffer::new(vec![0_i64, 2, 2, 5].into()),
+            OffsetBuffer::new(vec![0_i64, 2, 2, 5].into()),
             Arc::new(inner_struct) as ArrayRef,
             Some(vec![true, false, true].into()), // row 1 is null
         );
@@ -2698,13 +2716,13 @@ mod tests {
         final_digest.update(xbg_data.finalize());
 
         // Entry "x//b/h": data only [100, 200, 300, 400, 500] as i32 LE
-        let mut xbh_data = Sha256::new();
-        xbh_data.update(100_i32.to_le_bytes());
-        xbh_data.update(200_i32.to_le_bytes());
-        xbh_data.update(300_i32.to_le_bytes());
-        xbh_data.update(400_i32.to_le_bytes());
-        xbh_data.update(500_i32.to_le_bytes());
-        final_digest.update(xbh_data.finalize());
+        let mut h_leaf_data = Sha256::new();
+        h_leaf_data.update(100_i32.to_le_bytes());
+        h_leaf_data.update(200_i32.to_le_bytes());
+        h_leaf_data.update(300_i32.to_le_bytes());
+        h_leaf_data.update(400_i32.to_le_bytes());
+        h_leaf_data.update(500_i32.to_le_bytes());
+        final_digest.update(h_leaf_data.finalize());
 
         let expected_hash = final_digest.finalize().to_vec();
 
@@ -2717,6 +2735,138 @@ mod tests {
             encode(&actual_hash),
             encode(&expected_hash),
             "Recursive list/struct decomposition hash mismatch"
+        );
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Test builds multiple complex batches for batch-split independence verification"
+    )]
+    #[test]
+    fn recursive_list_struct_batch_split_independence() {
+        // Same schema and data as recursive_list_struct_decomposition,
+        // split into two batches: rows 0-1 and row 2.
+        // Verify: hash(batch1 + batch2) == hash(combined)
+
+        let g_field = Field::new(
+            "g",
+            DataType::LargeList(Arc::new(Field::new("item", DataType::Int32, false))),
+            true,
+        );
+        let h_field = Field::new("h", DataType::Int32, false);
+        let b_field = Field::new(
+            "b",
+            DataType::Struct(vec![g_field.clone(), h_field.clone()].into()),
+            false,
+        );
+        let a_field = Field::new("a", DataType::Int32, true);
+        let struct_type = DataType::Struct(vec![a_field.clone(), b_field.clone()].into());
+        let item_field = Field::new("item", struct_type, false);
+        let x_field = Field::new("x", DataType::LargeList(Arc::new(item_field.clone())), true);
+        let schema = Arc::new(Schema::new(vec![x_field]));
+
+        // ── Build combined batch (all 3 rows) ──
+        let g_values = Int32Array::from(vec![10, 20, 30, 50]);
+        let g_list = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 2, 3, 3, 3, 4].into()),
+            Arc::new(g_values) as ArrayRef,
+            Some(vec![true, true, false, true, true].into()),
+        );
+        let h_values = Int32Array::from(vec![100, 200, 300, 400, 500]);
+        let b_struct = StructArray::from(vec![
+            (Arc::new(g_field.clone()), Arc::new(g_list) as ArrayRef),
+            (Arc::new(h_field.clone()), Arc::new(h_values) as ArrayRef),
+        ]);
+        let a_values = Int32Array::from(vec![Some(1), None, Some(3), Some(4), Some(5)]);
+        let inner_struct = StructArray::from(vec![
+            (Arc::new(a_field.clone()), Arc::new(a_values) as ArrayRef),
+            (Arc::new(b_field.clone()), Arc::new(b_struct) as ArrayRef),
+        ]);
+        let outer_list = LargeListArray::new(
+            Arc::new(item_field.clone()),
+            OffsetBuffer::new(vec![0_i64, 2, 2, 5].into()),
+            Arc::new(inner_struct) as ArrayRef,
+            Some(vec![true, false, true].into()),
+        );
+        let combined_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(outer_list) as ArrayRef])
+                .unwrap();
+
+        // ── Build batch 1: rows 0-1 ──
+        let g_values_1 = Int32Array::from(vec![10, 20, 30]);
+        let g_list_1 = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 2, 3].into()),
+            Arc::new(g_values_1) as ArrayRef,
+            Some(vec![true, true].into()),
+        );
+        let h_values_1 = Int32Array::from(vec![100, 200]);
+        let b_struct_1 = StructArray::from(vec![
+            (Arc::new(g_field.clone()), Arc::new(g_list_1) as ArrayRef),
+            (Arc::new(h_field.clone()), Arc::new(h_values_1) as ArrayRef),
+        ]);
+        let a_values_1 = Int32Array::from(vec![Some(1), None]);
+        let inner_struct_1 = StructArray::from(vec![
+            (Arc::new(a_field.clone()), Arc::new(a_values_1) as ArrayRef),
+            (Arc::new(b_field.clone()), Arc::new(b_struct_1) as ArrayRef),
+        ]);
+        let outer_list_1 = LargeListArray::new(
+            Arc::new(item_field.clone()),
+            OffsetBuffer::new(vec![0_i64, 2, 2].into()),
+            Arc::new(inner_struct_1) as ArrayRef,
+            Some(vec![true, false].into()),
+        );
+        let batch1 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(outer_list_1) as ArrayRef],
+        )
+        .unwrap();
+
+        // ── Build batch 2: row 2 ──
+        let g_values_2 = Int32Array::from(vec![50]);
+        let g_list_2 = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 0, 0, 1].into()),
+            Arc::new(g_values_2) as ArrayRef,
+            Some(vec![false, true, true].into()),
+        );
+        let h_values_2 = Int32Array::from(vec![300, 400, 500]);
+        let b_struct_2 = StructArray::from(vec![
+            (Arc::new(g_field), Arc::new(g_list_2) as ArrayRef),
+            (Arc::new(h_field), Arc::new(h_values_2) as ArrayRef),
+        ]);
+        let a_values_2 = Int32Array::from(vec![Some(3), Some(4), Some(5)]);
+        let inner_struct_2 = StructArray::from(vec![
+            (Arc::new(a_field), Arc::new(a_values_2) as ArrayRef),
+            (Arc::new(b_field), Arc::new(b_struct_2) as ArrayRef),
+        ]);
+        let outer_list_2 = LargeListArray::new(
+            Arc::new(item_field),
+            OffsetBuffer::new(vec![0_i64, 3].into()),
+            Arc::new(inner_struct_2) as ArrayRef,
+            Some(vec![true].into()),
+        );
+        let batch2 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(outer_list_2) as ArrayRef],
+        )
+        .unwrap();
+
+        // ── Compare ──
+        let mut single = ArrowDigesterCore::<Sha256>::new(schema.as_ref());
+        single.update(&combined_batch);
+        let single_hash = single.finalize();
+
+        let mut split = ArrowDigesterCore::<Sha256>::new(schema.as_ref());
+        split.update(&batch1);
+        split.update(&batch2);
+        let split_hash = split.finalize();
+
+        assert_eq!(
+            encode(&single_hash),
+            encode(&split_hash),
+            "Batch split independence failed for recursive list/struct decomposition"
         );
     }
 }
