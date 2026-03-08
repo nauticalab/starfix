@@ -25,15 +25,64 @@ const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 struct DigestBufferType<D: Digest> {
     null_bits: Option<BitVec<u8, Lsb0>>,
     structural: Option<D>,
-    data: D,
+    data: Option<D>,
 }
 
 impl<D: Digest> DigestBufferType<D> {
+    /// Create a buffer with all components present (legacy constructor).
+    #[deprecated(
+        note = "Use new_data_only, new_structural_only, new_list_leaf, or new_validity_only"
+    )]
     fn new(nullable: bool, structured: bool) -> Self {
         Self {
             null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
             structural: structured.then(D::new),
-            data: D::new(),
+            data: Some(D::new()),
+        }
+    }
+
+    /// Create a buffer for a leaf field (data + optional `null_bits`).
+    fn new_data_only(nullable: bool) -> Self {
+        Self {
+            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
+            structural: None,
+            data: Some(D::new()),
+        }
+    }
+
+    /// Create a buffer for a list-level-only entry (structural + optional `null_bits`, no data).
+    fn new_structural_only(nullable: bool) -> Self {
+        Self {
+            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
+            structural: Some(D::new()),
+            data: None,
+        }
+    }
+
+    /// Create a buffer for a leaf that is itself a list type (structural + data + optional `null_bits`).
+    fn new_list_leaf(nullable: bool) -> Self {
+        Self {
+            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
+            structural: Some(D::new()),
+            data: Some(D::new()),
+        }
+    }
+
+    /// Create a buffer for a column-level nullable entry (`null_bits` only).
+    fn new_validity_only() -> Self {
+        Self {
+            null_bits: Some(BitVec::<u8, Lsb0>::new()),
+            structural: None,
+            data: None,
+        }
+    }
+
+    /// Get a mutable reference to the data digest, panicking if absent.
+    #[expect(clippy::panic, reason = "Const fn cannot use expect/unwrap")]
+    const fn data_mut(&mut self) -> &mut D {
+        match &mut self.data {
+            Some(d) => d,
+            None => panic!("data digest not present on this entry"),
         }
     }
 }
@@ -267,8 +316,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if let Some(structural) = digest.structural {
             final_digest.update(structural.finalize());
         }
-        // Data/leaf digest
-        final_digest.update(digest.data.finalize());
+        // Data/leaf digest (if present)
+        if let Some(data) = digest.data {
+            final_digest.update(data.finalize());
+        }
     }
 
     /// Serialize the schema into a canonical JSON string keyed by field name.
@@ -481,14 +532,14 @@ impl<D: Digest> ArrowDigesterCore<D> {
                             bit_vec.push(bool_array.value(i));
                         }
                     }
-                    digest.data.update(bit_vec.as_raw_slice());
+                    digest.data_mut().update(bit_vec.as_raw_slice());
                 } else {
                     // Non-nullable: pack all boolean values
                     let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
                     for i in 0..bool_array.len() {
                         bit_vec.push(bool_array.value(i));
                     }
-                    digest.data.update(bit_vec.as_raw_slice());
+                    digest.data_mut().update(bit_vec.as_raw_slice());
                 }
             }
             DataType::Int8 | DataType::UInt8 => {
@@ -671,7 +722,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                                 .checked_add(element_size_usize)
                                 .expect("End position addition overflow");
 
-                            digest_buffer.data.update(
+                            digest_buffer.data_mut().update(
                                 slice
                                     .get(data_pos..end_pos)
                                     .expect("Failed to get data_slice"),
@@ -681,12 +732,12 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 }
                 None => {
                     // No nulls, we can hash the entire buffer directly
-                    digest_buffer.data.update(slice);
+                    digest_buffer.data_mut().update(slice);
                 }
             }
         } else {
             // No nulls, we can hash the entire buffer directly
-            digest_buffer.data.update(slice);
+            digest_buffer.data_mut().update(slice);
         }
     }
 
@@ -702,8 +753,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         for i in 0..array.len() {
             if null_buf.is_none_or(|nb| nb.is_valid(i)) {
                 let value = array.value(i);
-                digest.data.update((value.len() as u64).to_le_bytes());
-                digest.data.update(value);
+                digest.data_mut().update((value.len() as u64).to_le_bytes());
+                digest.data_mut().update(value);
             }
         }
     }
@@ -720,8 +771,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         for i in 0..array.len() {
             if null_buf.is_none_or(|nb| nb.is_valid(i)) {
                 let value = array.value(i);
-                digest.data.update((value.len() as u64).to_le_bytes());
-                digest.data.update(value.as_bytes());
+                digest.data_mut().update((value.len() as u64).to_le_bytes());
+                digest.data_mut().update(value.as_bytes());
             }
         }
     }
@@ -747,7 +798,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 if let Some(ref mut structural) = digest.structural {
                     structural.update(size_bytes);
                 } else {
-                    digest.data.update(size_bytes);
+                    digest.data_mut().update(size_bytes);
                 }
 
                 // Recurse into sub-array — leaf data goes to data digest
@@ -793,7 +844,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Write bytes directly into the data/leaf digest portion of the buffer, bypassing null-bit tracking.
     /// Used to write length prefixes that sit in the data stream but are not nullable values.
     fn update_data_digest(digest: &mut DigestBufferType<D>, data: impl AsRef<[u8]>) {
-        digest.data.update(data);
+        digest.data_mut().update(data);
     }
 
     /// Finalize a child's digest and write the resulting bytes into the parent's data stream.
@@ -815,8 +866,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if let Some(structural) = child.structural {
             Self::update_data_digest(parent, structural.finalize());
         }
-        // Data/leaf digest
-        Self::update_data_digest(parent, child.data.finalize());
+        // Data/leaf digest (if present)
+        if let Some(data) = child.data {
+            Self::update_data_digest(parent, data.finalize());
+        }
     }
 
     fn handle_null_bits(array: &dyn Array, null_bit_vec: &mut BitVec<u8, Lsb0>) {
@@ -1085,7 +1138,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 4);
         assert!(null_bit_vec[0], "index 0 (true) should be valid");
@@ -1120,7 +1173,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         // [false, true, false] packed Lsb0: bit0=0, bit1=1, bit2=0 → 0000_0010 = 0x02
         let mut manual = Sha256::new();
@@ -1146,7 +1199,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1175,7 +1228,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update([0x01_u8, 0x02_u8, 0xFF_u8]);
@@ -1202,7 +1255,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1235,7 +1288,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(100_u16.to_le_bytes());
@@ -1270,7 +1323,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(half::f16::from_f32(1.0).to_le_bytes());
@@ -1310,7 +1363,7 @@ mod tests {
             .get("int32_col")
             .expect("int32_col field should exist in digest buffer");
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         // The null bit vector should be [true, false, true, true] for [Some(42), None, Some(-7), Some(0)]
         assert_eq!(null_bit_vec.len(), 4);
@@ -1347,7 +1400,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1384,7 +1437,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1422,7 +1475,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1457,7 +1510,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(0_i32.to_le_bytes());
@@ -1484,7 +1537,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1513,7 +1566,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1548,7 +1601,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(1.0_f64.to_le_bytes());
@@ -1582,7 +1635,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1617,7 +1670,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(0_i64.to_le_bytes());
@@ -1644,7 +1697,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1673,7 +1726,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1712,7 +1765,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1749,7 +1802,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1787,7 +1840,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1829,7 +1882,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1869,7 +1922,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1903,7 +1956,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1939,7 +1992,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(2_u64.to_le_bytes());
@@ -1969,7 +2022,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -2005,7 +2058,7 @@ mod tests {
 
         let buf = &digester.fields_digest_buffer["col"];
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(1_u64.to_le_bytes());
@@ -2057,7 +2110,7 @@ mod tests {
             .structural
             .as_ref()
             .expect("Expected structural digest for list");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         // Structural digest: element count (sizes separated from leaf data)
         let mut manual_structural = Sha256::new();
@@ -2110,7 +2163,7 @@ mod tests {
             .structural
             .as_ref()
             .expect("Expected structural digest for list");
-        let data_digest = &buf.data;
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         // Structural digest: element count (sizes separated from leaf data)
         let mut manual_structural = Sha256::new();
@@ -2126,5 +2179,37 @@ mod tests {
         manual_data.update(2_i32.to_le_bytes());
         manual_data.update(3_i32.to_le_bytes());
         assert_eq!(data_digest.clone().finalize(), manual_data.finalize());
+    }
+
+    #[test]
+    fn digest_buffer_type_structural_only() {
+        let buf = super::DigestBufferType::<Sha256>::new_structural_only(true);
+        assert!(buf.null_bits.is_some());
+        assert!(buf.structural.is_some());
+        assert!(buf.data.is_none());
+    }
+
+    #[test]
+    fn digest_buffer_type_data_only() {
+        let buf = super::DigestBufferType::<Sha256>::new_data_only(false);
+        assert!(buf.null_bits.is_none());
+        assert!(buf.structural.is_none());
+        assert!(buf.data.is_some());
+    }
+
+    #[test]
+    fn digest_buffer_type_list_leaf() {
+        let buf = super::DigestBufferType::<Sha256>::new_list_leaf(true);
+        assert!(buf.null_bits.is_some());
+        assert!(buf.structural.is_some());
+        assert!(buf.data.is_some());
+    }
+
+    #[test]
+    fn digest_buffer_type_validity_only() {
+        let buf = super::DigestBufferType::<Sha256>::new_validity_only();
+        assert!(buf.null_bits.is_some());
+        assert!(buf.structural.is_none());
+        assert!(buf.data.is_none());
     }
 }
