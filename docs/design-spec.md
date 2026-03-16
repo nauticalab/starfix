@@ -21,7 +21,8 @@ The hash algorithm is parameterized via Rust's `digest::Digest` trait. The publi
 |------|-----------|
 | **Logical equivalence** | Two Arrow structures represent the same data regardless of physical layout choices (encoding, column order, batch splits). |
 | **Validity bitmap** | A bit vector where `1` = valid, `0` = null, tracked per nullable field. |
-| **Data digest** | A running hash of the non-null data bytes for a single field. |
+| **Data digest** | A running hash of the non-null leaf data bytes for a single field. |
+| **Structural digest** | A running hash of element counts for list-type fields, separating structure from leaf data. |
 | **Schema digest** | A hash of the canonicalized JSON representation of the schema. |
 | **Field path** | A `/`-separated path for nested struct fields (e.g., `address/city`). |
 
@@ -69,39 +70,50 @@ Because the top-level is a `BTreeMap<String, Value>`, field names are automatica
 ```json
 {
   "age": {"data_type": "Int32", "nullable": false},
-  "name": {"data_type": "Utf8", "nullable": true}
+  "name": {"data_type": "LargeUtf8", "nullable": true}
 }
 ```
 
-### 4.2 Data Type Serialization
+### 4.2 Data Type Serialization (`data_type_to_value`)
+
+All data type serialization goes through `data_type_to_value`, which produces a canonical JSON representation. The output is recursively key-sorted via `sort_json_value` before returning.
 
 #### Primitive types
 Serialized using Arrow's built-in serde, producing strings like `"Int32"`, `"Boolean"`, `"Float64"`, or objects like `{"Decimal128": [38, 5]}`, `{"Time32": "Second"}`.
 
 #### Logical type equivalence classes
 
-For fully logical hashing, certain types that differ only in physical representation are canonicalized to a single form in the schema:
+Certain types that differ only in physical representation (offset width) are canonicalized to a single form:
 
 | Types in equivalence class | Canonical form in schema |
 |---|---|
 | `Binary`, `LargeBinary` | `"LargeBinary"` |
 | `Utf8`, `LargeUtf8` | `"LargeUtf8"` |
-| `List(field)`, `LargeList(field)` | `{"LargeList": <inner_field>}` |
+| `List(field)`, `LargeList(field)` | `{"LargeList": <element_type>}` |
+| `Dictionary(key_type, value_type)` | Recursive `data_type_to_value(value_type)` |
 
 The "large" variant is always the canonical form because it is the superset representation.
 
 #### Nested types
 
 - **Struct**: `{"Struct": [<sorted array of inner field objects>]}` — inner fields are **sorted alphabetically by field name** before serialization.
-- **List / LargeList**: `{"LargeList": <inner_field_object>}` (canonicalized to large variant).
-- **FixedSizeList**: `{"FixedSizeList": [<inner_field_object>, <size>]}`.
+- **List / LargeList**: `{"LargeList": <element_type_object>}` (canonicalized to large variant). The element type uses `element_type_to_value` which omits the Arrow-internal field name (e.g., `"item"`), including only `data_type` and `nullable`.
+- **FixedSizeList**: `{"FixedSizeList": [<element_type_object>, <size>]}`. Also uses `element_type_to_value` (no field name).
 - **Map**: `{"Map": [<inner_field_object>, <sorted>]}`.
 
-Each inner field object has the form:
+**Inner field object** (for struct children, map entries):
 ```json
 {
   "data_type": <recursive data_type>,
   "name": "<field_name>",
+  "nullable": <bool>
+}
+```
+
+**Element type object** (for list/fixed-size-list items):
+```json
+{
+  "data_type": <recursive data_type>,
   "nullable": <bool>
 }
 ```
@@ -116,13 +128,33 @@ schema_digest = SHA256(canonical_json_string)
 
 ---
 
-## 5. Data Serialization (Byte Layout)
+## 5. DigestBufferType
 
-Each field is hashed independently. The field's digest buffer is one of:
-- `NonNullable(D)` — a single running digest for data bytes.
-- `Nullable(BitVec, D)` — a validity bitmap (`BitVec`) plus a running data digest.
+Each entry in the BTreeMap has a `DigestBufferType` struct with three **optional** components:
 
-### 5.1 Fixed-Size Types
+```rust
+struct DigestBufferType<D: Digest> {
+    null_bits: Option<BitVec<u8, Lsb0>>,  // Present for nullable entries
+    structural: Option<D>,                  // Present for list-type entries
+    data: Option<D>,                        // Present for leaf and list-leaf entries
+}
+```
+
+- **`null_bits`**: Validity bitmap. Present for nullable fields, absent for non-nullable.
+- **`structural`**: A separate running digest for list element counts. Present for list-type entries. Separates structure (how elements are partitioned into lists) from leaf data.
+- **`data`**: The running digest for actual data bytes (leaf values). Present for leaf and list-leaf entries, absent for validity-only and structural-only entries.
+
+There are four entry types, constructed via dedicated constructors:
+- **`new_data_only(nullable)`**: Leaf field (e.g., `Int32`). Has `data`, optionally `null_bits`.
+- **`new_structural_only(nullable)`**: List intermediate node above a struct or nested list. Has `structural`, optionally `null_bits`.
+- **`new_list_leaf(nullable)`**: List whose value type is a leaf (e.g., `List<Int32>`). Has `structural` + `data`, optionally `null_bits`.
+- **`new_validity_only()`**: Nullable parent whose descendants have their own entries. Has `null_bits` only.
+
+---
+
+## 6. Data Serialization (Byte Layout)
+
+### 6.1 Fixed-Size Types
 
 **Types:** `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`, `UInt32`, `Int64`, `UInt64`, `Float16`, `Float32`, `Float64`, `Date32`, `Date64`, `Time32(*)`, `Time64(*)`, `Decimal32`, `Decimal64`, `Decimal128`, `Decimal256`, `FixedSizeBinary(n)`.
 
@@ -138,18 +170,18 @@ Each field is hashed independently. The field's digest buffer is one of:
 | Decimal256 | 32 | Little-endian |
 | FixedSizeBinary(n) | n | Raw bytes |
 
-**Non-nullable path:** The entire buffer slice (accounting for offset) is fed into the digest in one call.
+**Non-nullable path:** The entire buffer slice (accounting for offset) is fed into the data digest in one call.
 
 **Nullable path:**
 1. Extend the validity bitmap with `is_valid(i)` for each element.
 2. For each valid element, feed its little-endian bytes into the data digest.
 3. Null elements are **skipped** — no data bytes are fed (null information is captured solely by the validity bitmap).
 
-### 5.2 Boolean Type
+### 6.2 Boolean Type
 
-Boolean values are **bit-packed** using MSB-first (`Msb0`) ordering into bytes.
+Boolean values are **bit-packed** using LSB-first (`Lsb0`) ordering with `u8` storage words into bytes via `BitVec<u8, Lsb0>`.
 
-**Non-nullable path:** All values are packed sequentially.
+**Non-nullable path:** All values are packed sequentially into a `BitVec<u8, Lsb0>`, and the raw backing bytes are fed into the data digest.
 
 **Nullable path:**
 1. Extend the validity bitmap.
@@ -158,9 +190,12 @@ Boolean values are **bit-packed** using MSB-first (`Msb0`) ordering into bytes.
 
 **Example:** `[true, NULL, false, true]` (nullable)
 - Validity bitmap: `[1, 0, 1, 1]`
-- Data bits (valid only): `[true, false, true]` → Msb0 packed: `1010_0000` = `0xA0`
+- Data bits (valid only): `[true, false, true]` → Lsb0 packed: bit0=1, bit1=0, bit2=1 → `0000_0101` = `0x05`
 
-### 5.3 Variable-Length Types (Binary, String)
+**Example:** `[true, false, true]` (non-nullable)
+- Lsb0 packed: bit0=1, bit1=0, bit2=1 → `0000_0101` = `0x05`
+
+### 6.3 Variable-Length Types (Binary, String)
 
 **Types:** `Binary`, `LargeBinary`, `Utf8`, `LargeUtf8`.
 
@@ -171,67 +206,67 @@ Each element is serialized as:
 
 The length prefix is **always u64** (8 bytes, little-endian) regardless of the offset type (`i32` for `Binary`/`Utf8`, `i64` for `LargeBinary`/`LargeUtf8`). This ensures cross-platform stability and logical equivalence between small/large variants.
 
-**Non-nullable path:** For each element, feed `len.to_le_bytes()` (u64) then the raw bytes.
+**Non-nullable path:** For each element, feed `(value.len() as u64).to_le_bytes()` then the raw bytes.
 
 **Nullable path:**
 1. Extend the validity bitmap.
 2. For valid elements: feed length prefix + raw bytes.
 3. For null elements: **skip entirely** — no sentinel bytes. Null information is captured by the validity bitmap.
 
-### 5.4 List Types
+### 6.4 List Types (Record-Batch Path)
 
 **Types:** `List(field)`, `LargeList(field)`.
 
-Each list element (a sub-array) is serialized as:
-```
-[sub-array length as u64 little-endian (8 bytes)] [recursive serialization of sub-array elements]
-```
+List columns are **recursively decomposed** into separate BTreeMap entries. A list creates an intermediate entry at `path/` (path + delimiter). The value type is then recursively traversed.
 
-The sub-array length prefix prevents collisions between differently-partitioned lists (e.g., `[[1,2],[3]]` vs `[[1],[2,3]]`).
+**Decomposition by value type:**
+- **`List<leaf>`** (e.g., `List<Int32>`): Entry at `path/` is a **list-leaf** with both structural and data digests.
+- **`List<Struct<...>>`**: Entry at `path/` is **structural-only**. The struct is transparent, and each struct child creates its own entry at `path//childname`.
+- **`List<List<...>>`**: Entry at `path/` is structural-only. The inner list creates another entry at `path//`.
 
-**Nullable path:** Same as other types — extend validity bitmap, skip null list entries.
+**Nullable list columns:** A **validity-only** entry is created at `path` (without trailing `/`), recording which rows are null vs valid. Null list elements are not traversed.
 
-The sub-array elements are hashed recursively using the same `array_digest_update` dispatch, so nested lists and nested structs within lists follow the same rules.
+**Traversal:** For each non-null list element, write the sub-array length (u64 LE) to the structural digest at `path/`, then recurse into the sub-array.
 
-### 5.5 Struct Types
+### 6.5 Struct Types (Record-Batch Path)
 
-Struct fields are **not hashed as a composite** — instead, each leaf field within the struct is extracted and hashed independently under its own field path (e.g., `address/city`, `address/zip`). The field paths are stored in a `BTreeMap`, so they are always processed in alphabetical order.
+Struct fields are **transparent** — they do not create a BTreeMap entry. Instead:
 
-This design means:
-- Struct field order in the Arrow schema does not affect the hash.
-- Each leaf field maintains its own independent validity bitmap and data digest.
+1. **Children are traversed** in alphabetical order by field name.
+2. **Struct-level nulls are AND-propagated** to all descendant entries via `combine_nulls`. If a struct row is null, none of its children's data is hashed for that row.
+3. Each child is recursively decomposed (leaf → data entry, list → structural entry, nested struct → recurse further).
 
-### 5.6 Dictionary-Encoded Arrays
+**Path naming:** Struct adds `/fieldname` to the path. Combined with list's trailing `/`, this produces paths like `items//id` (list `/` + struct `/id`).
 
-Dictionary-encoded arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked so that the resulting data stream is identical to what a non-dictionary-encoded array with the same logical values would produce.
+### 6.6 Dictionary-Encoded Arrays
+
+Dictionary-encoded arrays are **resolved to their plain equivalent** before hashing. The dictionary is unpacked using Arrow's `cast` kernel so that the resulting data stream is identical to what a non-dictionary-encoded array with the same logical values would produce.
 
 This ensures that `DictionaryArray<Int32, Utf8>(indices=[0,1,0], dict=["a","b"])` produces the same hash as `StringArray(["a","b","a"])`.
 
 ---
 
-## 6. Final Digest Assembly
+## 7. Final Digest Assembly
 
-### 6.1 Field Digest Finalization
+### 7.1 Field Digest Finalization
 
-Each field's digest buffer is finalized and fed into the combined final digest:
+Each entry's `DigestBufferType` is finalized and fed into the combined final digest via `finalize_digest`. Each component is written only if present:
 
-**Non-nullable field:**
 ```
-feed: SHA256_finalize(data_digest)    // 32 bytes
+// If nullable (null_bits is Some):
+feed: validity_bitmap_length as u64 LE    // 8 bytes (number of bits)
+feed: validity_bitmap raw bytes (LE)      // ceil(length/8) bytes (u8 words, to_le_bytes is identity for u8)
+
+// If list type (structural is Some):
+feed: SHA256_finalize(structural_digest)  // 32 bytes
+
+// If leaf/list-leaf (data is Some):
+feed: SHA256_finalize(data_digest)        // 32 bytes
 ```
 
-**Nullable field:**
-```
-feed: validity_bitmap_length as u64 LE  // 8 bytes (number of bits)
-feed: validity_bitmap words (BE bytes)  // ceil(length/8) bytes, each u8 word in big-endian
-feed: SHA256_finalize(data_digest)      // 32 bytes
-```
+The validity bitmap uses `BitVec<u8, Lsb0>` storage. Each `u8` word is serialized via `to_le_bytes()` (identity for single-byte words). The bit count (not byte count) is written as the length prefix.
 
-The validity bitmap is serialized as:
-1. The bit count (number of elements seen) as `u64` little-endian.
-2. The raw backing storage words, each converted to big-endian bytes.
-
-### 6.2 Combined Final Digest
+### 7.2 Combined Final Digest
 
 ```
 final_digest = SHA256(
@@ -244,7 +279,7 @@ final_digest = SHA256(
 
 Fields are iterated from the `BTreeMap` which maintains alphabetical ordering by field path.
 
-### 6.3 Version Prefix
+### 7.3 Version Prefix
 
 The public `ArrowDigester` prepends a 3-byte version prefix to the final digest:
 
@@ -254,139 +289,86 @@ output = [0x00, 0x00, 0x01] || final_digest   // 3 + 32 = 35 bytes total
 
 ---
 
-## 7. Standalone `hash_array` Function
+## 8. Standalone `hash_array` Function
 
-`hash_array` hashes a single array without a full schema context. Its digest is:
+`hash_array` hashes a single array without a full schema context. It uses the **same recursive decomposition** as the record-batch path (`extract_type_entries` + `traverse_and_update`), ensuring consistent hashing regardless of which API is used.
 
 ```
 final = SHA256(
-    canonical_json(data_type)     // data type metadata
-    || finalized_field_digest     // nullable or non-nullable, same rules as above
+    serde_json::to_string(data_type_to_value(effective_type))   // canonical type JSON string
+    || for each BTreeMap entry: finalize_digest(entry)           // same decomposition as record-batch
 )
 ```
 
-The data type is serialized using the same `data_type_to_value` logic (with type canonicalization) and then `serde_json::to_string`.
+If the input is a dictionary array, it is first resolved to its plain value type via `cast`. The effective type is then serialized using `data_type_to_value` (with type canonicalization and recursive key sorting), converted to a JSON string, and fed into the digest before the decomposed field entries.
 
 ---
 
-## 8. Invariants and Guarantees
+## 9. Schema Equality in `update()`
+
+When `update(record_batch)` is called, the record batch's schema is compared against the digester's schema **logically** — both schemas are serialized via `serialized_schema()` (which uses `data_type_to_value` with type canonicalization) and the resulting strings are compared. This means:
+- Column order doesn't matter (both are sorted by `BTreeMap`).
+- `Utf8` vs `LargeUtf8`, `Binary` vs `LargeBinary`, `List` vs `LargeList` are treated as equivalent.
+- Dictionary types are canonicalized to their value types.
+
+---
+
+## 10. Invariants and Guarantees
 
 1. **Column-order independence:** Top-level fields are sorted alphabetically via `BTreeMap`.
-2. **Struct field-order independence:** Struct children are sorted by name during schema serialization and field extraction.
+2. **Struct field-order independence:** Struct children are sorted by name during schema serialization and during composite hashing in `array_digest_update`.
 3. **Batch-split independence:** Streaming `update()` calls produce the same hash as a single combined batch.
 4. **Encoding independence:** Dictionary-encoded arrays are resolved before hashing.
 5. **Physical type independence:** `Binary`/`LargeBinary`, `Utf8`/`LargeUtf8`, `List`/`LargeList` are canonicalized to their large variants in the schema and use identical data serialization.
-6. **Platform independence:** All length prefixes use `u64` (8 bytes LE), all numeric values use little-endian byte order.
+6. **Platform independence:** All length prefixes use `u64` (8 bytes LE), all numeric values use little-endian byte order, validity bitmaps use `BitVec<u8, Lsb0>` (u8-width words, not platform-dependent `usize`).
 7. **Null handling consistency:** Null values are tracked solely via the validity bitmap. No sentinel bytes are fed into the data digest for any type.
-8. **Non-null arrays with/without validity bitmap:** An array with all valid values produces the same data digest whether or not a validity bitmap is present (nulls simply mean bits are not pushed and values are not fed, and all-valid arrays feed the same bytes).
+8. **Non-null arrays with/without validity bitmap:** An array with all valid values produces the same data digest whether or not a validity bitmap is present.
 
 ---
 
-## 9. Known Issues and Required Fixes
+## 11. Comprehensive Test Plan
 
-The following issues have been identified in the current implementation that must be fixed to achieve the guarantees above:
-
-### 9.1 Struct Fields Not Sorted in Schema Serialization
-
-**File:** `arrow_digester_core.rs`, `data_type_to_value()` (line ~206)
-
-**Issue:** Struct inner fields are collected into a `Vec` in their original order. Two schemas with the same struct fields in different order will produce different schema hashes.
-
-**Fix:** Sort the fields iterator by field name before collecting into the Vec.
-
-### 9.2 `inner_field_to_value` Not Recursively Sorted
-
-**File:** `arrow_digester_core.rs`, `inner_field_to_value()` (line ~232)
-
-**Issue:** The JSON object produced by `serde_json::json!` has non-deterministic key order. While `sort_json_value` is applied at the top level in `serialized_schema`, it is NOT applied to the output of `data_type_to_value`/`inner_field_to_value`.
-
-**Fix:** Apply `sort_json_value` recursively in `data_type_to_value` before returning.
-
-### 9.3 Binary Length Prefix Uses Platform-Dependent `usize`
-
-**File:** `arrow_digester_core.rs`, `hash_binary_array()` (line ~518)
-
-**Issue:** `value.len().to_le_bytes()` produces 4 bytes on 32-bit and 8 bytes on 64-bit platforms.
-
-**Fix:** Cast to `u64` before calling `to_le_bytes()`: `(value.len() as u64).to_le_bytes()`.
-
-### 9.4 `NULL_BYTES` Sentinel in Binary/String Nullable Paths
-
-**File:** `arrow_digester_core.rs`, `hash_binary_array()` (line ~536), `hash_string_array()` (line ~579)
-
-**Issue:** Null values feed `b"NULL"` into the data digest, but `hash_fixed_size_array` skips nulls entirely. Since null information is already captured in the validity bitmap, the sentinel is redundant and inconsistent.
-
-**Fix:** Remove `data_digest.update(NULL_BYTES)` from the null branches. Skip null values entirely, matching the fixed-size type behavior.
-
-### 9.5 No Type Canonicalization for Binary/Utf8/List Variants
-
-**File:** `arrow_digester_core.rs`, `data_type_to_value()` and `serialized_schema()`
-
-**Issue:** `Binary` and `LargeBinary` serialize to different JSON strings, causing logically equivalent schemas to hash differently.
-
-**Fix:** In `data_type_to_value`, map `Binary` → `LargeBinary`, `Utf8` → `LargeUtf8`, `List` → `LargeList` before serialization.
-
-### 9.6 Dictionary-Encoded Arrays Not Supported
-
-**File:** `arrow_digester_core.rs`, `array_digest_update()` (line ~437)
-
-**Issue:** Dictionary-encoded arrays hit `todo!()` and panic.
-
-**Fix:** Resolve dictionary arrays to their plain value arrays using Arrow's `take` kernel or equivalent, then recursively hash the result.
-
-### 9.7 Schema Equality Check in `update()` Too Strict
-
-**File:** `arrow_digester_core.rs`, `update()` (line ~61)
-
-**Issue:** `*record_batch.schema() == self.schema` uses strict Arrow schema equality which includes column order. This prevents streaming batches with different column orders.
-
-**Fix:** Compare schemas logically (same set of fields with same types and nullability, regardless of order).
-
----
-
-## 10. Comprehensive Test Plan
-
-### 10.1 Column-Order Independence Tests
+### 11.1 Column-Order Independence Tests
 
 - **Top-level column reorder:** Two record batches with columns `[a, b, c]` vs `[c, a, b]` with same data produce identical hashes.
 - **Schema-only column reorder:** Two schemas with same fields in different order produce identical schema hashes.
 - **Streaming with reordered batches:** Feed batch1 with order `[a, b]`, batch2 with order `[b, a]` — should produce same hash as feeding both in order `[a, b]`.
 
-### 10.2 Struct Field-Order Independence Tests
+### 11.2 Struct Field-Order Independence Tests
 
 - **Flat struct reorder:** `Struct({x: Int32, y: Utf8})` vs `Struct({y: Utf8, x: Int32})` with same data produce identical hashes.
 - **Nested struct reorder:** Deeply nested structs with shuffled field orders at every level.
 - **Schema hash with reordered struct fields:** Verify schema digest is identical.
 
-### 10.3 Dictionary Encoding Equivalence Tests
+### 11.3 Dictionary Encoding Equivalence Tests
 
 - **String dictionary vs plain:** `DictionaryArray<Int32, Utf8>` vs `StringArray` with same logical values.
 - **Integer dictionary vs plain:** Dictionary-encoded integers vs plain integer array.
 - **Dictionary with nulls:** Dictionary arrays containing null entries match plain arrays with same nulls.
 - **Nested dictionary:** List of dictionary-encoded strings vs list of plain strings.
 
-### 10.4 Binary/Utf8/List Size Variant Equivalence Tests
+### 11.4 Binary/Utf8/List Size Variant Equivalence Tests
 
 - **Binary vs LargeBinary:** Same byte data in both produces identical hash.
 - **Utf8 vs LargeUtf8:** Same string data produces identical hash.
 - **List vs LargeList:** Same list data produces identical hash.
 - **Schema equivalence:** Schema with `Binary` field hashes same as schema with `LargeBinary` field (same name, same nullability).
 
-### 10.5 Null Handling Tests
+### 11.5 Null Handling Tests
 
-- **No sentinel bytes:** Verify that null values in binary/string arrays don't feed any extra bytes into the data digest (after fix).
+- **No sentinel bytes:** Verify that null values in binary/string arrays don't feed any extra bytes into the data digest.
 - **All-null array:** Array of all nulls produces a hash that depends only on the validity bitmap.
 - **All-valid nullable vs non-nullable:** Array with all valid values produces same data digest whether schema says nullable or not.
 - **Mixed nulls across batches:** First batch all nulls, second batch all valid — same as single combined batch.
 - **Null at different positions:** `[1, NULL, 3]` vs `[NULL, 1, 3]` produce different hashes.
 
-### 10.6 Batch Splitting Independence Tests
+### 11.6 Batch Splitting Independence Tests
 
 - **Two batches vs one:** Already tested, but extend to more types and edge cases.
 - **Many small batches:** Split into single-row batches vs one large batch.
 - **Empty batches:** Inserting empty batches between data batches doesn't change the hash.
 
-### 10.7 Edge Cases
+### 11.7 Edge Cases
 
 - **Empty table:** Schema-only hash (no data).
 - **Zero-length arrays:** Arrays with length 0 for each type.
@@ -398,7 +380,7 @@ The following issues have been identified in the current implementation that mus
 - **Unicode strings:** Strings with multi-byte UTF-8 characters.
 - **Sliced arrays:** Arrays created via `array.slice(offset, length)` should hash the same as a fresh array with the same values.
 
-### 10.8 Collision Resistance Tests
+### 11.8 Collision Resistance Tests
 
 - **Binary partition collision:** `[[0x01, 0x02], [0x03]]` vs `[[0x01], [0x02, 0x03]]` (already tested).
 - **String partition collision:** `["ab", "c"]` vs `["a", "bc"]` (already tested).
@@ -406,12 +388,12 @@ The following issues have been identified in the current implementation that mus
 - **Null vs zero:** `[NULL]` vs `[0]` produce different hashes.
 - **Empty vs null:** `[Some("")]` vs `[None]` for string type.
 
-### 10.9 Regression / Golden Value Tests
+### 11.9 Regression / Golden Value Tests
 
 - Maintain golden hash values for a comprehensive schema with data, verified against manually computed expected bytes.
 - Byte-level verification tests (already partially present) for each data type confirming exact bytes fed into the digest.
 
-### 10.10 Cross-Type Distinction Tests
+### 11.10 Cross-Type Distinction Tests
 
 - **Float32 vs Float64:** Same numeric value (e.g., `1.5`) in different float types produces different hashes (schema distinguishes them).
 - **Int32 vs Int64:** Same integer value in different integer types produces different hashes.

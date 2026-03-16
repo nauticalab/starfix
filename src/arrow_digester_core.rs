@@ -3,41 +3,144 @@
     clippy::todo,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
-use std::{collections::BTreeMap, iter::repeat_n};
+use std::{collections::BTreeMap, iter::repeat_n, sync::Arc};
 
 use arrow::{
     array::{
-        Array, BinaryArray, BooleanArray, GenericBinaryArray, GenericListArray, GenericStringArray,
-        LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, OffsetSizeTrait,
-        RecordBatch, StringArray, StructArray,
+        make_array, Array, BooleanArray, GenericBinaryArray, GenericStringArray, LargeBinaryArray,
+        LargeListArray, LargeStringArray, OffsetSizeTrait, RecordBatch, StructArray,
     },
+    buffer::NullBuffer,
+    compute::cast,
     datatypes::{DataType, Schema},
 };
 use arrow_schema::Field;
 use bitvec::prelude::*;
 use digest::Digest;
 
-const NULL_BYTES: &[u8] = b"NULL";
-
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
 #[derive(Clone)]
-enum DigestBufferType<D: Digest> {
-    NonNullable(D),
-    Nullable(BitVec, D), // Where first digest is for the bull bits, while the second is for the actual data
+struct DigestBufferType<D: Digest> {
+    null_bits: Option<BitVec<u8, Lsb0>>,
+    structural: Option<D>,
+    data: Option<D>,
+}
+
+impl<D: Digest> DigestBufferType<D> {
+    /// Create a buffer for a leaf field (data + optional `null_bits`).
+    fn new_data_only(nullable: bool) -> Self {
+        Self {
+            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
+            structural: None,
+            data: Some(D::new()),
+        }
+    }
+
+    /// Create a buffer for a list-level-only entry (structural + optional `null_bits`, no data).
+    fn new_structural_only(nullable: bool) -> Self {
+        Self {
+            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
+            structural: Some(D::new()),
+            data: None,
+        }
+    }
+
+    /// Create a buffer for a leaf that is itself a list type (structural + data + optional `null_bits`).
+    fn new_list_leaf(nullable: bool) -> Self {
+        Self {
+            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
+            structural: Some(D::new()),
+            data: Some(D::new()),
+        }
+    }
+
+    /// Create a buffer for a column-level nullable entry (`null_bits` only).
+    fn new_validity_only() -> Self {
+        Self {
+            null_bits: Some(BitVec::<u8, Lsb0>::new()),
+            structural: None,
+            data: None,
+        }
+    }
+
+    /// Get a mutable reference to the data digest, panicking if absent.
+    #[expect(clippy::panic, reason = "Const fn cannot use expect/unwrap")]
+    const fn data_mut(&mut self) -> &mut D {
+        match &mut self.data {
+            Some(d) => d,
+            None => panic!("data digest not present on this entry"),
+        }
+    }
+}
+
+/// Recursively normalize a `DataType` to its canonical large equivalent.
+///
+/// - `Utf8` → `LargeUtf8`
+/// - `Binary` → `LargeBinary`
+/// - `List(field)` → `LargeList(normalized_field)`
+/// - `Dictionary(_, value_type)` → `normalize_data_type(value_type)`
+/// - `Struct`, `LargeList`, `FixedSizeList`, `Map` have their inner fields normalized recursively.
+fn normalize_data_type(data_type: &DataType) -> DataType {
+    match data_type {
+        DataType::Utf8 => DataType::LargeUtf8,
+        DataType::Binary => DataType::LargeBinary,
+        DataType::List(field) | DataType::LargeList(field) => {
+            DataType::LargeList(Arc::new(normalize_field(field)))
+        }
+        DataType::Struct(fields) => DataType::Struct(
+            fields
+                .iter()
+                .map(|f| Arc::new(normalize_field(f)))
+                .collect(),
+        ),
+        DataType::FixedSizeList(field, size) => {
+            DataType::FixedSizeList(Arc::new(normalize_field(field)), *size)
+        }
+        DataType::Map(field, sorted) => DataType::Map(Arc::new(normalize_field(field)), *sorted),
+        DataType::Dictionary(_, value_type) => normalize_data_type(value_type),
+        other => other.clone(),
+    }
+}
+
+/// Normalize a single field: keep name and nullability, normalize the data type recursively.
+fn normalize_field(field: &Field) -> Field {
+    Field::new(
+        field.name(),
+        normalize_data_type(field.data_type()),
+        field.is_nullable(),
+    )
+}
+
+/// Normalize all fields in a schema to their canonical large equivalents.
+fn normalize_schema(schema: &Schema) -> Schema {
+    Schema::new(
+        schema
+            .fields()
+            .iter()
+            .map(|f| Arc::new(normalize_field(f)))
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[derive(Clone)]
 pub struct ArrowDigesterCore<D: Digest> {
-    schema: Schema,
     schema_digest: Vec<u8>,
+    serialized_schema: String,
     fields_digest_buffer: BTreeMap<String, DigestBufferType<D>>,
 }
 
 impl<D: Digest> ArrowDigesterCore<D> {
-    /// Create a new instance of `ArrowDigesterCore` with the schema which will be enforce through each update.
-    pub fn new(schema: Schema) -> Self {
-        // Hash the schema first
+    /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
+    #[expect(
+        clippy::shadow_reuse,
+        reason = "Intentional: shadow input with normalized version so all downstream code uses canonical types"
+    )]
+    pub fn new(schema: &Schema) -> Self {
+        // Normalize the schema so all internal state uses canonical large types
+        let schema = normalize_schema(schema);
+
+        // Hash the normalized schema
         let schema_digest = Self::hash_schema(&schema);
 
         // Flatten all nested fields into a single map, this allows us to hash each field individually and efficiently
@@ -46,96 +149,109 @@ impl<D: Digest> ArrowDigesterCore<D> {
             Self::extract_fields_name(field, "", &mut fields_digest_buffer);
         });
 
+        let serialized_schema = Self::serialized_schema(&schema);
+
         // Store it in the new struct for now
         Self {
-            schema,
             schema_digest,
+            serialized_schema,
             fields_digest_buffer,
         }
     }
 
     /// Hash a record batch and update the internal digests.
     pub fn update(&mut self, record_batch: &RecordBatch) {
-        // Verify schema matches
         assert!(
-            *record_batch.schema() == self.schema,
+            Self::serialized_schema(record_batch.schema().as_ref()) == self.serialized_schema,
             "Record batch schema does not match ArrowDigester schema"
         );
 
-        // Iterate through each field and update its digest
-        self.fields_digest_buffer
-            .iter_mut()
-            .for_each(|(field_name, digest)| {
-                // Determine if field name is nested
-                let field_name_hierarchy = field_name
-                    .split(DELIMITER_FOR_NESTED_FIELD)
-                    .collect::<Vec<_>>();
+        let schema = record_batch.schema();
+        for col_idx in 0..record_batch.num_columns() {
+            let field = schema.field(col_idx);
+            let array = record_batch.column(col_idx);
+            let path = field.name().to_owned();
 
-                if field_name_hierarchy.len() == 1 {
-                    Self::array_digest_update(
-                        record_batch
-                            .schema()
-                            .field_with_name(field_name)
-                            .expect("Failed to get field with name")
-                            .data_type(),
-                        record_batch
-                            .column_by_name(field_name)
-                            .expect("Failed to get column by name"),
-                        digest,
-                    );
-                } else {
-                    Self::update_nested_field(
-                        &field_name_hierarchy,
-                        0,
-                        record_batch
-                            .column_by_name(
-                                field_name_hierarchy
-                                    .first()
-                                    .expect("Failed to get field name at idx 0, list is empty!"),
-                            )
-                            .expect("Failed to get column by name")
-                            .as_any()
-                            .downcast_ref::<StructArray>()
-                            .expect("Failed to downcast to StructArray"),
-                        digest,
-                    );
-                }
-            });
+            Self::traverse_and_update(
+                field.data_type(),
+                field.is_nullable(),
+                array.as_ref(),
+                &path,
+                None, // no ancestor struct nulls at top level
+                &mut self.fields_digest_buffer,
+            );
+        }
     }
 
-    /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side
-    /// For hash array, we don't have a schema to hash, however we do have field data type.
-    /// So similar to schema, we will hash based on datatype to encode the metadata information into the digest.....
+    /// Hash an array directly without needing to create an `ArrowDigester` instance on the user side.
+    /// Unlike full table hashing, we don't have a schema to hash; however, we do have the field data type.
+    /// Similar to schema hashing, we hash based on the data type to encode metadata information into the digest.
+    ///
+    /// Uses the same recursive decomposition as the record-batch path so that data hashing
+    /// is consistent regardless of which API is used.
     ///
     /// # Panics
     ///
     /// This function will panic if JSON serialization of the data type fails.
     ///
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
+        // Resolve dictionary arrays to their plain value type
+        let (effective_type, resolved_array);
+        let effective_array: &dyn Array =
+            if let DataType::Dictionary(_, value_type) = array.data_type() {
+                resolved_array = cast(array, value_type.as_ref())
+                    .expect("Failed to cast dictionary to plain array");
+                effective_type = value_type.as_ref().clone();
+                resolved_array.as_ref()
+            } else {
+                effective_type = array.data_type().clone();
+                array
+            };
+
+        // Normalize to canonical large types
+        let normalized_type = normalize_data_type(&effective_type);
+
         let mut final_digest = D::new();
 
-        let data_type_serialized = serde_json::to_string(&array.data_type())
+        // Use canonical type serialization for metadata (data_type_to_value also normalizes,
+        // but we pass the already-normalized type for consistency)
+        let canonical_type = Self::data_type_to_value(&normalized_type);
+        let data_type_serialized = serde_json::to_string(&canonical_type)
             .expect("Failed to serialize data type to string");
 
-        // Update the digest buffer with the array metadata and field data
+        // Update the digest with array metadata
         final_digest.update(data_type_serialized);
 
-        // Now we update it with the actual array data
-        let mut digest_buffer = if array.is_nullable() {
-            DigestBufferType::Nullable(BitVec::new(), D::new())
-        } else {
-            DigestBufferType::NonNullable(D::new())
-        };
-        Self::array_digest_update(array.data_type(), array, &mut digest_buffer);
-        Self::finalize_digest(&mut final_digest, digest_buffer);
+        // Build BTreeMap entries from the type tree (same decomposition as record-batch path)
+        let mut fields = BTreeMap::new();
+        Self::extract_type_entries(
+            &effective_type,
+            effective_array.is_nullable(),
+            "",
+            &mut fields,
+        );
 
-        // Finalize and return the digest
+        // Traverse and populate entries
+        Self::traverse_and_update(
+            &effective_type,
+            effective_array.is_nullable(),
+            effective_array,
+            "",
+            None,
+            &mut fields,
+        );
+
+        // Finalize all entries into the digest (same order as record-batch finalize)
+        for (_, digest) in fields {
+            Self::finalize_digest(&mut final_digest, digest);
+        }
+
         final_digest.finalize().to_vec()
     }
 
-    /// Hash record batch directly without needing to create an `ArrowDigester` instance on the user side.
+    /// Hash a record batch directly without needing to create an `ArrowDigester` instance on the user side.
     pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
-        let mut digester = Self::new(record_batch.schema().as_ref().clone());
+        let mut digester = Self::new(record_batch.schema().as_ref());
         digester.update(record_batch);
         digester.finalize()
     }
@@ -157,28 +273,27 @@ impl<D: Digest> ArrowDigesterCore<D> {
         final_digest.finalize().to_vec()
     }
 
-    #[expect(
-        clippy::big_endian_bytes,
-        reason = "Use for bit packing the null_bit_values"
-    )]
     /// Finalize a single field digest into the final digest.
-    /// Helpers to reduce code duplication.
+    /// Helper to reduce code duplication.
     fn finalize_digest(final_digest: &mut D, digest: DigestBufferType<D>) {
-        match digest {
-            DigestBufferType::NonNullable(data_digest) => {
-                final_digest.update(data_digest.finalize());
+        // Null bits first (if nullable)
+        if let Some(null_bit_vec) = &digest.null_bits {
+            final_digest.update((null_bit_vec.len() as u64).to_le_bytes());
+            for &word in null_bit_vec.as_raw_slice() {
+                final_digest.update(word.to_le_bytes());
             }
-            DigestBufferType::Nullable(null_bit_digest, data_digest) => {
-                final_digest.update(null_bit_digest.len().to_le_bytes());
-                for &word in null_bit_digest.as_raw_slice() {
-                    final_digest.update(word.to_be_bytes());
-                }
-                final_digest.update(data_digest.finalize());
-            }
+        }
+        // Structural digest (if list type) — sizes separated from leaf data
+        if let Some(structural) = digest.structural {
+            final_digest.update(structural.finalize());
+        }
+        // Data/leaf digest (if present)
+        if let Some(data) = digest.data {
+            final_digest.update(data.finalize());
         }
     }
 
-    /// Serialize the schema into a `BTreeMap` for field name and its digest.
+    /// Serialize the schema into a canonical JSON string keyed by field name.
     ///
     /// # Panics
     /// This function will panic if JSON serialization of the schema fails.
@@ -200,37 +315,53 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Convert a `DataType` to a JSON value, recursively converting any inner `Field`
     /// references to only include `name`, `data_type`, and `nullable`.
+    ///
+    /// Types are first normalized via `normalize_data_type` (Utf8→LargeUtf8, Binary→LargeBinary,
+    /// List→LargeList, Dictionary→value type) so the JSON always reflects canonical forms.
     fn data_type_to_value(data_type: &DataType) -> serde_json::Value {
-        match data_type {
+        // Normalize first so all downstream serialization uses canonical types
+        let canonical = normalize_data_type(data_type);
+        let value = match &canonical {
             DataType::Struct(fields) => {
-                let fields_json: Vec<serde_json::Value> = fields
+                let mut sorted_fields: Vec<_> = fields.iter().collect();
+                sorted_fields.sort_by_key(|f| f.name().clone());
+                let fields_json: Vec<serde_json::Value> = sorted_fields
                     .iter()
                     .map(|f| Self::inner_field_to_value(f))
                     .collect();
                 serde_json::json!({ "Struct": fields_json })
             }
-            DataType::List(field) => {
-                serde_json::json!({ "List": Self::inner_field_to_value(field) })
-            }
+            // After normalization, all list types are LargeList
             DataType::LargeList(field) => {
-                serde_json::json!({ "LargeList": Self::inner_field_to_value(field) })
+                serde_json::json!({ "LargeList": Self::element_type_to_value(field) })
             }
             DataType::FixedSizeList(field, size) => {
-                serde_json::json!({ "FixedSizeList": [Self::inner_field_to_value(field), size] })
+                serde_json::json!({ "FixedSizeList": [Self::element_type_to_value(field), size] })
             }
             DataType::Map(field, sorted) => {
                 serde_json::json!({ "Map": [Self::inner_field_to_value(field), sorted] })
             }
-            // For all non-nested types, Arrow's default serde is sufficient
+            // For all non-nested types (including LargeUtf8, LargeBinary after normalization),
+            // Arrow's default serde is sufficient
             other => serde_json::to_value(other).expect("Failed to serialize data type"),
-        }
+        };
+        Self::sort_json_value(value)
     }
 
-    /// Convert an inner field (e.g., list item, struct child) to a JSON value
-    /// with only `name`, `data_type`, and `nullable`.
+    /// Convert an inner field (e.g., struct child) to a JSON value
+    /// with `name`, `data_type`, and `nullable`.
     fn inner_field_to_value(field: &Field) -> serde_json::Value {
         serde_json::json!({
             "name": field.name(),
+            "data_type": Self::data_type_to_value(field.data_type()),
+            "nullable": field.is_nullable(),
+        })
+    }
+
+    /// Convert a container element field (e.g., list item) to a JSON value
+    /// with only `data_type` and `nullable`, omitting the Arrow-internal field name.
+    fn element_type_to_value(field: &Field) -> serde_json::Value {
+        serde_json::json!({
             "data_type": Self::data_type_to_value(field.data_type()),
             "nullable": field.is_nullable(),
         })
@@ -255,57 +386,262 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Serialize the schema into a `BTreeMap` for field name and its digest.
+    /// Hash the schema by serializing it to a canonical JSON string and computing its digest.
     pub fn hash_schema(schema: &Schema) -> Vec<u8> {
         // Hash the entire thing to the digest
         D::digest(Self::serialized_schema(schema)).to_vec()
     }
 
-    /// Recursive function to update nested field digests (structs within structs).
-    fn update_nested_field(
-        field_name_hierarchy: &[&str],
-        current_level: usize,
-        array: &StructArray,
-        digest: &mut DigestBufferType<D>,
+    /// Top-down recursive traversal that routes data to `BTreeMap` entries.
+    fn traverse_and_update(
+        data_type: &DataType,
+        nullable: bool,
+        array: &dyn Array,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
-        let current_level_plus_one = current_level
-            .checked_add(1)
-            .expect("Field nesting level overflow");
+        // Normalize small variants
+        let (normalized_type, cast_array);
+        let (effective_type, effective_array): (&DataType, &dyn Array) = match data_type {
+            DataType::Utf8 => {
+                normalized_type = DataType::LargeUtf8;
+                cast_array = cast(array, &normalized_type).expect("cast Utf8");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::Binary => {
+                normalized_type = DataType::LargeBinary;
+                cast_array = cast(array, &normalized_type).expect("cast Binary");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::List(field) => {
+                normalized_type = DataType::LargeList(Arc::clone(field));
+                cast_array = cast(array, &normalized_type).expect("cast List");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::Dictionary(_, value_type) => {
+                cast_array = cast(array, value_type.as_ref()).expect("cast Dict");
+                (value_type.as_ref(), cast_array.as_ref())
+            }
+            _ => (data_type, array),
+        };
 
-        if field_name_hierarchy
-            .len()
-            .checked_sub(1)
-            .expect("field_name_hierarchy underflow")
-            == current_level_plus_one
-        {
-            let array_data = array
-                .column_by_name(
-                    field_name_hierarchy
-                        .last()
-                        .expect("Failed to get field name at idx 0, list is empty!"),
-                )
-                .expect("Failed to get column by name");
-            // Base case, it should be a non-struct field
-            Self::array_digest_update(array_data.data_type(), array_data.as_ref(), digest);
+        let canonical = normalize_data_type(effective_type);
+
+        match &canonical {
+            DataType::LargeList(value_field) => {
+                Self::traverse_list(
+                    effective_array,
+                    value_field,
+                    nullable,
+                    path,
+                    ancestor_struct_nulls,
+                    fields,
+                );
+            }
+            DataType::Struct(struct_fields) => {
+                Self::traverse_struct(
+                    effective_array,
+                    struct_fields,
+                    nullable,
+                    path,
+                    ancestor_struct_nulls,
+                    fields,
+                );
+            }
+            _ => {
+                Self::traverse_leaf(
+                    effective_type,
+                    effective_array,
+                    path,
+                    ancestor_struct_nulls,
+                    fields,
+                );
+            }
+        }
+    }
+
+    fn traverse_list(
+        array: &dyn Array,
+        value_field: &Field,
+        nullable: bool,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let list_array = array
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .expect("downcast to LargeListArray");
+
+        // If the field is nullable, record column/field-level validity at `path`
+        if nullable {
+            if let Some(entry) = fields.get_mut(path) {
+                if let Some(ref mut null_bits) = entry.null_bits {
+                    let effective_nulls =
+                        Self::combine_nulls(list_array.nulls(), ancestor_struct_nulls);
+                    match &effective_nulls {
+                        Some(nb) => {
+                            for i in 0..list_array.len() {
+                                null_bits.push(nb.is_valid(i));
+                            }
+                        }
+                        None => null_bits.extend(repeat_n(true, list_array.len())),
+                    }
+                }
+            }
+        }
+
+        let list_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+
+        // Determine effective null buffer (field null AND ancestor struct null)
+        let effective_nulls = Self::combine_nulls(list_array.nulls(), ancestor_struct_nulls);
+
+        // For each row, write structural info and recurse into non-null elements
+        for i in 0..list_array.len() {
+            let is_valid = effective_nulls.as_ref().is_none_or(|nb| nb.is_valid(i));
+            if is_valid {
+                let sub_array = list_array.value(i);
+                let sub_len = sub_array.len() as u64;
+
+                // Write list length to structural digest at list_path
+                if let Some(entry) = fields.get_mut(&list_path) {
+                    if let Some(ref mut structural) = entry.structural {
+                        structural.update(sub_len.to_le_bytes());
+                    }
+                }
+
+                // Recurse into the sub-array using the ORIGINAL value type
+                // (not canonical) so traverse_and_update can normalize internally.
+                let original_value_type = sub_array.data_type();
+                Self::traverse_and_update(
+                    original_value_type,
+                    value_field.is_nullable(),
+                    sub_array.as_ref(),
+                    &list_path,
+                    None, // list elements don't have ancestor struct nulls
+                    fields,
+                );
+            }
+        }
+    }
+
+    fn traverse_struct(
+        array: &dyn Array,
+        _struct_fields: &arrow_schema::Fields,
+        nullable: bool,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let struct_array = array
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("downcast to StructArray");
+
+        // Combine struct's own nulls with ancestor nulls (AND propagation)
+        let combined_nulls = if nullable {
+            Self::combine_nulls(struct_array.nulls(), ancestor_struct_nulls)
         } else {
-            // Recursive case, it should be a struct field
-            let next_array = array
-                .column_by_name(
-                    field_name_hierarchy
-                        .get(current_level_plus_one)
-                        .expect("Failed to get field name at current level"),
-                )
-                .expect("Failed to get column by name")
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .expect("Failed to downcast to StructArray");
+            ancestor_struct_nulls.cloned()
+        };
 
-            Self::update_nested_field(
-                field_name_hierarchy,
-                current_level_plus_one,
-                next_array,
-                digest,
+        // Use the ORIGINAL struct array's fields (not the canonical ones from
+        // the type tree) so that data_type matches the actual child array.
+        // traverse_and_update will normalize types internally.
+        let original_fields = struct_array.fields();
+        let mut sorted_children: Vec<(usize, &Field)> = original_fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (i, f.as_ref()))
+            .collect();
+        sorted_children.sort_by_key(|(_, f)| f.name().clone());
+
+        for (idx, child_field) in sorted_children {
+            let child_array = struct_array.column(idx);
+            let child_path = Self::construct_field_name_hierarchy(path, child_field.name());
+
+            Self::traverse_and_update(
+                child_field.data_type(),
+                child_field.is_nullable(),
+                child_array.as_ref(),
+                &child_path,
+                combined_nulls.as_ref(),
+                fields,
             );
+        }
+    }
+
+    fn traverse_leaf(
+        data_type: &DataType,
+        array: &dyn Array,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let entry = fields
+            .get_mut(path)
+            .expect("entry must exist for leaf path");
+
+        // Compute effective validity (own nulls AND ancestor struct nulls)
+        let effective_nulls = Self::combine_nulls(array.nulls(), ancestor_struct_nulls);
+
+        // Handle null_bits
+        if let Some(ref mut null_bits) = entry.null_bits {
+            match &effective_nulls {
+                Some(nb) => {
+                    for i in 0..array.len() {
+                        null_bits.push(nb.is_valid(i));
+                    }
+                }
+                None => null_bits.extend(repeat_n(true, array.len())),
+            }
+        }
+
+        // Hash leaf data with combined null buffer
+        if let Some(effective) = &effective_nulls {
+            let child_data = array.to_data();
+            let null_count = effective.null_count();
+            let new_data = child_data
+                .into_builder()
+                .null_count(null_count)
+                .null_bit_buffer(Some(effective.clone().into_inner().into_inner()))
+                .build()
+                .expect("rebuild array with combined null buffer");
+            let combined_array = make_array(new_data);
+            Self::hash_leaf_data(data_type, combined_array.as_ref(), entry);
+        } else {
+            Self::hash_leaf_data(data_type, array, entry);
+        }
+    }
+
+    /// Hash leaf data into the entry's data digest, without modifying `null_bits`
+    /// (which are already handled by `traverse_leaf`).
+    fn hash_leaf_data(data_type: &DataType, array: &dyn Array, entry: &mut DigestBufferType<D>) {
+        // Save and restore null_bits so array_digest_update's handle_null_bits
+        // pushes don't pollute the real null_bits (which traverse_leaf manages).
+        // We keep null_bits in place during the call so hash functions use
+        // the null-aware code path (checking array.nulls() to skip null values).
+        let saved = entry.null_bits.take();
+        // Put a temporary empty bitvec so hash functions use the null-aware path
+        // when the array actually has nulls
+        if array.nulls().is_some() {
+            entry.null_bits = Some(BitVec::<u8, Lsb0>::new());
+        }
+        Self::array_digest_update(data_type, array, entry);
+        // Restore the real null_bits
+        entry.null_bits = saved;
+    }
+
+    fn combine_nulls(
+        own_nulls: Option<&NullBuffer>,
+        ancestor_nulls: Option<&NullBuffer>,
+    ) -> Option<NullBuffer> {
+        match (own_nulls, ancestor_nulls) {
+            (Some(own), Some(ancestor)) => Some(NullBuffer::new(own.inner() & ancestor.inner())),
+            (Some(own), None) => Some(own.clone()),
+            (None, Some(ancestor)) => Some(ancestor.clone()),
+            (None, None) => None,
         }
     }
 
@@ -313,133 +649,144 @@ impl<D: Digest> ArrowDigesterCore<D> {
         clippy::too_many_lines,
         reason = "Comprehensive match on all data types"
     )]
+    #[expect(
+        clippy::unreachable,
+        reason = "Small types are normalized to large equivalents; List/Struct are handled by traverse_and_update"
+    )]
     fn array_digest_update(
         data_type: &DataType,
         array: &dyn Array,
         digest: &mut DigestBufferType<D>,
     ) {
-        match data_type {
+        // Normalize small variants to their large equivalents so every code path
+        // goes through a single canonical representation.  The cast only widens
+        // offsets (i32 → i64).  These variables extend the lifetime of cast
+        // results.  They are only initialized (and read) in branches that perform
+        // a cast; the default branch never touches them.
+        let (normalized_type, cast_array);
+        let (effective_type, effective_array): (&DataType, &dyn Array) = match data_type {
+            DataType::Utf8 => {
+                normalized_type = DataType::LargeUtf8;
+                cast_array =
+                    cast(array, &normalized_type).expect("Failed to cast Utf8 to LargeUtf8");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::Binary => {
+                normalized_type = DataType::LargeBinary;
+                cast_array =
+                    cast(array, &normalized_type).expect("Failed to cast Binary to LargeBinary");
+                (&normalized_type, cast_array.as_ref())
+            }
+            DataType::List(field) => {
+                normalized_type = DataType::LargeList(Arc::clone(field));
+                cast_array =
+                    cast(array, &normalized_type).expect("Failed to cast List to LargeList");
+                (&normalized_type, cast_array.as_ref())
+            }
+            _ => (data_type, array),
+        };
+
+        match effective_type {
             DataType::Null => todo!(),
             DataType::Boolean => {
                 // Bool Array is stored a bit differently, so we can't use the standard fixed buffer approach
-                let bool_array = array
+                let bool_array = effective_array
                     .as_any()
                     .downcast_ref::<BooleanArray>()
                     .expect("Failed to downcast to BooleanArray");
 
-                match digest {
-                    DigestBufferType::NonNullable(data_digest) => {
-                        // We want to bit pack the boolean values into bytes for hashing
-                        let mut bit_vec = BitVec::<u8, Msb0>::with_capacity(bool_array.len());
-                        for i in 0..bool_array.len() {
+                if let Some(ref mut null_bits) = digest.null_bits {
+                    // Handle null bits first
+                    Self::handle_null_bits(bool_array, null_bits);
+
+                    // Handle the data — only valid bits
+                    let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
+                    for i in 0..bool_array.len() {
+                        if bool_array.is_valid(i) {
                             bit_vec.push(bool_array.value(i));
                         }
-
-                        data_digest.update(bit_vec.as_raw_slice());
                     }
-                    DigestBufferType::Nullable(null_bit_vec, data_digest) => {
-                        // Handle null bits first
-                        Self::handle_null_bits(bool_array, null_bit_vec);
-
-                        // Handle the data
-                        let mut bit_vec = BitVec::<u8, Msb0>::with_capacity(bool_array.len());
-                        for i in 0..bool_array.len() {
-                            // We only want the valid bits, for null we will discard from the hash since that is already capture by null_bits
-                            if bool_array.is_valid(i) {
-                                bit_vec.push(bool_array.value(i));
-                            }
-                        }
-                        data_digest.update(bit_vec.as_raw_slice());
+                    digest.data_mut().update(bit_vec.as_raw_slice());
+                } else {
+                    // Non-nullable: pack all boolean values
+                    let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
+                    for i in 0..bool_array.len() {
+                        bit_vec.push(bool_array.value(i));
                     }
+                    digest.data_mut().update(bit_vec.as_raw_slice());
                 }
             }
-            DataType::Int8 | DataType::UInt8 => Self::hash_fixed_size_array(array, digest, 1),
+            DataType::Int8 | DataType::UInt8 => {
+                Self::hash_fixed_size_array(effective_array, digest, 1);
+            }
             DataType::Int16 | DataType::UInt16 | DataType::Float16 => {
-                Self::hash_fixed_size_array(array, digest, 2);
+                Self::hash_fixed_size_array(effective_array, digest, 2);
             }
             DataType::Int32
             | DataType::UInt32
             | DataType::Float32
             | DataType::Date32
             | DataType::Decimal32(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 4);
+                Self::hash_fixed_size_array(effective_array, digest, 4);
             }
             DataType::Int64
             | DataType::UInt64
             | DataType::Float64
             | DataType::Date64
             | DataType::Decimal64(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 8);
+                Self::hash_fixed_size_array(effective_array, digest, 8);
             }
             DataType::Timestamp(_, _) => todo!(),
-            DataType::Time32(_) => Self::hash_fixed_size_array(array, digest, 4),
-            DataType::Time64(_) => Self::hash_fixed_size_array(array, digest, 8),
+            DataType::Time32(_) => Self::hash_fixed_size_array(effective_array, digest, 4),
+            DataType::Time64(_) => Self::hash_fixed_size_array(effective_array, digest, 8),
             DataType::Duration(_) => todo!(),
             DataType::Interval(_) => todo!(),
-            DataType::Binary => Self::hash_binary_array(
-                array
-                    .as_any()
-                    .downcast_ref::<BinaryArray>()
-                    .expect("Failed to downcast to BinaryArray"),
-                digest,
-            ),
+            // Small variants are normalized above — these arms are unreachable
+            DataType::Binary | DataType::Utf8 | DataType::List(_) => {
+                unreachable!("Normalized to Large variant at the top of array_digest_update")
+            }
             DataType::FixedSizeBinary(element_size) => {
-                Self::hash_fixed_size_array(array, digest, *element_size);
+                Self::hash_fixed_size_array(effective_array, digest, *element_size);
             }
             DataType::LargeBinary => Self::hash_binary_array(
-                array
+                effective_array
                     .as_any()
                     .downcast_ref::<LargeBinaryArray>()
                     .expect("Failed to downcast to LargeBinaryArray"),
                 digest,
             ),
             DataType::BinaryView => todo!(),
-            DataType::Utf8 => Self::hash_string_array(
-                array
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .expect("Failed to downcast to StringArray"),
-                digest,
-            ),
             DataType::LargeUtf8 => Self::hash_string_array(
-                array
+                effective_array
                     .as_any()
                     .downcast_ref::<LargeStringArray>()
                     .expect("Failed to downcast to LargeStringArray"),
                 digest,
             ),
             DataType::Utf8View => todo!(),
-            DataType::List(field) => {
-                Self::hash_list_array(
-                    array
-                        .as_any()
-                        .downcast_ref::<ListArray>()
-                        .expect("Failed to downcast to ListArray"),
-                    field.data_type(),
-                    digest,
-                );
-            }
             DataType::ListView(_) => todo!(),
             DataType::FixedSizeList(_, _) => todo!(),
-            DataType::LargeList(field) => {
-                Self::hash_list_array(
-                    array
-                        .as_any()
-                        .downcast_ref::<LargeListArray>()
-                        .expect("Failed to downcast to LargeListArray"),
-                    field.data_type(),
-                    digest,
-                );
+            // List and Struct types are handled by the recursive decomposition path
+            // (traverse_and_update → traverse_list / traverse_struct). They should
+            // never reach array_digest_update directly.
+            DataType::LargeList(_) | DataType::Struct(_) => {
+                unreachable!(
+                    "List and Struct types are decomposed by traverse_and_update; \
+                     they should not reach array_digest_update"
+                )
             }
             DataType::LargeListView(_) => todo!(),
-            DataType::Struct(_) => todo!(),
             DataType::Union(_, _) => todo!(),
-            DataType::Dictionary(_, _) => todo!(),
+            DataType::Dictionary(_, value_type) => {
+                let resolved = cast(effective_array, value_type.as_ref())
+                    .expect("Failed to cast dictionary to plain array");
+                Self::array_digest_update(value_type.as_ref(), resolved.as_ref(), digest);
+            }
             DataType::Decimal128(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 16);
+                Self::hash_fixed_size_array(effective_array, digest, 16);
             }
             DataType::Decimal256(_, _) => {
-                Self::hash_fixed_size_array(array, digest, 32);
+                Self::hash_fixed_size_array(effective_array, digest, 32);
             }
             DataType::Map(_, _) => todo!(),
             DataType::RunEndEncoded(_, _) => todo!(),
@@ -455,55 +802,59 @@ impl<D: Digest> ArrowDigesterCore<D> {
         let array_data = array.to_data();
         let element_size_usize = element_size as usize;
 
-        // Get the slice with offset accounted for if there is any
+        // Get the slice with offset and length accounted for
+        let start = array_data
+            .offset()
+            .checked_mul(element_size_usize)
+            .expect("Offset multiplication overflow");
+        let end = start
+            .checked_add(
+                array_data
+                    .len()
+                    .checked_mul(element_size_usize)
+                    .expect("Length multiplication overflow"),
+            )
+            .expect("End position overflow");
         let slice = array_data
             .buffers()
             .first()
             .expect("Unable to get first buffer to determine offset")
             .as_slice()
-            .get(
-                array_data
-                    .offset()
-                    .checked_mul(element_size_usize)
-                    .expect("Offset multiplication overflow")..,
-            )
+            .get(start..end)
             .expect("Failed to get buffer slice for FixedSizeBinaryArray");
 
-        match digest_buffer {
-            DigestBufferType::NonNullable(data_digest) => {
-                // No nulls, we can hash the entire buffer directly
-                data_digest.update(slice);
-            }
-            DigestBufferType::Nullable(null_bits, data_digest) => {
-                // Handle null bits first
-                Self::handle_null_bits(array, null_bits);
+        if let Some(ref mut null_bits) = digest_buffer.null_bits {
+            // Handle null bits first
+            Self::handle_null_bits(array, null_bits);
 
-                match array_data.nulls() {
-                    Some(null_buffer) => {
-                        // There are nulls, so we need to incrementally hash each value
-                        for i in 0..array_data.len() {
-                            if null_buffer.is_valid(i) {
-                                let data_pos = i
-                                    .checked_mul(element_size_usize)
-                                    .expect("Data position multiplication overflow");
-                                let end_pos = data_pos
-                                    .checked_add(element_size_usize)
-                                    .expect("End position addition overflow");
+            match array_data.nulls() {
+                Some(null_buffer) => {
+                    // There are nulls, so we need to incrementally hash each value
+                    for i in 0..array_data.len() {
+                        if null_buffer.is_valid(i) {
+                            let data_pos = i
+                                .checked_mul(element_size_usize)
+                                .expect("Data position multiplication overflow");
+                            let end_pos = data_pos
+                                .checked_add(element_size_usize)
+                                .expect("End position addition overflow");
 
-                                data_digest.update(
-                                    slice
-                                        .get(data_pos..end_pos)
-                                        .expect("Failed to get data_slice"),
-                                );
-                            }
+                            digest_buffer.data_mut().update(
+                                slice
+                                    .get(data_pos..end_pos)
+                                    .expect("Failed to get data_slice"),
+                            );
                         }
                     }
-                    None => {
-                        // No nulls, we can hash the entire buffer directly
-                        data_digest.update(slice);
-                    }
+                }
+                None => {
+                    // No nulls, we can hash the entire buffer directly
+                    digest_buffer.data_mut().update(slice);
                 }
             }
+        } else {
+            // No nulls, we can hash the entire buffer directly
+            digest_buffer.data_mut().update(slice);
         }
     }
 
@@ -511,42 +862,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &GenericBinaryArray<impl OffsetSizeTrait>,
         digest: &mut DigestBufferType<D>,
     ) {
-        match digest {
-            DigestBufferType::NonNullable(data_digest) => {
-                for i in 0..array.len() {
-                    let value = array.value(i);
-                    data_digest.update(value.len().to_le_bytes());
-                    data_digest.update(value);
-                }
-            }
-            DigestBufferType::Nullable(null_bit_vec, data_digest) => {
-                // Deal with the null bits first
-                if let Some(null_buf) = array.nulls() {
-                    // We would need to iterate through the null buffer and push it into the null_bit_vec
-                    for i in 0..array.len() {
-                        null_bit_vec.push(null_buf.is_valid(i));
-                    }
+        if let Some(ref mut null_bits) = digest.null_bits {
+            Self::handle_null_bits(array, null_bits);
+        }
 
-                    for i in 0..array.len() {
-                        if null_buf.is_valid(i) {
-                            let value = array.value(i);
-                            data_digest.update(value.len().to_le_bytes());
-                            data_digest.update(value);
-                        } else {
-                            data_digest.update(NULL_BYTES);
-                        }
-                    }
-                } else {
-                    // All valid, therefore we can extend the bit vector with all true values
-                    null_bit_vec.extend(repeat_n(true, array.len()));
-
-                    // Deal with the data
-                    for i in 0..array.len() {
-                        let value = array.value(i);
-                        data_digest.update(value.len().to_le_bytes());
-                        data_digest.update(value);
-                    }
-                }
+        let null_buf = array.nulls();
+        for i in 0..array.len() {
+            if null_buf.is_none_or(|nb| nb.is_valid(i)) {
+                let value = array.value(i);
+                digest.data_mut().update((value.len() as u64).to_le_bytes());
+                digest.data_mut().update(value);
             }
         }
     }
@@ -555,112 +880,124 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &GenericStringArray<impl OffsetSizeTrait>,
         digest: &mut DigestBufferType<D>,
     ) {
-        match digest {
-            DigestBufferType::NonNullable(data_digest) => {
-                for i in 0..array.len() {
-                    let value = array.value(i);
-                    data_digest.update((value.len() as u64).to_le_bytes());
-                    data_digest.update(value.as_bytes());
-                }
-            }
-            DigestBufferType::Nullable(null_bit_vec, data_digest) => {
-                // Deal with the null bits first
-                Self::handle_null_bits(array, null_bit_vec);
+        if let Some(ref mut null_bits) = digest.null_bits {
+            Self::handle_null_bits(array, null_bits);
+        }
 
-                match array.nulls() {
-                    Some(null_buf) => {
-                        for i in 0..array.len() {
-                            if null_buf.is_valid(i) {
-                                let value = array.value(i);
-                                data_digest.update((value.len() as u64).to_le_bytes());
-                                data_digest.update(value.as_bytes());
-                            } else {
-                                data_digest.update(NULL_BYTES);
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..array.len() {
-                            let value = array.value(i);
-                            data_digest.update((value.len() as u64).to_le_bytes());
-                            data_digest.update(value.as_bytes());
-                        }
-                    }
-                }
+        let null_buf = array.nulls();
+        for i in 0..array.len() {
+            if null_buf.is_none_or(|nb| nb.is_valid(i)) {
+                let value = array.value(i);
+                digest.data_mut().update((value.len() as u64).to_le_bytes());
+                digest.data_mut().update(value.as_bytes());
             }
         }
     }
 
-    fn hash_list_array(
-        array: &GenericListArray<impl OffsetSizeTrait>,
-        field_data_type: &DataType,
-        digest: &mut DigestBufferType<D>,
-    ) {
-        match digest {
-            // Wildcard `_` avoids binding so `digest` remains usable below
-            DigestBufferType::NonNullable(_) => {
-                for i in 0..array.len() {
-                    let sub = array.value(i);
-                    // Prefix sub-array element count to prevent cross-boundary collisions.
-                    // Without this [[1,2],[3]] and [[1],[2,3]] produce identical byte streams.
-                    // sub.len() returns usize, avoiding the non-primitive OffsetSizeTrait cast.
-                    Self::update_data_digest(digest, (sub.len() as u64).to_le_bytes());
-                    Self::array_digest_update(field_data_type, sub.as_ref(), digest);
-                }
-            }
-            DigestBufferType::Nullable(bit_vec, _) => {
-                // Deal with null bits first; NLL ends bit_vec borrow after this call
-                Self::handle_null_bits(array, bit_vec);
-
-                match array.nulls() {
-                    Some(null_buf) => {
-                        for i in 0..array.len() {
-                            if null_buf.is_valid(i) {
-                                let sub = array.value(i);
-                                Self::update_data_digest(digest, (sub.len() as u64).to_le_bytes());
-                                Self::array_digest_update(field_data_type, sub.as_ref(), digest);
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..array.len() {
-                            let sub = array.value(i);
-                            Self::update_data_digest(digest, (sub.len() as u64).to_le_bytes());
-                            Self::array_digest_update(field_data_type, sub.as_ref(), digest);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Internal recursive function to extract field names from nested structs effectively flattening the schema.
-    /// The format is `parent__child__grandchild__etc`... for nested fields and will be stored in `fields_digest_buffer`.
+    /// Recursively extract field entries from the type tree.
+    ///
+    /// - **List**: creates a structural-only entry at `path/`, then recurses into
+    ///   the value type. If the column field is nullable, also creates a
+    ///   validity-only entry at the field path (before the `/`).
+    /// - **Struct**: transparent — recurses into each child field with `path/childname`.
+    ///   No entry for the struct itself. Struct null propagation is handled at
+    ///   traversal time.
+    /// - **Leaf (non-list, non-struct)**: creates a data entry at the current path.
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
-        // Check if field is a nested type of struct
-        if let DataType::Struct(fields) = field.data_type() {
-            // We will add fields in alphabetical order
-            fields.into_iter().for_each(|field_inner| {
-                Self::extract_fields_name(
-                    field_inner,
-                    Self::construct_field_name_hierarchy(parent_field_name, field.name()).as_str(),
-                    fields_digest_buffer,
-                );
-            });
-        } else {
-            // Base case, just add the the combine field name to the map
-            fields_digest_buffer.insert(
-                Self::construct_field_name_hierarchy(parent_field_name, field.name()),
-                if field.is_nullable() {
-                    DigestBufferType::Nullable(BitVec::new(), D::new())
-                } else {
-                    DigestBufferType::NonNullable(D::new())
-                },
-            );
+        let path = Self::construct_field_name_hierarchy(parent_field_name, field.name());
+        Self::extract_type_entries(
+            field.data_type(),
+            field.is_nullable(),
+            &path,
+            fields_digest_buffer,
+        );
+    }
+
+    /// Core recursive type walker — creates `BTreeMap` entries based on the type tree.
+    ///
+    /// `nullable` reflects whether the current position is nullable (from the `Field`).
+    fn extract_type_entries(
+        data_type: &DataType,
+        nullable: bool,
+        path: &str,
+        fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let canonical = normalize_data_type(data_type);
+
+        match &canonical {
+            DataType::Struct(fields) => {
+                // Struct is transparent — no entry, just recurse into children.
+                for child_field in fields {
+                    let child_path = Self::construct_field_name_hierarchy(path, child_field.name());
+                    Self::extract_type_entries(
+                        child_field.data_type(),
+                        child_field.is_nullable(),
+                        &child_path,
+                        fields_digest_buffer,
+                    );
+                }
+            }
+            DataType::LargeList(value_field) | DataType::List(value_field) => {
+                // For a nullable field that is a list, create a validity-only entry
+                // at the field path (column-level or field-level null tracking).
+                if nullable {
+                    fields_digest_buffer
+                        .insert(path.to_owned(), DigestBufferType::new_validity_only());
+                }
+
+                // List level: create entry at path + "/"
+                let list_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                let inner_type = value_field.data_type();
+                let inner_canonical = normalize_data_type(inner_type);
+
+                match &inner_canonical {
+                    DataType::Struct(_) => {
+                        // List<Struct<...>>: list entry is structural-only,
+                        // struct children become separate entries
+                        fields_digest_buffer.insert(
+                            list_path.clone(),
+                            DigestBufferType::new_structural_only(value_field.is_nullable()),
+                        );
+                        // Recurse into the struct's children
+                        Self::extract_type_entries(
+                            inner_type,
+                            value_field.is_nullable(),
+                            &list_path,
+                            fields_digest_buffer,
+                        );
+                    }
+                    DataType::LargeList(_) | DataType::List(_) => {
+                        // List<List<...>>: list entry is structural-only,
+                        // recurse into the inner list
+                        fields_digest_buffer.insert(
+                            list_path.clone(),
+                            DigestBufferType::new_structural_only(value_field.is_nullable()),
+                        );
+                        Self::extract_type_entries(
+                            inner_type,
+                            value_field.is_nullable(),
+                            &list_path,
+                            fields_digest_buffer,
+                        );
+                    }
+                    _ => {
+                        // List<Primitive>: list entry is both structural + data (leaf)
+                        fields_digest_buffer.insert(
+                            list_path,
+                            DigestBufferType::new_list_leaf(value_field.is_nullable()),
+                        );
+                    }
+                }
+            }
+            _ => {
+                // Leaf type (non-struct, non-list): create data entry
+                fields_digest_buffer
+                    .insert(path.to_owned(), DigestBufferType::new_data_only(nullable));
+            }
         }
     }
 
@@ -672,15 +1009,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Write bytes directly into the data digest portion of the buffer, bypassing null-bit tracking.
-    /// Used to write length prefixes that sit in the data stream but are not nullable values.
-    fn update_data_digest(digest: &mut DigestBufferType<D>, data: impl AsRef<[u8]>) {
-        match digest {
-            DigestBufferType::NonNullable(d) | DigestBufferType::Nullable(_, d) => d.update(data),
-        }
-    }
-
-    fn handle_null_bits(array: &dyn Array, null_bit_vec: &mut BitVec) {
+    fn handle_null_bits(array: &dyn Array, null_bit_vec: &mut BitVec<u8, Lsb0>) {
         match array.nulls() {
             Some(null_buf) => {
                 // We would need to iterate through the null buffer and push it into the null_bit_vec
@@ -714,10 +1043,10 @@ mod tests {
         array::{
             ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal128Array,
             Decimal32Array, FixedSizeBinaryBuilder, Float16Array, Float32Array, Float64Array,
-            Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeListBuilder,
-            LargeStringArray, ListBuilder, PrimitiveBuilder, RecordBatch, StringArray, StructArray,
-            Time32SecondArray, Time64MicrosecondArray, UInt16Array, UInt32Array, UInt64Array,
-            UInt8Array,
+            Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeListArray,
+            LargeListBuilder, LargeStringArray, ListBuilder, PrimitiveBuilder, RecordBatch,
+            StringArray, StructArray, Time32SecondArray, Time64MicrosecondArray, UInt16Array,
+            UInt32Array, UInt64Array, UInt8Array,
         },
         datatypes::Int32Type,
     };
@@ -727,8 +1056,9 @@ mod tests {
     use pretty_assertions::assert_eq;
     use sha2::{Digest as _, Sha256};
 
-    use crate::arrow_digester_core::{ArrowDigesterCore, DigestBufferType};
+    use crate::arrow_digester_core::ArrowDigesterCore;
     use arrow::array::{Decimal256Array, Decimal64Array};
+    use arrow::buffer::OffsetBuffer;
     use arrow_buffer::i256;
 
     #[expect(
@@ -870,7 +1200,7 @@ mod tests {
             ),
         ]);
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema.clone());
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
         assert_eq!(field_names.len(), 3);
@@ -920,7 +1250,7 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "9841aab2dfeb637872d41422d33fca1e939f06b8fa0dcec66ff3782592cf9565"
+            "9b52ad7430dea81b35f14a04d828b2424080fbc210570081c6e6cb62b6566c42"
         );
     }
 
@@ -928,10 +1258,10 @@ mod tests {
 
     #[test]
     fn digest_bool_nullable_bytes() {
-        // [true, None, false, true] — valid values bit-packed Msb0, null skipped
+        // [true, None, false, true] — valid values bit-packed Lsb0, null skipped
         let array = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -944,11 +1274,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 4);
         assert!(null_bit_vec[0], "index 0 (true) should be valid");
@@ -956,10 +1284,10 @@ mod tests {
         assert!(null_bit_vec[2], "index 2 (false) should be valid");
         assert!(null_bit_vec[3], "index 3 (true) should be valid");
 
-        // Valid values [true, false, true] packed Msb0 into one byte:
-        // bit0=1, bit1=0, bit2=1 → 1010_0000 = 0xA0
+        // Valid values [true, false, true] packed Lsb0 into one byte:
+        // bit0=1, bit1=0, bit2=1 → 0000_0101 = 0x05
         let mut manual = Sha256::new();
-        manual.update([0xA0_u8]);
+        manual.update([0x05_u8]);
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 
@@ -968,7 +1296,7 @@ mod tests {
         // [false, true, false] — all values bit-packed, no nulls
         let array = BooleanArray::from(vec![false, true, false]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -981,14 +1309,13 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
-        // [false, true, false] packed Msb0: bit0=0, bit1=1, bit2=0 → 0100_0000 = 0x40
+        // [false, true, false] packed Lsb0: bit0=0, bit1=1, bit2=0 → 0000_0010 = 0x02
         let mut manual = Sha256::new();
-        manual.update([0x40_u8]);
+        manual.update([0x02_u8]);
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 
@@ -999,7 +1326,7 @@ mod tests {
         // [10, None, -3] — valid bytes: 0x0A, 0xFD
         let array = Int8Array::from(vec![Some(10_i8), None, Some(-3_i8)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int8, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int8, true)])),
@@ -1008,11 +1335,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1030,7 +1355,7 @@ mod tests {
         // [1, 2, 255]
         let array = UInt8Array::from(vec![1_u8, 2_u8, 255_u8]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt8, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt8, false)])),
@@ -1039,10 +1364,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update([0x01_u8, 0x02_u8, 0xFF_u8]);
@@ -1058,7 +1382,7 @@ mod tests {
         // -512 LE  = 00 fe
         let array = Int16Array::from(vec![Some(1000_i16), None, Some(-512_i16)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int16, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int16, true)])),
@@ -1067,11 +1391,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1089,7 +1411,7 @@ mod tests {
         // [100, 200, 65535]
         let array = UInt16Array::from(vec![100_u16, 200_u16, 0xFFFF_u16]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt16, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1102,10 +1424,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(100_u16.to_le_bytes());
@@ -1125,7 +1446,7 @@ mod tests {
             half::f16::from_f32(-0.5),
         ]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float16, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1138,10 +1459,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(half::f16::from_f32(1.0).to_le_bytes());
@@ -1162,7 +1482,7 @@ mod tests {
 
         let schema = Schema::new(vec![Field::new("int32_col", DataType::Int32, true)]);
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
 
         digester.update(
             &RecordBatch::try_new(
@@ -1176,13 +1496,12 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) = digester
+        let buf = digester
             .fields_digest_buffer
             .get("int32_col")
-            .expect("int32_col field should exist in digest buffer")
-        else {
-            panic!("Expected a Nullable digest buffer for int32_col");
-        };
+            .expect("int32_col field should exist in digest buffer");
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         // The null bit vector should be [true, false, true, true] for [Some(42), None, Some(-7), Some(0)]
         assert_eq!(null_bit_vec.len(), 4);
@@ -1208,7 +1527,7 @@ mod tests {
         // [0, None, u32::MAX]
         let array = UInt32Array::from(vec![Some(0_u32), None, Some(u32::MAX)]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt32, true)])),
@@ -1217,11 +1536,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1243,7 +1560,7 @@ mod tests {
         // 2.5f32 LE: 00 00 20 40
         let array = Float32Array::from(vec![Some(1.0_f32), None, Some(2.5_f32)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1256,11 +1573,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1283,7 +1598,7 @@ mod tests {
             .with_precision_and_scale(9, 2)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1296,11 +1611,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1320,7 +1633,7 @@ mod tests {
             .with_precision_and_scale(9, 2)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1333,10 +1646,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(0_i32.to_le_bytes());
@@ -1352,7 +1664,7 @@ mod tests {
         // [i64::MIN, None, 9_876_543_210]
         let array = Int64Array::from(vec![Some(i64::MIN), None, Some(9_876_543_210_i64)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int64, true)])),
@@ -1361,11 +1673,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1383,7 +1693,7 @@ mod tests {
         // [0, None, u64::MAX]
         let array = UInt64Array::from(vec![Some(0_u64), None, Some(u64::MAX)]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt64, true)])),
@@ -1392,11 +1702,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1416,7 +1724,7 @@ mod tests {
         // [1.0, -0.5, π]
         let array = Float64Array::from(vec![1.0_f64, -0.5_f64, f64::consts::PI]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float64, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1429,10 +1737,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(1.0_f64.to_le_bytes());
@@ -1451,7 +1758,7 @@ mod tests {
             .with_precision_and_scale(18, 3)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1464,11 +1771,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1488,7 +1793,7 @@ mod tests {
             .with_precision_and_scale(18, 3)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1501,10 +1806,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(0_i64.to_le_bytes());
@@ -1520,7 +1824,7 @@ mod tests {
         // Days since Unix epoch: [0, None, 19000]
         let array = Date32Array::from(vec![Some(0_i32), None, Some(19000_i32)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Date32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Date32, true)])),
@@ -1529,11 +1833,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1551,7 +1853,7 @@ mod tests {
         // Milliseconds since Unix epoch: [0, None, 1_000_000]
         let array = Date64Array::from(vec![Some(0_i64), None, Some(1_000_000_i64)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Date64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Date64, true)])),
@@ -1560,11 +1862,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1588,7 +1888,7 @@ mod tests {
             DataType::Time32(TimeUnit::Second),
             true,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1601,11 +1901,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1627,7 +1925,7 @@ mod tests {
             DataType::Time64(TimeUnit::Microsecond),
             true,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1640,11 +1938,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1667,7 +1963,7 @@ mod tests {
             .with_precision_and_scale(38, 5)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal128(38, 5), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1680,11 +1976,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1711,7 +2005,7 @@ mod tests {
         .with_precision_and_scale(76, 10)
         .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal256(76, 10), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1724,11 +2018,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1753,7 +2045,7 @@ mod tests {
         let array = builder.finish();
 
         let schema = Schema::new(vec![Field::new("col", DataType::FixedSizeBinary(4), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1766,11 +2058,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1789,11 +2079,11 @@ mod tests {
     #[test]
     fn digest_binary_nullable_bytes() {
         // [b"hello", None, b"world"]
-        // Valid entries: (length as usize LE) ++ bytes.
-        // Null entries contribute the sentinel b"NULL" to the data digest.
+        // Valid entries: (length as u64 LE) ++ bytes.
+        // Null entries are skipped entirely in the data digest.
         let array = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
         let schema = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Binary, true)])),
@@ -1802,11 +2092,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1814,10 +2102,10 @@ mod tests {
         assert!(null_bit_vec[2]);
 
         let mut manual = Sha256::new();
-        manual.update(5_usize.to_le_bytes()); // len("hello")
+        manual.update(5_u64.to_le_bytes()); // len("hello")
         manual.update(b"hello");
-        manual.update(b"NULL"); // null sentinel
-        manual.update(5_usize.to_le_bytes()); // len("world")
+        // null entry skipped — no sentinel bytes
+        manual.update(5_u64.to_le_bytes()); // len("world")
         manual.update(b"world");
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
@@ -1827,7 +2115,7 @@ mod tests {
         // [b"ab", b"cde"] — all valid, length prefix is usize LE
         let array = LargeBinaryArray::from(vec![b"ab".as_ref(), b"cde".as_ref()]);
         let schema = Schema::new(vec![Field::new("col", DataType::LargeBinary, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1840,15 +2128,14 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
-        manual.update(2_usize.to_le_bytes());
+        manual.update(2_u64.to_le_bytes());
         manual.update(b"ab");
-        manual.update(3_usize.to_le_bytes());
+        manual.update(3_u64.to_le_bytes());
         manual.update(b"cde");
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
@@ -1859,10 +2146,10 @@ mod tests {
     fn digest_utf8_nullable_bytes() {
         // ["foo", None, "ba"]
         // Valid entries: (length as u64 LE) ++ UTF-8 bytes.
-        // Null entries contribute the sentinel b"NULL" to the data digest.
+        // Null entries are skipped entirely in the data digest.
         let array = StringArray::from(vec![Some("foo"), None, Some("ba")]);
         let schema = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Utf8, true)])),
@@ -1871,11 +2158,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::Nullable(null_bit_vec, data_digest) =
-            &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected Nullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec[0]);
@@ -1885,7 +2170,7 @@ mod tests {
         let mut manual = Sha256::new();
         manual.update(3_u64.to_le_bytes()); // len("foo")
         manual.update(b"foo");
-        manual.update(b"NULL"); // null sentinel
+        // null entry skipped — no sentinel bytes
         manual.update(2_u64.to_le_bytes()); // len("ba")
         manual.update(b"ba");
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
@@ -1896,7 +2181,7 @@ mod tests {
         // ["x", "yz"] — all valid, length prefix is u64 LE
         let array = LargeStringArray::from(vec!["x", "yz"]);
         let schema = Schema::new(vec![Field::new("col", DataType::LargeUtf8, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1909,10 +2194,9 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        let buf = &digester.fields_digest_buffer["col"];
+        assert!(buf.null_bits.is_none(), "Expected non-nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
 
         let mut manual = Sha256::new();
         manual.update(1_u64.to_le_bytes());
@@ -1924,10 +2208,9 @@ mod tests {
 
     // ── List<Int32> / LargeList<Int32> ─────────────────────────────────────
     //
-    // Each outer element is prefixed by its inner element count (u64 LE), then the
-    // raw bytes of the inner array (no length limit — the implementation hashes from
-    // the element's offset to the end of the shared child buffer).
-    // Using a single outer element avoids buffer-bleed from preceding elements.
+    // With recursive decomposition, a non-nullable List<Int32 nullable> column
+    // creates a single entry at "col/" (list_leaf) with structural (element counts),
+    // data (leaf values), and null_bits (item nullability).
 
     #[test]
     fn digest_list_non_nullable_bytes() {
@@ -1945,7 +2228,7 @@ mod tests {
             DataType::List(Arc::clone(&item_field)),
             false,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1958,18 +2241,33 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        // Non-nullable column → no "col" entry; list_leaf entry at "col/"
+        let buf = &digester.fields_digest_buffer["col/"];
+        // Items are nullable → null_bits present (all valid in this case)
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable items");
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec.iter().all(|b| *b), "All items should be valid");
 
-        // sub-array has 3 elements at offset 0 → raw buffer slice from byte 0
-        let mut manual = Sha256::new();
-        manual.update(3_u64.to_le_bytes()); // element count prefix
-        manual.update(10_i32.to_le_bytes());
-        manual.update(20_i32.to_le_bytes());
-        manual.update(30_i32.to_le_bytes());
-        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+        let structural_digest = buf
+            .structural
+            .as_ref()
+            .expect("Expected structural digest for list");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
+
+        // Structural digest: element count (sizes separated from leaf data)
+        let mut manual_structural = Sha256::new();
+        manual_structural.update(3_u64.to_le_bytes());
+        assert_eq!(
+            structural_digest.clone().finalize(),
+            manual_structural.finalize()
+        );
+
+        // Data/leaf digest: only the raw leaf values
+        let mut manual_data = Sha256::new();
+        manual_data.update(10_i32.to_le_bytes());
+        manual_data.update(20_i32.to_le_bytes());
+        manual_data.update(30_i32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual_data.finalize());
     }
 
     #[test]
@@ -1988,7 +2286,7 @@ mod tests {
             DataType::LargeList(Arc::clone(&item_field)),
             false,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2001,16 +2299,481 @@ mod tests {
             .unwrap(),
         );
 
-        let DigestBufferType::NonNullable(data_digest) = &digester.fields_digest_buffer["col"]
-        else {
-            panic!("Expected NonNullable buffer");
-        };
+        // Non-nullable column → no "col" entry; list_leaf entry at "col/"
+        let buf = &digester.fields_digest_buffer["col/"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable items");
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec.iter().all(|b| *b), "All items should be valid");
 
-        let mut manual = Sha256::new();
-        manual.update(3_u64.to_le_bytes());
-        manual.update(1_i32.to_le_bytes());
-        manual.update(2_i32.to_le_bytes());
-        manual.update(3_i32.to_le_bytes());
-        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+        let structural_digest = buf
+            .structural
+            .as_ref()
+            .expect("Expected structural digest for list");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
+
+        // Structural digest: element count (sizes separated from leaf data)
+        let mut manual_structural = Sha256::new();
+        manual_structural.update(3_u64.to_le_bytes());
+        assert_eq!(
+            structural_digest.clone().finalize(),
+            manual_structural.finalize()
+        );
+
+        // Data/leaf digest: only the raw leaf values
+        let mut manual_data = Sha256::new();
+        manual_data.update(1_i32.to_le_bytes());
+        manual_data.update(2_i32.to_le_bytes());
+        manual_data.update(3_i32.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual_data.finalize());
+    }
+
+    #[test]
+    fn digest_buffer_type_structural_only() {
+        let buf = super::DigestBufferType::<Sha256>::new_structural_only(true);
+        assert!(buf.null_bits.is_some());
+        assert!(buf.structural.is_some());
+        assert!(buf.data.is_none());
+    }
+
+    #[test]
+    fn digest_buffer_type_data_only() {
+        let buf = super::DigestBufferType::<Sha256>::new_data_only(false);
+        assert!(buf.null_bits.is_none());
+        assert!(buf.structural.is_none());
+        assert!(buf.data.is_some());
+    }
+
+    #[test]
+    fn digest_buffer_type_list_leaf() {
+        let buf = super::DigestBufferType::<Sha256>::new_list_leaf(true);
+        assert!(buf.null_bits.is_some());
+        assert!(buf.structural.is_some());
+        assert!(buf.data.is_some());
+    }
+
+    #[test]
+    fn digest_buffer_type_validity_only() {
+        let buf = super::DigestBufferType::<Sha256>::new_validity_only();
+        assert!(buf.null_bits.is_some());
+        assert!(buf.structural.is_none());
+        assert!(buf.data.is_none());
+    }
+
+    #[test]
+    fn extract_fields_list_of_struct() {
+        // List<Struct<a: Int32, b: String>>
+        let schema = Schema::new(vec![Field::new(
+            "x",
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, false),
+                        Field::new("b", DataType::LargeUtf8, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+            true, // column is nullable
+        )]);
+
+        let digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
+
+        // Should have: "x" (validity-only), "x/" (structural), "x//a" (data), "x//b" (data)
+        assert_eq!(
+            field_names.len(),
+            4,
+            "Expected 4 entries, got: {field_names:?}"
+        );
+        assert!(field_names.contains(&&"x".to_owned()));
+        assert!(field_names.contains(&&"x/".to_owned()));
+        assert!(field_names.contains(&&"x//a".to_owned()));
+        assert!(field_names.contains(&&"x//b".to_owned()));
+    }
+
+    #[test]
+    fn extract_fields_nested_list_struct_list() {
+        // x: Nullable<List<Struct<a: Nullable<Int32>, b: Struct<g: Nullable<List<Int32>>, h: Int32>>>>
+        let schema = Schema::new(vec![Field::new(
+            "x",
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, true),
+                        Field::new(
+                            "b",
+                            DataType::Struct(
+                                vec![
+                                    Field::new(
+                                        "g",
+                                        DataType::LargeList(Arc::new(Field::new(
+                                            "item",
+                                            DataType::Int32,
+                                            false,
+                                        ))),
+                                        true,
+                                    ),
+                                    Field::new("h", DataType::Int32, false),
+                                ]
+                                .into(),
+                            ),
+                            false,
+                        ),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+            true,
+        )]);
+
+        let digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
+
+        // Expected entries: "x", "x/", "x//a", "x//b/g", "x//b/g/", "x//b/h"
+        assert_eq!(
+            field_names.len(),
+            6,
+            "Expected 6 entries, got: {field_names:?}"
+        );
+        assert!(field_names.contains(&&"x".to_owned()));
+        assert!(field_names.contains(&&"x/".to_owned()));
+        assert!(field_names.contains(&&"x//a".to_owned()));
+        assert!(field_names.contains(&&"x//b/g".to_owned()));
+        assert!(field_names.contains(&&"x//b/g/".to_owned()));
+        assert!(field_names.contains(&&"x//b/h".to_owned()));
+    }
+
+    #[test]
+    fn recursive_list_struct_decomposition() {
+        use crate::arrow_digester_core::normalize_schema;
+
+        // Schema: x: Nullable<List<Struct<
+        //     a: Nullable<Int32>,
+        //     b: Struct<
+        //         g: Nullable<List<Int32>>,
+        //         h: Int32
+        //     >
+        // >>>
+        let g_field = Field::new(
+            "g",
+            DataType::LargeList(Arc::new(Field::new("item", DataType::Int32, false))),
+            true, // g is nullable
+        );
+        let h_field = Field::new("h", DataType::Int32, false);
+        let b_field = Field::new(
+            "b",
+            DataType::Struct(vec![g_field.clone(), h_field.clone()].into()),
+            false, // b is non-nullable
+        );
+        let a_field = Field::new("a", DataType::Int32, true); // a is nullable
+        let struct_type = DataType::Struct(vec![a_field.clone(), b_field.clone()].into());
+        let item_field = Field::new("item", struct_type, false);
+        let x_field = Field::new(
+            "x",
+            DataType::LargeList(Arc::new(item_field.clone())),
+            true, // column is nullable
+        );
+        let schema = Schema::new(vec![x_field]);
+
+        // Build the data:
+        // Row 0: [{a: 1, b: {g: [10, 20], h: 100}}, {a: null, b: {g: [30], h: 200}}]
+        // Row 1: null
+        // Row 2: [{a: 3, b: {g: null, h: 300}}, {a: 4, b: {g: [], h: 400}}, {a: 5, b: {g: [50], h: 500}}]
+
+        // Inner g values: [10, 20, 30, 50] (across all non-null g lists)
+        let g_values = Int32Array::from(vec![10, 20, 30, 50]);
+        // g list offsets: elem0=[10,20](len2), elem1=[30](len1), elem2=null, elem3=[](len0), elem4=[50](len1)
+        // For 5 struct elements, g has offsets [0, 2, 3, 3, 3, 4]
+        // with validity [true, true, false, true, true]
+        let g_list = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 2, 3, 3, 3, 4].into()),
+            Arc::new(g_values) as ArrayRef,
+            Some(vec![true, true, false, true, true].into()), // g null at struct element 2
+        );
+
+        let h_values = Int32Array::from(vec![100, 200, 300, 400, 500]);
+
+        let b_struct = StructArray::from(vec![
+            (Arc::new(g_field), Arc::new(g_list) as ArrayRef),
+            (Arc::new(h_field), Arc::new(h_values) as ArrayRef),
+        ]);
+
+        let a_values = Int32Array::from(vec![Some(1), None, Some(3), Some(4), Some(5)]);
+
+        let inner_struct = StructArray::from(vec![
+            (Arc::new(a_field), Arc::new(a_values) as ArrayRef),
+            (Arc::new(b_field), Arc::new(b_struct) as ArrayRef),
+        ]);
+
+        // Outer list: Row 0 has 2 elements, Row 1 is null, Row 2 has 3 elements
+        // Offsets: [0, 2, 2, 5] (row 1 is null but offset still present)
+        let outer_list = LargeListArray::new(
+            Arc::new(item_field),
+            OffsetBuffer::new(vec![0_i64, 2, 2, 5].into()),
+            Arc::new(inner_struct) as ArrayRef,
+            Some(vec![true, false, true].into()), // row 1 is null
+        );
+
+        let batch = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![Arc::new(outer_list) as ArrayRef],
+        )
+        .unwrap();
+
+        // ── Compute expected hash manually ──
+        // BTreeMap entries (in sorted order):
+        // "x"       → null_bits: V,I,V (3 bits)
+        // "x/"      → structural: [2, 3]
+        // "x//a"    → null_bits: V,I,V,V,V (5 bits), data: [1, 3, 4, 5] as i32 LE
+        // "x//b/g"  → null_bits: V,V,I,V,V (5 bits)
+        // "x//b/g/" → structural: [2, 1, 0, 1], data: [10, 20, 30, 50] as i32 LE
+        // "x//b/h"  → data: [100, 200, 300, 400, 500] as i32 LE
+
+        let schema_digest = Sha256::digest(
+            ArrowDigesterCore::<Sha256>::serialized_schema(&normalize_schema(&schema)).as_bytes(),
+        );
+
+        let mut final_digest = Sha256::new();
+        final_digest.update(schema_digest);
+
+        // Entry "x": null_bits V,I,V → bit_count=3, validity=0b101=5
+        final_digest.update(3_u64.to_le_bytes());
+        final_digest.update(5_u8.to_le_bytes());
+
+        // Entry "x/": structural only [2, 3]
+        let mut x_structural = Sha256::new();
+        x_structural.update(2_u64.to_le_bytes());
+        x_structural.update(3_u64.to_le_bytes());
+        final_digest.update(x_structural.finalize());
+
+        // Entry "x//a": null_bits V,I,V,V,V → bit_count=5, validity=0b11101=29
+        //   data: [1, 3, 4, 5] as i32 LE
+        final_digest.update(5_u64.to_le_bytes());
+        final_digest.update(29_u8.to_le_bytes());
+        let mut xa_data = Sha256::new();
+        xa_data.update(1_i32.to_le_bytes());
+        xa_data.update(3_i32.to_le_bytes());
+        xa_data.update(4_i32.to_le_bytes());
+        xa_data.update(5_i32.to_le_bytes());
+        final_digest.update(xa_data.finalize());
+
+        // Entry "x//b/g": null_bits V,V,I,V,V → bit_count=5, validity=0b11011=27
+        final_digest.update(5_u64.to_le_bytes());
+        final_digest.update(27_u8.to_le_bytes());
+
+        // Entry "x//b/g/": structural [2, 1, 0, 1], data [10, 20, 30, 50] as i32 LE
+        let mut xbg_structural = Sha256::new();
+        xbg_structural.update(2_u64.to_le_bytes());
+        xbg_structural.update(1_u64.to_le_bytes());
+        xbg_structural.update(0_u64.to_le_bytes());
+        xbg_structural.update(1_u64.to_le_bytes());
+        final_digest.update(xbg_structural.finalize());
+        let mut xbg_data = Sha256::new();
+        xbg_data.update(10_i32.to_le_bytes());
+        xbg_data.update(20_i32.to_le_bytes());
+        xbg_data.update(30_i32.to_le_bytes());
+        xbg_data.update(50_i32.to_le_bytes());
+        final_digest.update(xbg_data.finalize());
+
+        // Entry "x//b/h": data only [100, 200, 300, 400, 500] as i32 LE
+        let mut h_leaf_data = Sha256::new();
+        h_leaf_data.update(100_i32.to_le_bytes());
+        h_leaf_data.update(200_i32.to_le_bytes());
+        h_leaf_data.update(300_i32.to_le_bytes());
+        h_leaf_data.update(400_i32.to_le_bytes());
+        h_leaf_data.update(500_i32.to_le_bytes());
+        final_digest.update(h_leaf_data.finalize());
+
+        let expected_hash = final_digest.finalize().to_vec();
+
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        digester.update(&batch);
+
+        let actual_hash = digester.finalize();
+
+        assert_eq!(
+            encode(&actual_hash),
+            encode(&expected_hash),
+            "Recursive list/struct decomposition hash mismatch"
+        );
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Test builds multiple complex batches for batch-split independence verification"
+    )]
+    #[test]
+    fn recursive_list_struct_batch_split_independence() {
+        // Same schema and data as recursive_list_struct_decomposition,
+        // split into two batches: rows 0-1 and row 2.
+        // Verify: hash(batch1 + batch2) == hash(combined)
+
+        let g_field = Field::new(
+            "g",
+            DataType::LargeList(Arc::new(Field::new("item", DataType::Int32, false))),
+            true,
+        );
+        let h_field = Field::new("h", DataType::Int32, false);
+        let b_field = Field::new(
+            "b",
+            DataType::Struct(vec![g_field.clone(), h_field.clone()].into()),
+            false,
+        );
+        let a_field = Field::new("a", DataType::Int32, true);
+        let struct_type = DataType::Struct(vec![a_field.clone(), b_field.clone()].into());
+        let item_field = Field::new("item", struct_type, false);
+        let x_field = Field::new("x", DataType::LargeList(Arc::new(item_field.clone())), true);
+        let schema = Arc::new(Schema::new(vec![x_field]));
+
+        // ── Build combined batch (all 3 rows) ──
+        let g_values = Int32Array::from(vec![10, 20, 30, 50]);
+        let g_list = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 2, 3, 3, 3, 4].into()),
+            Arc::new(g_values) as ArrayRef,
+            Some(vec![true, true, false, true, true].into()),
+        );
+        let h_values = Int32Array::from(vec![100, 200, 300, 400, 500]);
+        let b_struct = StructArray::from(vec![
+            (Arc::new(g_field.clone()), Arc::new(g_list) as ArrayRef),
+            (Arc::new(h_field.clone()), Arc::new(h_values) as ArrayRef),
+        ]);
+        let a_values = Int32Array::from(vec![Some(1), None, Some(3), Some(4), Some(5)]);
+        let inner_struct = StructArray::from(vec![
+            (Arc::new(a_field.clone()), Arc::new(a_values) as ArrayRef),
+            (Arc::new(b_field.clone()), Arc::new(b_struct) as ArrayRef),
+        ]);
+        let outer_list = LargeListArray::new(
+            Arc::new(item_field.clone()),
+            OffsetBuffer::new(vec![0_i64, 2, 2, 5].into()),
+            Arc::new(inner_struct) as ArrayRef,
+            Some(vec![true, false, true].into()),
+        );
+        let combined_batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(outer_list) as ArrayRef])
+                .unwrap();
+
+        // ── Build batch 1: rows 0-1 ──
+        let g_values_1 = Int32Array::from(vec![10, 20, 30]);
+        let g_list_1 = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 2, 3].into()),
+            Arc::new(g_values_1) as ArrayRef,
+            Some(vec![true, true].into()),
+        );
+        let h_values_1 = Int32Array::from(vec![100, 200]);
+        let b_struct_1 = StructArray::from(vec![
+            (Arc::new(g_field.clone()), Arc::new(g_list_1) as ArrayRef),
+            (Arc::new(h_field.clone()), Arc::new(h_values_1) as ArrayRef),
+        ]);
+        let a_values_1 = Int32Array::from(vec![Some(1), None]);
+        let inner_struct_1 = StructArray::from(vec![
+            (Arc::new(a_field.clone()), Arc::new(a_values_1) as ArrayRef),
+            (Arc::new(b_field.clone()), Arc::new(b_struct_1) as ArrayRef),
+        ]);
+        let outer_list_1 = LargeListArray::new(
+            Arc::new(item_field.clone()),
+            OffsetBuffer::new(vec![0_i64, 2, 2].into()),
+            Arc::new(inner_struct_1) as ArrayRef,
+            Some(vec![true, false].into()),
+        );
+        let batch1 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(outer_list_1) as ArrayRef],
+        )
+        .unwrap();
+
+        // ── Build batch 2: row 2 ──
+        let g_values_2 = Int32Array::from(vec![50]);
+        let g_list_2 = LargeListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::new(vec![0_i64, 0, 0, 1].into()),
+            Arc::new(g_values_2) as ArrayRef,
+            Some(vec![false, true, true].into()),
+        );
+        let h_values_2 = Int32Array::from(vec![300, 400, 500]);
+        let b_struct_2 = StructArray::from(vec![
+            (Arc::new(g_field), Arc::new(g_list_2) as ArrayRef),
+            (Arc::new(h_field), Arc::new(h_values_2) as ArrayRef),
+        ]);
+        let a_values_2 = Int32Array::from(vec![Some(3), Some(4), Some(5)]);
+        let inner_struct_2 = StructArray::from(vec![
+            (Arc::new(a_field), Arc::new(a_values_2) as ArrayRef),
+            (Arc::new(b_field), Arc::new(b_struct_2) as ArrayRef),
+        ]);
+        let outer_list_2 = LargeListArray::new(
+            Arc::new(item_field),
+            OffsetBuffer::new(vec![0_i64, 3].into()),
+            Arc::new(inner_struct_2) as ArrayRef,
+            Some(vec![true].into()),
+        );
+        let batch2 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(outer_list_2) as ArrayRef],
+        )
+        .unwrap();
+
+        // ── Compare ──
+        let mut single = ArrowDigesterCore::<Sha256>::new(schema.as_ref());
+        single.update(&combined_batch);
+        let single_hash = single.finalize();
+
+        let mut split = ArrowDigesterCore::<Sha256>::new(schema.as_ref());
+        split.update(&batch1);
+        split.update(&batch2);
+        let split_hash = split.finalize();
+
+        assert_eq!(
+            encode(&single_hash),
+            encode(&split_hash),
+            "Batch split independence failed for recursive list/struct decomposition"
+        );
+    }
+
+    #[test]
+    fn hash_array_list_of_struct() {
+        // Verify hash_array works with List<Struct<...>> using the same recursive
+        // decomposition as the record-batch path.
+        let inner_struct = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::new(Int32Array::from(vec![1, 2, 3])) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("b", DataType::Int32, false)),
+                Arc::new(Int32Array::from(vec![10, 20, 30])) as ArrayRef,
+            ),
+        ]);
+
+        let list_array = LargeListArray::new(
+            Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, false),
+                        Field::new("b", DataType::Int32, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            )),
+            OffsetBuffer::new(vec![0_i64, 2, 3].into()),
+            Arc::new(inner_struct) as ArrayRef,
+            Some(vec![true, true].into()),
+        );
+
+        let hash1 = ArrowDigesterCore::<Sha256>::hash_array(&list_array);
+        let hash2 = ArrowDigesterCore::<Sha256>::hash_array(&list_array);
+        assert_eq!(hash1, hash2, "hash_array should be deterministic");
+        assert_eq!(
+            hash1.len(),
+            32,
+            "core hash_array should return 32 bytes (SHA-256)"
+        );
     }
 }
