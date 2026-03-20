@@ -1647,7 +1647,7 @@ mod tests {
         assert!(!hash.is_empty(), "hash should be non-empty");
     }
 
-    /// Regression test: `List<nullable>` with nulls at the outer level and inner level
+    /// Regression test: `List<nullable>` with nulls in the inner elements
     /// must not panic and must produce a deterministic hash.
     #[test]
     fn list_with_nullable_inner_elements_is_deterministic() {
