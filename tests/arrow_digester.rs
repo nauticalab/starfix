@@ -1156,6 +1156,10 @@ mod tests {
 
     /// Three-level deep nested struct: field order inside the innermost struct
     /// must not affect the schema hash.
+    #[expect(
+        clippy::similar_names,
+        reason = "schema_z_first / schema_a_first names describe field ordering under test"
+    )]
     #[test]
     fn deeply_nested_struct_schema_hash_is_field_order_independent() {
         // outer: Struct { inner: Struct { z: Int32, a: Int32 }, b: Int32 }

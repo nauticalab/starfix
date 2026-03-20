@@ -927,6 +927,10 @@ mod tests {
     //   the correct leaf paths and that each leaf is hashed with the right bytes.
     // ══════════════════════════════════════════════════════════════════════
 
+    #[expect(
+        clippy::similar_names,
+        reason = "variable names mirror spec path notation (snp/snq)"
+    )]
     #[test]
     fn example_o_nested_struct_record_batch() {
         // ── Build the table ──────────────────────────────────────────────
@@ -1126,6 +1130,10 @@ mod tests {
     //   complementing Example O (which exercises hash_record_batch).
     // ══════════════════════════════════════════════════════════════════════
 
+    #[expect(
+        clippy::similar_names,
+        reason = "variable names mirror spec field notation (x/y)"
+    )]
     #[test]
     fn example_q_nested_struct_hash_array() {
         // ── Build the array ──────────────────────────────────────────────
