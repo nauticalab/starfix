@@ -1629,4 +1629,72 @@ mod tests {
             "Streaming with reordered nested struct fields should produce same hash"
         );
     }
+
+    // ── PLT-1047: hash_array on List<nullable leaf> with actual null inner values ──
+
+    /// Regression test: `hash_array` must not panic when a `List<T nullable>` contains
+    /// actual null values in the inner elements (sliced child arrays have offset > 0).
+    #[test]
+    fn list_with_nullable_inner_elements_does_not_panic() {
+        let array = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(1), None, Some(3)]), // inner null at index 1
+            Some(vec![None, None]),             // all inner nulls
+            Some(vec![Some(7)]),
+        ]);
+
+        // Must not panic
+        let hash = encode(ArrowDigester::hash_array(&array));
+        assert!(!hash.is_empty(), "hash should be non-empty");
+    }
+
+    /// Regression test: `List<nullable>` with nulls at the outer level and inner level
+    /// must not panic and must produce a deterministic hash.
+    #[test]
+    fn list_with_nullable_inner_elements_is_deterministic() {
+        let array = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(1), None, Some(3)]),
+            Some(vec![None, None]),
+            Some(vec![Some(7)]),
+        ]);
+
+        let hash1 = encode(ArrowDigester::hash_array(&array));
+        let hash2 = encode(ArrowDigester::hash_array(&array));
+        assert_eq!(hash1, hash2, "hash must be deterministic");
+    }
+
+    /// Regression test: `LargeList<nullable>` also must not panic.
+    #[test]
+    fn large_list_with_nullable_inner_elements_does_not_panic() {
+        let array = LargeListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(10), None, Some(30)]),
+            Some(vec![None, None]),
+            Some(vec![Some(70)]),
+        ]);
+
+        let hash = encode(ArrowDigester::hash_array(&array));
+        assert!(!hash.is_empty(), "hash should be non-empty");
+    }
+
+    /// `List<nullable>` arrays that differ only in null placement must produce different hashes.
+    #[test]
+    fn list_nullable_inner_null_placement_affects_hash() {
+        // [Some([1, null, 3])] vs [Some([null, 1, 3])]
+        let array_a = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![Some(vec![
+            Some(1),
+            None,
+            Some(3),
+        ])]);
+        let array_b = ListArray::from_iter_primitive::<Int32Type, _, _>(vec![Some(vec![
+            None,
+            Some(1),
+            Some(3),
+        ])]);
+
+        let hash_a = encode(ArrowDigester::hash_array(&array_a));
+        let hash_b = encode(ArrowDigester::hash_array(&array_b));
+        assert_ne!(
+            hash_a, hash_b,
+            "different null placements inside list must produce different hashes"
+        );
+    }
 }
