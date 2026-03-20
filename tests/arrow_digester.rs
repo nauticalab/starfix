@@ -1515,4 +1515,114 @@ mod tests {
             "Streaming with reordered columns should produce same hash"
         );
     }
+
+    /// A digester created with one nested-struct field order must accept batches
+    /// whose nested struct has the fields in a different order, without panicking,
+    /// and must produce the same hash in both cases.
+    ///
+    /// This exercises the `serialized_schema` equality check in `update()` as
+    /// well as the `traverse_struct` sorting for the nested level.
+    #[test]
+    fn streaming_with_reordered_nested_struct_fields_should_succeed_and_match() {
+        let ints_a = Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef;
+        let ints_z = Arc::new(Int32Array::from(vec![3, 4])) as ArrayRef;
+
+        // Canonical schema: outer.inner has fields [a, z] (alphabetical)
+        let schema_canonical = Schema::new(vec![Field::new(
+            "outer",
+            DataType::Struct(
+                vec![Field::new(
+                    "inner",
+                    DataType::Struct(
+                        vec![
+                            Field::new("a", DataType::Int32, false),
+                            Field::new("z", DataType::Int32, false),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                )]
+                .into(),
+            ),
+            false,
+        )]);
+
+        // Build a struct array with inner fields in order [a, z]
+        let inner_az = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&ints_a),
+            ),
+            (
+                Arc::new(Field::new("z", DataType::Int32, false)),
+                Arc::clone(&ints_z),
+            ),
+        ]);
+        let outer_az = StructArray::from(vec![(
+            Arc::new(Field::new(
+                "inner",
+                DataType::Struct(inner_az.fields().clone()),
+                false,
+            )),
+            Arc::new(inner_az) as ArrayRef,
+        )]);
+        let batch_az = RecordBatch::try_new(
+            Arc::new(schema_canonical.clone()),
+            vec![Arc::new(outer_az) as ArrayRef],
+        )
+        .unwrap();
+
+        // Build a struct array with inner fields in reverse order [z, a]
+        let inner_za = StructArray::from(vec![
+            (
+                Arc::new(Field::new("z", DataType::Int32, false)),
+                Arc::clone(&ints_z),
+            ),
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&ints_a),
+            ),
+        ]);
+        let outer_schema_reversed = Schema::new(vec![Field::new(
+            "outer",
+            DataType::Struct(
+                vec![Field::new(
+                    "inner",
+                    DataType::Struct(inner_za.fields().clone()),
+                    false,
+                )]
+                .into(),
+            ),
+            false,
+        )]);
+        let outer_za = StructArray::from(vec![(
+            Arc::new(Field::new(
+                "inner",
+                DataType::Struct(inner_za.fields().clone()),
+                false,
+            )),
+            Arc::new(inner_za) as ArrayRef,
+        )]);
+        let batch_za = RecordBatch::try_new(
+            Arc::new(outer_schema_reversed),
+            vec![Arc::new(outer_za) as ArrayRef],
+        )
+        .unwrap();
+
+        // Digester created with canonical schema, fed canonical-order batch
+        let mut digester_canonical = ArrowDigester::new(&schema_canonical);
+        digester_canonical.update(&batch_az);
+        let hash_canonical = encode(digester_canonical.finalize());
+
+        // Digester created with canonical schema, fed reversed-order batch
+        // Must not panic (serialized_schema comparison must treat them as equal)
+        let mut digester_reversed = ArrowDigester::new(&schema_canonical);
+        digester_reversed.update(&batch_za); // should NOT panic
+        let hash_reversed = encode(digester_reversed.finalize());
+
+        assert_eq!(
+            hash_canonical, hash_reversed,
+            "Streaming with reordered nested struct fields should produce same hash"
+        );
+    }
 }

@@ -1110,4 +1110,86 @@ mod tests {
         );
         assert_eq!(hash1, hash2, "Example P: schema1 and schema2 must be equal");
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Example Q: Nested Struct via hash_array
+    //   StructArray [{inner: {x: 5, y: 7}}, {inner: {x: 9, y: 11}}]
+    //   Outer struct: non-nullable, one child "inner" (non-nullable Struct)
+    //   Inner struct: non-nullable, children x: Int32, y: Int32
+    //
+    //   hash_array entry point:
+    //     1. type_json = canonical data_type_to_value of the outer struct
+    //     2. BTreeMap entries (sorted by path): "inner/x", "inner/y"
+    //     3. Finalize each entry into the final digest
+    //
+    //   This is the first byte-exact test of hash_array with a nested struct,
+    //   complementing Example O (which exercises hash_record_batch).
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn example_q_nested_struct_hash_array() {
+        // ── Build the array ──────────────────────────────────────────────
+        let x_arr = Arc::new(Int32Array::from(vec![5_i32, 9])) as ArrayRef;
+        let y_arr = Arc::new(Int32Array::from(vec![7_i32, 11])) as ArrayRef;
+
+        let inner = StructArray::from(vec![
+            (
+                Arc::new(Field::new("x", DataType::Int32, false)),
+                Arc::clone(&x_arr),
+            ),
+            (
+                Arc::new(Field::new("y", DataType::Int32, false)),
+                Arc::clone(&y_arr),
+            ),
+        ]);
+        let inner_type = DataType::Struct(inner.fields().clone());
+
+        let outer = StructArray::from(vec![(
+            Arc::new(Field::new("inner", inner_type.clone(), false)),
+            Arc::new(inner) as ArrayRef,
+        )]);
+
+        // ── Step 1: Type metadata ────────────────────────────────────────
+        // Outer struct has one child "inner" whose data_type is
+        // Struct([x: Int32, y: Int32]) — inner children already alphabetical.
+        //
+        // Canonical JSON (outer struct children sorted: ["inner"]; inner sorted: ["x","y"]):
+        let type_json = concat!(
+            r#"{"Struct":["#,
+            r#"{"data_type":{"Struct":["#,
+            r#"{"data_type":"Int32","name":"x","nullable":false},"#,
+            r#"{"data_type":"Int32","name":"y","nullable":false}"#,
+            r#"]},"name":"inner","nullable":false}"#,
+            r#"]}"#
+        );
+
+        // ── Step 2: Decomposed entries (sorted by path) ──────────────────
+        //
+        // "inner/x" (Int32, non-nullable) → data = SHA-256([5, 9] as i32 LE)
+        let mut data_x = Sha256::new();
+        data_x.update(5_i32.to_le_bytes()); // 05 00 00 00
+        data_x.update(9_i32.to_le_bytes()); // 09 00 00 00
+        let data_x_finalized = data_x.finalize();
+
+        // "inner/y" (Int32, non-nullable) → data = SHA-256([7, 11] as i32 LE)
+        let mut data_y = Sha256::new();
+        data_y.update(7_i32.to_le_bytes()); // 07 00 00 00
+        data_y.update(11_i32.to_le_bytes()); // 0b 00 00 00
+        let data_y_finalized = data_y.finalize();
+
+        // ── Step 3: Final combination ────────────────────────────────────
+        // type_json → "inner/x" (non-nullable) → "inner/y" (non-nullable)
+        let mut final_digest = Sha256::new();
+        final_digest.update(type_json.as_bytes());
+        final_digest.update(data_x_finalized); // "inner/x"
+        final_digest.update(data_y_finalized); // "inner/y"
+
+        let expected = with_version(final_digest.finalize().to_vec());
+
+        assert_eq!(
+            ArrowDigester::hash_array(&outer),
+            expected,
+            "Example Q: nested struct hash_array mismatch"
+        );
+    }
 }
