@@ -988,6 +988,155 @@ output = 0x000001 ++ final_digest.finalize()
 
 ---
 
+### Example O: Nested Struct in a Record Batch (Two Levels of Struct)
+
+**Schema**: `{s: Struct<a: Int32 non-null, nested: Struct<p: Int32 non-null, q: Int32 non-null> non-null> non-null}`
+
+**Data** (1 row):
+
+| s.a | s.nested.p | s.nested.q |
+|-----|------------|------------|
+| 10  | 20         | 30         |
+
+Both struct levels are transparent. The recursive decomposition produces three leaf entries:
+
+| Path | Entry type | Data |
+|------|-----------|------|
+| `s/a` | data-only | `[10]` as i32 LE |
+| `s/nested/p` | data-only | `[20]` as i32 LE |
+| `s/nested/q` | data-only | `[30]` as i32 LE |
+
+Note: `s/nested/p` sorts after `s/a` but before `s/nested/q` — the full path string is compared alphabetically.
+
+#### Step 1: Schema Digest
+
+Outer struct children sorted: `[a, nested]`. Inner struct children sorted: `[p, q]`.
+
+Canonical JSON:
+```
+{"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":{"Struct":[{"data_type":"Int32","name":"p","nullable":false},{"data_type":"Int32","name":"q","nullable":false}]},"name":"nested","nullable":false}]},"nullable":false}}
+```
+
+```
+schema_digest = SHA-256(canonical_json_bytes)
+```
+
+#### Step 2: Leaf Entries
+
+**Entry `s/a`** (Int32, non-nullable → data-only):
+```
+data_sa = SHA-256(0x0a000000)     // 10 as i32 LE
+```
+
+**Entry `s/nested/p`** (Int32, non-nullable → data-only):
+```
+data_snp = SHA-256(0x14000000)    // 20 as i32 LE
+```
+
+**Entry `s/nested/q`** (Int32, non-nullable → data-only):
+```
+data_snq = SHA-256(0x1e000000)    // 30 as i32 LE
+```
+
+#### Step 3: Final Combination
+
+Entries in alphabetical path order: `s/a`, `s/nested/p`, `s/nested/q`.
+
+```
+final_digest = SHA-256()
+final_digest.update( schema_digest )              // 32 bytes
+final_digest.update( data_sa.finalize() )         // "s/a" (non-nullable): 32 bytes
+final_digest.update( data_snp.finalize() )        // "s/nested/p" (non-nullable): 32 bytes
+final_digest.update( data_snq.finalize() )        // "s/nested/q" (non-nullable): 32 bytes
+output = 0x000001 ++ final_digest.finalize()
+```
+
+---
+
+### Example P: Nested Struct Field-Order Independence (Schema Hash)
+
+Two schemas with the same logical structure but different field declaration orders must produce identical hashes after recursive alphabetical sorting.
+
+**Schema 1** (outer: `[nested, z]`, inner: `[b, a]` — neither sorted):
+```
+{s: Struct<nested: Struct<b: Int32, a: Int32> non-null, z: Int32 non-null> non-null}
+```
+
+**Schema 2** (outer: `[z, nested]`, inner: `[a, b]` — both sorted):
+```
+{s: Struct<z: Int32 non-null, nested: Struct<a: Int32, b: Int32> non-null> non-null}
+```
+
+#### Canonical JSON (same for both schemas)
+
+After recursive alphabetical sorting, outer children are `[nested, z]` (`n < z`) and inner children are `[a, b]` (`a < b`):
+
+```
+{"s":{"data_type":{"Struct":[{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Int32","name":"b","nullable":false}]},"name":"nested","nullable":false},{"data_type":"Int32","name":"z","nullable":false}]},"nullable":false}}
+```
+
+```
+schema_digest = SHA-256(canonical_json_bytes)
+output = 0x000001 ++ schema_digest
+```
+
+Both schemas produce this same output. This confirms that recursive sorting normalizes field declaration order at every nesting level.
+
+---
+
+### Example Q: Nested Struct via hash_array
+
+**Array**: `StructArray [{inner: {x: 5, y: 7}}, {inner: {x: 9, y: 11}}]`
+
+Outer struct: non-nullable, one child `inner` (non-nullable Struct). Inner struct: non-nullable, children `x: Int32`, `y: Int32`.
+
+This example uses the `hash_array` API (Section 6). The layout mirrors the record-batch path — struct levels are transparent, leaves become BTreeMap entries.
+
+BTreeMap entries (sorted by path): `inner/x`, `inner/y`.
+
+#### Step 1: Type Metadata
+
+Canonical type JSON (outer struct → one child `inner`; inner struct sorted: `[x, y]`):
+```
+{"Struct":[{"data_type":{"Struct":[{"data_type":"Int32","name":"x","nullable":false},{"data_type":"Int32","name":"y","nullable":false}]},"name":"inner","nullable":false}]}
+```
+
+```
+final_digest.update( type_json_bytes )     // type metadata (not schema_digest)
+```
+
+#### Step 2: Leaf Entries
+
+**Entry `inner/x`** (Int32, non-nullable → data-only):
+```
+data_x = SHA-256(
+    0x05000000    // 5 as i32 LE
+    0x09000000    // 9 as i32 LE
+)
+```
+
+**Entry `inner/y`** (Int32, non-nullable → data-only):
+```
+data_y = SHA-256(
+    0x07000000    // 7 as i32 LE
+    0x0b000000    // 11 as i32 LE
+)
+```
+
+#### Step 3: Finalization
+
+```
+final_digest = SHA-256()
+final_digest.update( type_json_bytes )       // type metadata (canonical type JSON above)
+final_digest.update( data_x.finalize() )     // "inner/x": 32 bytes
+final_digest.update( data_y.finalize() )     // "inner/y": 32 bytes
+output = 0x000001 ++ final_digest.finalize()
+```
+
+Note: unlike `hash_record_batch`, `hash_array` feeds the **type JSON** (not a schema digest) directly into the final digest. See Section 6 for the full `hash_array` layout.
+
+---
+
 ## 8. Platform Considerations
 
 - **Integer sizes**: All length prefixes use `u64` (8 bytes, LE). Validity bitmaps use `BitVec<u8, Lsb0>` (1 byte per word). Bit counts use `u64` (8 bytes, LE). Hashes are **platform-independent**.
