@@ -601,11 +601,18 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Hash leaf data with combined null buffer
         if let Some(effective) = &effective_nulls {
             let child_data = array.to_data();
-            let null_count = effective.null_count();
+            // Use .nulls() rather than .null_bit_buffer() so that the
+            // NullBuffer's internal bit-offset is preserved.  Sliced
+            // PrimitiveArrays have a ScalarBuffer already trimmed to
+            // offset 0 but a NullBuffer whose bit-offset still points
+            // into the original (full) bitmap.  Calling
+            // .null_bit_buffer() clears .nulls and then build()
+            // reconstructs the NullBuffer from the raw bytes at the
+            // *array* offset (0), not the bitmap's own bit-offset,
+            // producing a null_count mismatch.
             let new_data = child_data
                 .into_builder()
-                .null_count(null_count)
-                .null_bit_buffer(Some(effective.clone().into_inner().into_inner()))
+                .nulls(Some(effective.clone()))
                 .build()
                 .expect("rebuild array with combined null buffer");
             let combined_array = make_array(new_data);
