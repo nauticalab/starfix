@@ -1152,6 +1152,326 @@ mod tests {
         let _hash = encode(digester.finalize());
     }
 
+    // ── Issue 8: Recursive struct field-order independence ───────────────
+
+    /// Three-level deep nested struct: field order inside the innermost struct
+    /// must not affect the schema hash.
+    #[test]
+    fn deeply_nested_struct_schema_hash_is_field_order_independent() {
+        // outer: Struct { inner: Struct { z: Int32, a: Int32 }, b: Int32 }
+        let schema_z_first = Schema::new(vec![Field::new(
+            "outer",
+            DataType::Struct(
+                vec![
+                    Field::new(
+                        "inner",
+                        DataType::Struct(
+                            vec![
+                                Field::new("z", DataType::Int32, false),
+                                Field::new("a", DataType::Int32, false),
+                            ]
+                            .into(),
+                        ),
+                        false,
+                    ),
+                    Field::new("b", DataType::Int32, false),
+                ]
+                .into(),
+            ),
+            false,
+        )]);
+
+        // outer: Struct { b: Int32, inner: Struct { a: Int32, z: Int32 } }
+        // Same logical schema, different insertion order at both levels.
+        let schema_a_first = Schema::new(vec![Field::new(
+            "outer",
+            DataType::Struct(
+                vec![
+                    Field::new("b", DataType::Int32, false),
+                    Field::new(
+                        "inner",
+                        DataType::Struct(
+                            vec![
+                                Field::new("a", DataType::Int32, false),
+                                Field::new("z", DataType::Int32, false),
+                            ]
+                            .into(),
+                        ),
+                        false,
+                    ),
+                ]
+                .into(),
+            ),
+            false,
+        )]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema_z_first)),
+            encode(ArrowDigester::hash_schema(&schema_a_first)),
+            "Deeply nested struct field order should not affect schema hash"
+        );
+    }
+
+    /// Three-level deep nested struct: field order inside the innermost struct
+    /// must not affect the record-batch data hash.
+    #[test]
+    fn deeply_nested_struct_record_batch_hash_is_field_order_independent() {
+        let ints_a = Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef;
+        let ints_z = Arc::new(Int32Array::from(vec![3, 4])) as ArrayRef;
+        let ints_b = Arc::new(Int32Array::from(vec![5, 6])) as ArrayRef;
+
+        // inner struct: fields defined z, a
+        let inner1 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("z", DataType::Int32, false)),
+                Arc::clone(&ints_z),
+            ),
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&ints_a),
+            ),
+        ]);
+        // outer struct: fields defined inner, b
+        let outer_type1 = DataType::Struct(
+            vec![
+                Field::new("inner", DataType::Struct(inner1.fields().clone()), false),
+                Field::new("b", DataType::Int32, false),
+            ]
+            .into(),
+        );
+        let outer1 = StructArray::from(vec![
+            (
+                Arc::new(Field::new(
+                    "inner",
+                    DataType::Struct(inner1.fields().clone()),
+                    false,
+                )),
+                Arc::new(inner1) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("b", DataType::Int32, false)),
+                Arc::clone(&ints_b),
+            ),
+        ]);
+        let schema1 = Arc::new(Schema::new(vec![Field::new("outer", outer_type1, false)]));
+        let batch1 = RecordBatch::try_new(schema1, vec![Arc::new(outer1) as ArrayRef]).unwrap();
+
+        // inner struct: fields defined a, z (reversed)
+        let inner2 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&ints_a),
+            ),
+            (
+                Arc::new(Field::new("z", DataType::Int32, false)),
+                Arc::clone(&ints_z),
+            ),
+        ]);
+        // outer struct: fields defined b, inner (reversed)
+        let outer_type2 = DataType::Struct(
+            vec![
+                Field::new("b", DataType::Int32, false),
+                Field::new("inner", DataType::Struct(inner2.fields().clone()), false),
+            ]
+            .into(),
+        );
+        let outer2 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("b", DataType::Int32, false)),
+                Arc::clone(&ints_b),
+            ),
+            (
+                Arc::new(Field::new(
+                    "inner",
+                    DataType::Struct(inner2.fields().clone()),
+                    false,
+                )),
+                Arc::new(inner2) as ArrayRef,
+            ),
+        ]);
+        let schema2 = Arc::new(Schema::new(vec![Field::new("outer", outer_type2, false)]));
+        let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(outer2) as ArrayRef]).unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "Deeply nested struct field order in record batch should not affect hash"
+        );
+    }
+
+    /// `hash_array` on a struct array with nested struct children must produce
+    /// the same hash regardless of the inner struct's field insertion order.
+    #[test]
+    fn hash_array_nested_struct_is_field_order_independent() {
+        let ints_x = Arc::new(Int32Array::from(vec![10, 20])) as ArrayRef;
+        let ints_y = Arc::new(Int32Array::from(vec![30, 40])) as ArrayRef;
+
+        // inner struct: x, y  — outer struct contains only this inner struct
+        let inner_xy = StructArray::from(vec![
+            (
+                Arc::new(Field::new("x", DataType::Int32, false)),
+                Arc::clone(&ints_x),
+            ),
+            (
+                Arc::new(Field::new("y", DataType::Int32, false)),
+                Arc::clone(&ints_y),
+            ),
+        ]);
+        let outer_xy = StructArray::from(vec![(
+            Arc::new(Field::new(
+                "inner",
+                DataType::Struct(inner_xy.fields().clone()),
+                false,
+            )),
+            Arc::new(inner_xy) as ArrayRef,
+        )]);
+
+        // inner struct: y, x (reversed)
+        let inner_yx = StructArray::from(vec![
+            (
+                Arc::new(Field::new("y", DataType::Int32, false)),
+                Arc::clone(&ints_y),
+            ),
+            (
+                Arc::new(Field::new("x", DataType::Int32, false)),
+                Arc::clone(&ints_x),
+            ),
+        ]);
+        let outer_yx = StructArray::from(vec![(
+            Arc::new(Field::new(
+                "inner",
+                DataType::Struct(inner_yx.fields().clone()),
+                false,
+            )),
+            Arc::new(inner_yx) as ArrayRef,
+        )]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_array(&outer_xy)),
+            encode(ArrowDigester::hash_array(&outer_yx)),
+            "hash_array: nested struct field order should not affect hash"
+        );
+    }
+
+    /// Schema with `List<Struct<fields>>` — reordering the struct's inner fields
+    /// must not change the schema hash.
+    #[test]
+    fn list_of_struct_schema_hash_is_field_order_independent() {
+        // List<Struct<z: Int32, a: Int32>>
+        let schema1 = Schema::new(vec![Field::new(
+            "items",
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("z", DataType::Int32, false),
+                        Field::new("a", DataType::Int32, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+            false,
+        )]);
+
+        // List<Struct<a: Int32, z: Int32>> — same logical type, fields reversed
+        let schema2 = Schema::new(vec![Field::new(
+            "items",
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("a", DataType::Int32, false),
+                        Field::new("z", DataType::Int32, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+            false,
+        )]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema1)),
+            encode(ArrowDigester::hash_schema(&schema2)),
+            "List<Struct> schema hash should not depend on struct field order"
+        );
+    }
+
+    /// Record batch with a `List<Struct<fields>>` column — reordering the struct's
+    /// inner fields must not change the record-batch hash.
+    #[test]
+    fn list_of_struct_record_batch_hash_is_field_order_independent() {
+        use arrow::buffer::OffsetBuffer;
+
+        let ids = Arc::new(Int32Array::from(vec![1_i32, 2, 3])) as ArrayRef;
+        let vals = Arc::new(Int32Array::from(vec![10_i32, 20, 30])) as ArrayRef;
+
+        // ── Build batch 1: struct fields [id, val] ────────────────────────
+        let struct1 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("id", DataType::Int32, false)),
+                Arc::clone(&ids),
+            ),
+            (
+                Arc::new(Field::new("val", DataType::Int32, false)),
+                Arc::clone(&vals),
+            ),
+        ]);
+        let item_field1 = Arc::new(Field::new(
+            "item",
+            DataType::Struct(struct1.fields().clone()),
+            false,
+        ));
+        let list1 = LargeListArray::new(
+            Arc::clone(&item_field1),
+            OffsetBuffer::new(vec![0_i64, 2, 3].into()),
+            Arc::new(struct1) as ArrayRef,
+            None,
+        );
+        let schema1 = Arc::new(Schema::new(vec![Field::new(
+            "items",
+            DataType::LargeList(item_field1),
+            false,
+        )]));
+        let batch1 = RecordBatch::try_new(schema1, vec![Arc::new(list1) as ArrayRef]).unwrap();
+
+        // ── Build batch 2: struct fields [val, id] (reversed) ─────────────
+        let struct2 = StructArray::from(vec![
+            (
+                Arc::new(Field::new("val", DataType::Int32, false)),
+                Arc::clone(&vals),
+            ),
+            (
+                Arc::new(Field::new("id", DataType::Int32, false)),
+                Arc::clone(&ids),
+            ),
+        ]);
+        let item_field2 = Arc::new(Field::new(
+            "item",
+            DataType::Struct(struct2.fields().clone()),
+            false,
+        ));
+        let list2 = LargeListArray::new(
+            Arc::clone(&item_field2),
+            OffsetBuffer::new(vec![0_i64, 2, 3].into()),
+            Arc::new(struct2) as ArrayRef,
+            None,
+        );
+        let schema2 = Arc::new(Schema::new(vec![Field::new(
+            "items",
+            DataType::LargeList(item_field2),
+            false,
+        )]));
+        let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(list2) as ArrayRef]).unwrap();
+
+        assert_eq!(
+            encode(ArrowDigester::hash_record_batch(&batch1)),
+            encode(ArrowDigester::hash_record_batch(&batch2)),
+            "List<Struct> record batch hash should not depend on struct field order"
+        );
+    }
+
     /// A digester fed batches with different column orders should produce the same hash
     /// as one fed batches in the original order.
     #[test]

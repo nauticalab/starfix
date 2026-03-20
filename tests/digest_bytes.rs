@@ -909,4 +909,205 @@ mod tests {
             "Example N: list-of-struct record batch hash mismatch"
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Example O: Nested Struct in a Record Batch (two levels of struct)
+    //   Schema: {s: Struct<a: Int32 non-null,
+    //                      nested: Struct<p: Int32 non-null,
+    //                                    q: Int32 non-null> non-null>
+    //                non-null}
+    //   Row 0: s.a=10, s.nested.p=20, s.nested.q=30
+    //
+    //   Struct is transparent at both levels. BTreeMap entries (sorted):
+    //     "s/a"         → data-only  (Int32: [10])
+    //     "s/nested/p"  → data-only  (Int32: [20])
+    //     "s/nested/q"  → data-only  (Int32: [30])
+    //
+    //   This test verifies that the recursive struct decomposition produces
+    //   the correct leaf paths and that each leaf is hashed with the right bytes.
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn example_o_nested_struct_record_batch() {
+        // ── Build the table ──────────────────────────────────────────────
+        let a_arr = Arc::new(Int32Array::from(vec![10_i32])) as ArrayRef;
+        let p_arr = Arc::new(Int32Array::from(vec![20_i32])) as ArrayRef;
+        let q_arr = Arc::new(Int32Array::from(vec![30_i32])) as ArrayRef;
+
+        let nested = StructArray::from(vec![
+            (
+                Arc::new(Field::new("p", DataType::Int32, false)),
+                Arc::clone(&p_arr),
+            ),
+            (
+                Arc::new(Field::new("q", DataType::Int32, false)),
+                Arc::clone(&q_arr),
+            ),
+        ]);
+        let nested_type = DataType::Struct(nested.fields().clone());
+
+        let outer = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                Arc::clone(&a_arr),
+            ),
+            (
+                Arc::new(Field::new("nested", nested_type.clone(), false)),
+                Arc::new(nested) as ArrayRef,
+            ),
+        ]);
+        let outer_type = DataType::Struct(outer.fields().clone());
+
+        let schema = Schema::new(vec![Field::new("s", outer_type, false)]);
+        let batch =
+            RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(outer) as ArrayRef])
+                .unwrap();
+
+        // ── Step 1: Schema digest ────────────────────────────────────────
+        // Outer struct children sorted: [a, nested]
+        // Inner struct (nested) children sorted: [p, q]
+        // Canonical JSON (all object keys sorted alphabetically):
+        let schema_json = concat!(
+            r#"{"s":{"data_type":{"Struct":["#,
+            r#"{"data_type":"Int32","name":"a","nullable":false},"#,
+            r#"{"data_type":{"Struct":["#,
+            r#"{"data_type":"Int32","name":"p","nullable":false},"#,
+            r#"{"data_type":"Int32","name":"q","nullable":false}"#,
+            r#"]},"name":"nested","nullable":false}"#,
+            r#"]},"nullable":false}}"#
+        );
+        let schema_digest = Sha256::digest(schema_json.as_bytes());
+
+        assert_eq!(
+            ArrowDigester::hash_schema(&schema),
+            with_version(schema_digest.to_vec()),
+            "Example O: schema hash mismatch — check canonical JSON"
+        );
+
+        // ── Step 2: Leaf entries (alphabetical order of full path) ────────
+        //
+        // "s/a"  (Int32, non-nullable) → data = SHA-256(10_i32_le)
+        let mut data_sa = Sha256::new();
+        data_sa.update(10_i32.to_le_bytes()); // 0a 00 00 00
+        let data_sa_finalized = data_sa.finalize();
+
+        // "s/nested/p"  (Int32, non-nullable) → data = SHA-256(20_i32_le)
+        let mut data_snp = Sha256::new();
+        data_snp.update(20_i32.to_le_bytes()); // 14 00 00 00
+        let data_snp_finalized = data_snp.finalize();
+
+        // "s/nested/q"  (Int32, non-nullable) → data = SHA-256(30_i32_le)
+        let mut data_snq = Sha256::new();
+        data_snq.update(30_i32.to_le_bytes()); // 1e 00 00 00
+        let data_snq_finalized = data_snq.finalize();
+
+        // ── Step 3: Final combination ────────────────────────────────────
+        // schema_digest → "s/a" → "s/nested/p" → "s/nested/q"
+        let mut final_digest = Sha256::new();
+        final_digest.update(schema_digest);
+        final_digest.update(data_sa_finalized); // "s/a" (non-nullable, data-only)
+        final_digest.update(data_snp_finalized); // "s/nested/p" (non-nullable, data-only)
+        final_digest.update(data_snq_finalized); // "s/nested/q" (non-nullable, data-only)
+
+        let expected = with_version(final_digest.finalize().to_vec());
+
+        assert_eq!(
+            ArrowDigester::hash_record_batch(&batch),
+            expected,
+            "Example O: nested struct record batch hash mismatch"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Example P: Nested Struct Field-Order Independence (schema hash)
+    //
+    //   Schema 1: {s: Struct<nested: Struct<b: Int32, a: Int32>, z: Int32>}
+    //   Schema 2: {s: Struct<z: Int32, nested: Struct<a: Int32, b: Int32>>}
+    //
+    //   Both have the same logical structure. After recursive alphabetical
+    //   sorting the canonical JSON is identical, so hash_schema must agree.
+    //
+    //   This test pins the expected canonical JSON string so that any
+    //   regression in the recursive-ordering logic immediately fails here
+    //   with a clear diff.
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn example_p_nested_struct_field_order_independence() {
+        // Schema 1: outer fields [nested, z], inner fields [b, a]  (neither sorted)
+        let schema1 = Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(
+                vec![
+                    Field::new(
+                        "nested",
+                        DataType::Struct(
+                            vec![
+                                Field::new("b", DataType::Int32, false),
+                                Field::new("a", DataType::Int32, false),
+                            ]
+                            .into(),
+                        ),
+                        false,
+                    ),
+                    Field::new("z", DataType::Int32, false),
+                ]
+                .into(),
+            ),
+            false,
+        )]);
+
+        // Schema 2: outer fields [z, nested], inner fields [a, b]  (both sorted)
+        let schema2 = Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(
+                vec![
+                    Field::new("z", DataType::Int32, false),
+                    Field::new(
+                        "nested",
+                        DataType::Struct(
+                            vec![
+                                Field::new("a", DataType::Int32, false),
+                                Field::new("b", DataType::Int32, false),
+                            ]
+                            .into(),
+                        ),
+                        false,
+                    ),
+                ]
+                .into(),
+            ),
+            false,
+        )]);
+
+        // ── Expected canonical JSON ──────────────────────────────────────
+        // After recursive alphabetical sorting:
+        //   outer children sorted: [nested, z]   (n < z)
+        //   inner children sorted: [a, b]         (a < b)
+        let canonical_json = concat!(
+            r#"{"s":{"data_type":{"Struct":["#,
+            r#"{"data_type":{"Struct":["#,
+            r#"{"data_type":"Int32","name":"a","nullable":false},"#,
+            r#"{"data_type":"Int32","name":"b","nullable":false}"#,
+            r#"]},"name":"nested","nullable":false},"#,
+            r#"{"data_type":"Int32","name":"z","nullable":false}"#,
+            r#"]},"nullable":false}}"#
+        );
+        let expected_schema_digest = Sha256::digest(canonical_json.as_bytes());
+        let expected = with_version(expected_schema_digest.to_vec());
+
+        // ── Both schemas must produce that same hash ──────────────────────
+        let hash1 = ArrowDigester::hash_schema(&schema1);
+        let hash2 = ArrowDigester::hash_schema(&schema2);
+
+        assert_eq!(
+            hash1, expected,
+            "Example P: schema1 (fields out-of-order) hash mismatch — recursive ordering broken"
+        );
+        assert_eq!(
+            hash2, expected,
+            "Example P: schema2 (fields in-order) hash mismatch"
+        );
+        assert_eq!(hash1, hash2, "Example P: schema1 and schema2 must be equal");
+    }
 }
