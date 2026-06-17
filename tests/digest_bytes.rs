@@ -1126,16 +1126,11 @@ mod tests {
     //   Phase 1 — structure (same as include_metadata = false):
     //     hasher.update(r#"{"v":{"data_type":"Int32","nullable":false}}"#)
     //
-    //   Phase 2 — per-field metadata (BTreeMap order, one field "v"):
-    //     path = "v" (1 byte)
-    //     meta_json = serde_json::to_string(BTreeMap{{"unit"→"meters"}})
-    //               = {"unit":"meters"}  (17 bytes)
-    //     hasher.update(1u64 LE)      // u64 LE path byte-length
-    //     hasher.update(b"v")         // path bytes
-    //     hasher.update(17u64 LE)     // u64 LE meta_json byte-length
-    //     hasher.update(b{"unit":"meters"})
+    //   Phase 2 — single JSON object update:
+    //     meta_doc = BTreeMap{ "fields": {"v": {"unit":"meters"}} }
+    //     hasher.update(r#"{"fields":{"v":{"unit":"meters"}}}"#)
     //
-    //   Schema-level metadata: empty → nothing added.
+    //   Schema-level metadata: empty → "schema" key absent from meta_doc.
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]
@@ -1147,24 +1142,16 @@ mod tests {
         };
 
         // ── Phase 1: structure ───────────────────────────────────────────
-        // normalize_schema preserves metadata but serialized_schema encodes
-        // only structure (field names, data types, nullability).
         let structure_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
 
-        // ── Phase 2: per-field metadata ──────────────────────────────────
-        // Field "v": sorted BTreeMap → {"unit":"meters"} (17 bytes)
-        let field_path = b"v"; // 1 byte
-        let meta_json = br#"{"unit":"meters"}"#; // 17 bytes
+        // ── Phase 2: single JSON object ──────────────────────────────────
+        // meta_doc = {"fields": {"v": {"unit":"meters"}}}
+        // "schema" key absent (no schema-level metadata).
+        let meta_doc_json = r#"{"fields":{"v":{"unit":"meters"}}}"#;
 
         let mut schema_hasher = Sha256::new();
-        // Phase 1
-        schema_hasher.update(structure_json.as_bytes());
-        // Phase 2 — field "v" (length-prefixed path + length-prefixed JSON)
-        schema_hasher.update((field_path.len() as u64).to_le_bytes()); // 01 00 00 00 00 00 00 00
-        schema_hasher.update(field_path); // 76
-        schema_hasher.update((meta_json.len() as u64).to_le_bytes()); // 11 00 00 00 00 00 00 00
-        schema_hasher.update(meta_json); // {"unit":"meters"}
-                                         // Schema-level metadata: empty → skip
+        schema_hasher.update(structure_json.as_bytes()); // Phase 1
+        schema_hasher.update(meta_doc_json.as_bytes()); // Phase 2
 
         let expected = with_version(schema_hasher.finalize().to_vec());
 
@@ -1185,15 +1172,10 @@ mod tests {
     //   Phase 1 — structure (unchanged):
     //     hasher.update(r#"{"v":{"data_type":"Int32","nullable":false}}"#)
     //
-    //   Phase 2 — no per-field metadata (all field.metadata() maps empty).
-    //   Phase 2 — schema-level metadata (length-prefixed, same as per-field blocks):
-    //     meta_json = serde_json::to_string(BTreeMap{"source"→"sensor-1"})
-    //               = {"source":"sensor-1"}  (21 bytes)
-    //     hasher.update(21u64 LE)             // u64 LE schema_meta_json byte-length
-    //     hasher.update(b{"source":"sensor-1"})
-    //
-    //   Every metadata block (per-field or schema-level) uses the same
-    //   length-prefixed encoding, preventing concatenation ambiguity.
+    //   Phase 2 — single JSON object update:
+    //     meta_doc = BTreeMap{ "schema": {"source":"sensor-1"} }
+    //     ("fields" key absent — no field has metadata)
+    //     hasher.update(r#"{"schema":{"source":"sensor-1"}}"#)
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]
@@ -1209,18 +1191,14 @@ mod tests {
         // ── Phase 1: structure ───────────────────────────────────────────
         let structure_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
 
-        // ── Phase 2: schema-level metadata ───────────────────────────────
-        // No field has metadata → nothing from the per-field loop.
-        // Schema has metadata: BTreeMap{"source"→"sensor-1"} → {"source":"sensor-1"} (21 bytes)
-        let schema_meta_json = br#"{"source":"sensor-1"}"#; // 21 bytes
+        // ── Phase 2: single JSON object ──────────────────────────────────
+        // meta_doc = {"schema": {"source":"sensor-1"}}
+        // "fields" key absent (no field has metadata).
+        let meta_doc_json = r#"{"schema":{"source":"sensor-1"}}"#;
 
         let mut schema_hasher = Sha256::new();
-        // Phase 1
-        schema_hasher.update(structure_json.as_bytes());
-        // Phase 2 — no per-field entries
-        // Phase 2 — schema-level (length-prefixed)
-        schema_hasher.update((schema_meta_json.len() as u64).to_le_bytes()); // 15 00 00 00 00 00 00 00
-        schema_hasher.update(schema_meta_json);
+        schema_hasher.update(structure_json.as_bytes()); // Phase 1
+        schema_hasher.update(meta_doc_json.as_bytes()); // Phase 2
 
         let expected = with_version(schema_hasher.finalize().to_vec());
 
@@ -1240,13 +1218,9 @@ mod tests {
     //
     //   Schema hash (Phase 1 + Phase 2, single hasher):
     //     Phase 1: structure_json = {"score":{"data_type":"Int32","nullable":false}}
-    //     Phase 2: field "score"
-    //       path = "score" (5 bytes)
-    //       meta_json = {"unit":"points"} (17 bytes)
-    //       hasher.update(5u64 LE)           // path byte-length
-    //       hasher.update(b"score")          // path
-    //       hasher.update(17u64 LE)          // meta_json byte-length
-    //       hasher.update(b{"unit":"points"})
+    //     Phase 2: single JSON object update:
+    //       meta_doc = {"fields": {"score": {"unit":"points"}}}
+    //       hasher.update(r#"{"fields":{"score":{"unit":"points"}}}"#)
     //
     //   Data hash — field "score" (Int32, non-nullable):
     //     score_data = SHA-256(100_i32_LE || 200_i32_LE)
@@ -1271,15 +1245,12 @@ mod tests {
 
         // ── Schema hash (Phase 1 + Phase 2) ─────────────────────────────
         let structure_json = r#"{"score":{"data_type":"Int32","nullable":false}}"#;
-        let field_path = b"score"; // 5 bytes
-        let meta_json = br#"{"unit":"points"}"#; // 17 bytes
+        // meta_doc = {"fields": {"score": {"unit":"points"}}}
+        let meta_doc_json = r#"{"fields":{"score":{"unit":"points"}}}"#;
 
         let mut schema_hasher = Sha256::new();
-        schema_hasher.update(structure_json.as_bytes());
-        schema_hasher.update((field_path.len() as u64).to_le_bytes()); // 05 00 00 00 00 00 00 00
-        schema_hasher.update(field_path); // s c o r e
-        schema_hasher.update((meta_json.len() as u64).to_le_bytes()); // 11 00 00 00 00 00 00 00
-        schema_hasher.update(meta_json); // {"unit":"points"}
+        schema_hasher.update(structure_json.as_bytes()); // Phase 1
+        schema_hasher.update(meta_doc_json.as_bytes()); // Phase 2
         let schema_digest = schema_hasher.finalize();
 
         // ── Data hash: field "score" (Int32, non-nullable) ───────────────

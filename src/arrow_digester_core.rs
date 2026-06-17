@@ -469,28 +469,20 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// `HashMap` iteration order. Nothing is written when all metadata maps are empty,
     /// preserving the empty-metadata invariant.
     ///
-    /// All metadata blocks use the same length-prefixed encoding:
+    /// The entire Phase 2 contribution is serialized as a **single JSON object** and fed into
+    /// the hasher in one update. JSON is self-delimiting, so no length prefixes are needed:
+    ///
     /// ```text
-    /// u64 LE byte_len
-    /// || bytes   (UTF-8 JSON of BTreeMap-sorted key→value pairs)
+    /// hasher.update(serde_json::to_string({
+    ///     "fields": { "<path>": { "<key>": "<value>", ... }, ... },  // present when any field has metadata
+    ///     "schema": { "<key>": "<value>", ... },                     // present when schema has metadata
+    /// }))
     /// ```
     ///
-    /// Per-field encoding (sorted by full path, only when field metadata is non-empty):
-    /// ```text
-    /// u64 LE field_path_byte_len
-    /// || field_path_bytes
-    /// || u64 LE meta_json_byte_len
-    /// || meta_json_bytes
-    /// ```
-    ///
-    /// Schema-level encoding (appended after all per-field entries, only when non-empty):
-    /// ```text
-    /// u64 LE schema_meta_json_byte_len
-    /// || schema_meta_json_bytes
-    /// ```
-    ///
-    /// Every block is length-prefixed to prevent concatenation ambiguity: no two distinct
-    /// (field-metadata, schema-metadata) pairs can produce the same byte stream.
+    /// Keys within each metadata map are sorted (via `BTreeMap`). Field paths are sorted
+    /// alphabetically (via `BTreeMap`). The top-level keys `"fields"` and `"schema"` are
+    /// fixed, so `"fields"` always sorts before `"schema"`. Nothing is written when both
+    /// `"fields"` and `"schema"` would be absent.
     fn update_metadata_hash(hasher: &mut D, schema: &Schema) {
         // Collect metadata from all fields recursively (BTreeMap gives deterministic order).
         let mut all_field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
@@ -498,21 +490,28 @@ impl<D: Digest> ArrowDigesterCore<D> {
             all_field_meta.extend(Self::collect_nested_field_metadata(field, ""));
         }
 
-        for (path, meta) in &all_field_meta {
-            let meta_json =
-                serde_json::to_string(meta).expect("Failed to serialize field metadata to string");
-            hasher.update((path.len() as u64).to_le_bytes());
-            hasher.update(path.as_bytes());
-            hasher.update((meta_json.len() as u64).to_le_bytes());
-            hasher.update(meta_json.as_bytes());
+        // Build a BTreeMap so "fields" sorts before "schema" deterministically.
+        let mut meta_doc: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
+        if !all_field_meta.is_empty() {
+            meta_doc.insert(
+                "fields",
+                serde_json::to_value(&all_field_meta)
+                    .expect("Failed to serialize field metadata to JSON value"),
+            );
         }
-
         if !schema.metadata().is_empty() {
             let sorted_meta: BTreeMap<&String, &String> = schema.metadata().iter().collect();
-            let meta_json = serde_json::to_string(&sorted_meta)
-                .expect("Failed to serialize schema metadata to string");
-            hasher.update((meta_json.len() as u64).to_le_bytes());
-            hasher.update(meta_json.as_bytes());
+            meta_doc.insert(
+                "schema",
+                serde_json::to_value(&sorted_meta)
+                    .expect("Failed to serialize schema metadata to JSON value"),
+            );
+        }
+
+        if !meta_doc.is_empty() {
+            let json = serde_json::to_string(&meta_doc)
+                .expect("Failed to serialize metadata doc to JSON string");
+            hasher.update(json.as_bytes());
         }
     }
 
@@ -522,10 +521,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// (including nested fields), returns the structure-only JSON (v0.0.x format) — preserving
     /// the empty-metadata invariant.
     ///
-    /// When `include_metadata` is `true` and metadata is present, appends `|` followed by a
-    /// canonical JSON object `{"field_meta": {...}, "schema_meta": {...}}`. Field paths in
-    /// `field_meta` use [`DELIMITER_FOR_NESTED_FIELD`] and include metadata from nested fields.
-    /// The `|` separator is unambiguous because JSON objects never end with `|`.
+    /// When `include_metadata` is `true` and metadata is present, appends `|` followed by the
+    /// same JSON object format used in `update_metadata_hash`:
+    /// `{"fields": {...}, "schema": {...}}`. The `|` separator is unambiguous because JSON
+    /// objects never end with `|`.
     fn build_schema_equality_key(normalized: &Schema, include_metadata: bool) -> String {
         let structure = Self::serialized_schema(normalized);
         if !include_metadata {
@@ -543,17 +542,28 @@ impl<D: Digest> ArrowDigesterCore<D> {
             return structure;
         }
 
-        let schema_meta: BTreeMap<&str, &str> = normalized
-            .metadata()
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+        // Mirror the same BTreeMap structure used in update_metadata_hash so the equality
+        // key reflects exactly what was hashed.
+        let mut meta_doc: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
+        if !field_meta.is_empty() {
+            meta_doc.insert(
+                "fields",
+                serde_json::to_value(&field_meta)
+                    .expect("Failed to serialize field metadata to JSON value"),
+            );
+        }
+        if !normalized.metadata().is_empty() {
+            let sorted_schema_meta: BTreeMap<&String, &String> =
+                normalized.metadata().iter().collect();
+            meta_doc.insert(
+                "schema",
+                serde_json::to_value(&sorted_schema_meta)
+                    .expect("Failed to serialize schema metadata to JSON value"),
+            );
+        }
 
-        let meta_json = serde_json::to_string(&Self::sort_json_value(serde_json::json!({
-            "field_meta": field_meta,
-            "schema_meta": schema_meta,
-        })))
-        .expect("Failed to serialize metadata equality key to string");
+        let meta_json = serde_json::to_string(&meta_doc)
+            .expect("Failed to serialize metadata equality key to JSON string");
 
         format!("{structure}|{meta_json}")
     }
