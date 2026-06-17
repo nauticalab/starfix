@@ -8,7 +8,7 @@ use sha2::Sha256;
 
 use crate::arrow_digester_core::ArrowDigesterCore;
 
-const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Version 0.0.1
+const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Hash format version 0.0.1 — independent of crate version
 
 /// Configuration for the Arrow hasher.
 #[derive(Clone, Copy, Debug, Default)]

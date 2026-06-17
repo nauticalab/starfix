@@ -1967,4 +1967,37 @@ mod tests {
             encode(ArrowDigester::hash_schema(&schema_schema_meta, config)),
         );
     }
+
+    #[test]
+    fn nested_field_metadata_changes_hash() {
+        // Metadata on a struct child field must change the hash with include_metadata=true.
+        // This validates recursive traversal into nested fields.
+        use arrow_schema::Fields;
+
+        let child_no_meta = Arc::new(Field::new("child", DataType::Int32, false));
+        let child_with_meta = Arc::new(
+            Field::new("child", DataType::Int32, false)
+                .with_metadata([("tag".to_owned(), "v1".to_owned())].into()),
+        );
+
+        let schema_no_meta = Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(Fields::from(vec![child_no_meta])),
+            false,
+        )]);
+        let schema_with_meta = Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(Fields::from(vec![child_with_meta])),
+            false,
+        )]);
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_ne!(
+            encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
+            encode(ArrowDigester::hash_schema(&schema_with_meta, config)),
+            "nested child field metadata must affect the hash when include_metadata=true"
+        );
+    }
 }
