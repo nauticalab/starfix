@@ -168,6 +168,13 @@ This is a semver minor bump under 0.x versioning. The API changes are intentiona
 breaking (new required `config` parameter on three public methods) to make the flag
 explicit at every call site.
 
+**`VERSION_BYTES` must not change.** The constant `VERSION_BYTES: [u8; 3] = [0, 0, 1]`
+in `lib.rs` is a hash-format version prefix prepended to every output of `ArrowDigester`.
+It is independent of the crate's Cargo version. It must remain `[0, 0, 1]` — changing it
+would invalidate every hash produced before this release. The `include_metadata` flag
+changes what is fed into the hasher, but the output format (version prefix + SHA-256
+digest) is unchanged.
+
 ---
 
 ## Test Plan
