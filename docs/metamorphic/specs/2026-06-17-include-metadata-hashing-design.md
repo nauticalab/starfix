@@ -99,31 +99,23 @@ Fields are traversed recursively (struct children, list/map element fields, etc.
 metadata on nested fields is included. Field paths use `/` as a delimiter
 (e.g. `"parent/child"`).
 
-For each field path, sorted alphabetically by full path (BTreeMap order):
 ```
-if !field.metadata().is_empty():
-    meta_json = serde_json::to_string(BTreeMap::from(field.metadata()))
-    hasher.update(field_path.len() as u64, little-endian)
-    hasher.update(field_path as bytes)
-    hasher.update(meta_json.len() as u64, little-endian)
-    hasher.update(meta_json as bytes)
-```
-
-Then, if schema-level metadata is non-empty:
-```
-schema_meta_json = serde_json::to_string(BTreeMap::from(schema.metadata()))
-hasher.update(schema_meta_json.len() as u64, little-endian)
-hasher.update(schema_meta_json as bytes)
+if include_metadata:
+    meta_doc = BTreeMap{}
+    field_meta = collect_nested_field_metadata(schema)   // BTreeMap<path, BTreeMap<k,v>>
+    if !field_meta.is_empty():
+        meta_doc["fields"] = field_meta
+    if !schema.metadata().is_empty():
+        meta_doc["schema"] = BTreeMap::from(schema.metadata())
+    if !meta_doc.is_empty():
+        hasher.update(serde_json::to_string(meta_doc))
 ```
 
-Using `BTreeMap` for both field iteration order and key sorting within each metadata map
-ensures determinism regardless of the original `HashMap` iteration order.
+Using `BTreeMap` for both the top-level document and key sorting within each metadata map
+ensures determinism regardless of the original `HashMap` iteration order. `"fields"` sorts
+before `"schema"` alphabetically, so the key order in the JSON object is stable.
 
-Every metadata block — both per-field and schema-level — is length-prefixed (`u64` LE).
-This prevents concatenation ambiguity: no two distinct (field-metadata, schema-metadata)
-pairs can produce the same byte stream fed into the hasher. A path `"a/b"` cannot produce
-the same byte stream as two sibling paths `"a"` and `"b"`; a schema-level metadata block
-cannot be mistaken for the tail of a per-field entry.
+JSON is self-delimiting — the serialized object is unambiguous without explicit length prefixes.
 
 ---
 
@@ -237,22 +229,22 @@ hasher.update(
 )
 ── {"v":{"data_type":"Int32","nullable":false}}   (44 bytes)
 
-── Phase 2: per-field metadata (BTreeMap order — one field "v") ─────────────
-hasher.update( 01 00 00 00 00 00 00 00 )  ← field path byte-length = 1
-hasher.update( 76 )                        ← "v"
-hasher.update( 11 00 00 00 00 00 00 00 )  ← meta_json byte-length = 17
-hasher.update( 7B 22 75 6E 69 74 22 3A 22 6D 65 74 65 72 73 22 7D )
-── {"unit":"meters"}   (17 bytes)
-
-── (schema has no metadata — nothing added) ─────────────────────────────────
+── Phase 2: metadata JSON (fields key present; no schema-level metadata) ────
+hasher.update(
+  7B 22 66 69 65 6C 64 73 22 3A 7B 22 76 22 3A 7B
+  22 75 6E 69 74 22 3A 22 6D 65 74 65 72 73 22 7D
+  7D 7D
+)
+── {"fields":{"v":{"unit":"meters"}}}   (34 bytes)
 
 schema_digest = hasher.finalize()          ← 32 bytes
 output        = 00 00 01 || schema_digest  ← 35 bytes total
 ```
 
 The structure JSON in Phase 1 is identical to `include_metadata = false` for the same schema.
-Phase 2 appends 8 + 1 + 8 + 17 = 34 additional bytes to the hasher state
-(path_len u64, path bytes, meta_json_len u64, meta_json bytes).
+Phase 2 feeds one JSON object — `{"fields":{"v":{"unit":"meters"}}}` — as a single
+`hasher.update()` call (34 bytes as UTF-8). JSON is self-delimiting so no length prefixes
+are needed.
 
 ---
 
@@ -272,24 +264,24 @@ hasher.update(
 )
 ── {"score":{"data_type":"Int32","nullable":false}}   (48 bytes)
 
-── Phase 2: per-field metadata (BTreeMap order — one field "score") ─────────
-hasher.update( 05 00 00 00 00 00 00 00 )  ← field path byte-length = 5
-hasher.update( 73 63 6F 72 65 )           ← "score"
-hasher.update( 11 00 00 00 00 00 00 00 )  ← meta_json byte-length = 17
-hasher.update( 7B 22 75 6E 69 74 22 3A 22 70 6F 69 6E 74 73 22 7D )
-── {"unit":"points"}   (17 bytes)
-
-── Phase 2: schema-level metadata ───────────────────────────────────────────
-hasher.update( 12 00 00 00 00 00 00 00 )  ← schema_meta_json byte-length = 18
-hasher.update( 7B 22 6F 77 6E 65 72 22 3A 22 74 65 61 6D 2D 61 22 7D )
-── {"owner":"team-a"}   (18 bytes)
+── Phase 2: metadata JSON ("fields" before "schema" — BTreeMap order) ───────
+hasher.update(
+  7B 22 66 69 65 6C 64 73 22 3A 7B 22 73 63 6F 72
+  65 22 3A 7B 22 75 6E 69 74 22 3A 22 70 6F 69 6E
+  74 73 22 7D 7D 2C 22 73 63 68 65 6D 61 22 3A 7B
+  22 6F 77 6E 65 72 22 3A 22 74 65 61 6D 2D 61 22
+  7D 7D
+)
+── {"fields":{"score":{"unit":"points"}},"schema":{"owner":"team-a"}}   (65 bytes)
 
 schema_digest = hasher.finalize()          ← 32 bytes
 output        = 00 00 01 || schema_digest  ← 35 bytes total
 ```
 
-Both the field-level and schema-level blocks are length-prefixed with a `u64` LE byte-count,
-so the concatenation is unambiguous regardless of metadata key or value content.
+Both the field-level and schema-level metadata are combined into one JSON object and fed as
+a single `hasher.update()` call. `"fields"` sorts before `"schema"` in BTreeMap order, so
+the key ordering in the serialized JSON is deterministic. JSON is self-delimiting —
+the serialized object is unambiguous without explicit length prefixes.
 
 When this schema is used with `hash_record_batch`, the `schema_digest` above is fed as the
 first update into the final combiner, followed by the per-field data digests exactly as in

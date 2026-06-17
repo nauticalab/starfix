@@ -269,22 +269,20 @@ The canonical JSON of field names, data types, and nullability is fed into the h
 
 **Phase 2 — Metadata (only when `include_metadata = true`):**
 
-*Per-field metadata* (fields traversed recursively — includes struct children, list element fields, etc.):
-For each field path with non-empty metadata, sorted alphabetically by full path:
-```
-hasher.update( path_len as u64 LE )    // 8 bytes
-hasher.update( path_bytes )
-hasher.update( meta_json_len as u64 LE )  // 8 bytes
-hasher.update( meta_json_bytes )           // serde_json of BTreeMap-sorted key→value pairs
+A single JSON object is built and fed as one hasher update. It has up to two keys:
+- `"fields"`: a map of field path → metadata map, present when any field (including nested
+  fields in structs/lists) has non-empty metadata. Paths are `/`-delimited and alphabetically ordered.
+- `"schema"`: the schema-level metadata map, present when non-empty.
+
+```rust
+// pseudo-code
+let mut meta_doc = BTreeMap::new();
+if any_field_has_metadata { meta_doc.insert("fields", field_metadata_btreemap); }
+if schema_has_metadata    { meta_doc.insert("schema", schema_metadata_btreemap); }
+if !meta_doc.is_empty()   { hasher.update(serde_json::to_string(&meta_doc)); }
 ```
 
-*Schema-level metadata* (if schema.metadata() is non-empty):
-```
-hasher.update( schema_meta_json_len as u64 LE )  // 8 bytes
-hasher.update( schema_meta_json_bytes )
-```
-
-Every block is length-prefixed to prevent concatenation ambiguity.
+JSON is self-delimiting, so no length prefixes are needed.
 
 ### Empty-metadata invariant
 
