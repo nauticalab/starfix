@@ -146,7 +146,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
         // Flatten all nested fields into a single map for per-field hashing
         let mut fields_digest_buffer = BTreeMap::new();
-        for field in normalized.fields.into_iter() {
+        for field in &normalized.fields {
             Self::extract_fields_name(field, "", &mut fields_digest_buffer);
         }
 
@@ -433,6 +433,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     .expect("Failed to serialize field metadata to string");
                 hasher.update((field.name().len() as u64).to_le_bytes());
                 hasher.update(field.name().as_bytes());
+                hasher.update((meta_json.len() as u64).to_le_bytes());
                 hasher.update(meta_json.as_bytes());
             }
         }
@@ -488,10 +489,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        let meta_json = serde_json::to_string(&serde_json::json!({
+        let meta_json = serde_json::to_string(&Self::sort_json_value(serde_json::json!({
             "field_meta": field_meta,
             "schema_meta": schema_meta,
-        }))
+        })))
         .expect("Failed to serialize metadata equality key to string");
 
         format!("{structure}|{meta_json}")
