@@ -126,43 +126,49 @@ fn normalize_schema(schema: &Schema) -> Schema {
 #[derive(Clone)]
 pub struct ArrowDigesterCore<D: Digest> {
     schema_digest: Vec<u8>,
-    serialized_schema: String,
+    schema_equality_key: String,
     fields_digest_buffer: BTreeMap<String, DigestBufferType<D>>,
+    include_metadata: bool,
 }
 
 impl<D: Digest> ArrowDigesterCore<D> {
     /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
-    #[expect(
-        clippy::shadow_reuse,
-        reason = "Intentional: shadow input with normalized version so all downstream code uses canonical types"
-    )]
-    pub fn new(schema: &Schema) -> Self {
-        // Normalize the schema so all internal state uses canonical large types
-        let schema = normalize_schema(schema);
+    pub fn new(schema: &Schema, include_metadata: bool) -> Self {
+        // Normalize the schema to canonical large types (drops metadata — use original for metadata hashing)
+        let normalized = normalize_schema(schema);
 
-        // Hash the normalized schema
-        let schema_digest = Self::hash_schema(&schema);
+        // Hash the schema — passes original so Phase 2 can read metadata
+        let schema_digest = Self::hash_schema(schema, include_metadata);
 
-        // Flatten all nested fields into a single map, this allows us to hash each field individually and efficiently
+        // Build the equality key used in update() to enforce schema identity
+        let schema_equality_key =
+            Self::build_schema_equality_key(&normalized, schema, include_metadata);
+
+        // Flatten all nested fields into a single map for per-field hashing
         let mut fields_digest_buffer = BTreeMap::new();
-        schema.fields.into_iter().for_each(|field| {
+        for field in normalized.fields.into_iter() {
             Self::extract_fields_name(field, "", &mut fields_digest_buffer);
-        });
+        }
 
-        let serialized_schema = Self::serialized_schema(&schema);
-
-        // Store it in the new struct for now
         Self {
             schema_digest,
-            serialized_schema,
+            schema_equality_key,
             fields_digest_buffer,
+            include_metadata,
         }
     }
 
     /// Hash a record batch and update the internal digests.
     pub fn update(&mut self, record_batch: &RecordBatch) {
+        let rb_schema = record_batch.schema();
+        let rb_normalized = normalize_schema(&rb_schema);
+        let rb_equality_key = Self::build_schema_equality_key(
+            &rb_normalized,
+            rb_schema.as_ref(),
+            self.include_metadata,
+        );
         assert!(
-            Self::serialized_schema(record_batch.schema().as_ref()) == self.serialized_schema,
+            rb_equality_key == self.schema_equality_key,
             "Record batch schema does not match ArrowDigester schema"
         );
 
@@ -250,8 +256,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
     }
 
     /// Hash a record batch directly without needing to create an `ArrowDigester` instance on the user side.
-    pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
-        let mut digester = Self::new(record_batch.schema().as_ref());
+    pub fn hash_record_batch(record_batch: &RecordBatch, include_metadata: bool) -> Vec<u8> {
+        let mut digester = Self::new(record_batch.schema().as_ref(), include_metadata);
         digester.update(record_batch);
         digester.finalize()
     }
@@ -386,10 +392,109 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Hash the schema by serializing it to a canonical JSON string and computing its digest.
-    pub fn hash_schema(schema: &Schema) -> Vec<u8> {
-        // Hash the entire thing to the digest
-        D::digest(Self::serialized_schema(schema)).to_vec()
+    /// Hash the schema in two phases.
+    ///
+    /// Phase 1 (always): canonical JSON of field names, data types, nullability — identical to v0.0.x.
+    /// Phase 2 (when `include_metadata` is `true`): per-field and schema-level metadata fed into the
+    /// same hasher via `update_metadata_hash`. Phase 2 adds nothing when all metadata maps are empty,
+    /// preserving the empty-metadata invariant.
+    ///
+    /// `schema` must be the original (pre-normalization) schema so that metadata is available for
+    /// Phase 2. Normalization for Phase 1 is handled internally.
+    pub fn hash_schema(schema: &Schema, include_metadata: bool) -> Vec<u8> {
+        let normalized = normalize_schema(schema);
+        let mut hasher = D::new();
+        hasher.update(Self::serialized_schema(&normalized));
+        if include_metadata {
+            Self::update_metadata_hash(&mut hasher, schema);
+        }
+        hasher.finalize().to_vec()
+    }
+
+    /// Feed per-field and schema-level metadata into `hasher` for Phase 2 of schema hashing.
+    ///
+    /// Fields are visited in alphabetical order. Metadata keys within each map are sorted via
+    /// `BTreeMap` to guarantee determinism regardless of `HashMap` iteration order.
+    /// Nothing is written when both the per-field and schema-level metadata maps are empty,
+    /// preserving the empty-metadata invariant.
+    ///
+    /// Per-field encoding: `u64 LE field_name_byte_len || field_name_bytes || sorted_meta_json_bytes`
+    /// The length prefix prevents ambiguity between a field named `"a:b"` and two fields `"a"`, `"b"`.
+    ///
+    /// Schema-level encoding: `sorted_schema_meta_json_bytes` appended after all field entries.
+    fn update_metadata_hash(hasher: &mut D, schema: &Schema) {
+        let mut sorted_fields: Vec<&Arc<Field>> = schema.fields().iter().collect();
+        sorted_fields.sort_by(|a, b| a.name().cmp(b.name()));
+
+        for field in sorted_fields {
+            if !field.metadata().is_empty() {
+                let sorted_meta: BTreeMap<&String, &String> = field.metadata().iter().collect();
+                let meta_json = serde_json::to_string(&sorted_meta)
+                    .expect("Failed to serialize field metadata to string");
+                hasher.update((field.name().len() as u64).to_le_bytes());
+                hasher.update(field.name().as_bytes());
+                hasher.update(meta_json.as_bytes());
+            }
+        }
+
+        if !schema.metadata().is_empty() {
+            let sorted_meta: BTreeMap<&String, &String> = schema.metadata().iter().collect();
+            let meta_json = serde_json::to_string(&sorted_meta)
+                .expect("Failed to serialize schema metadata to string");
+            hasher.update(meta_json.as_bytes());
+        }
+    }
+
+    /// Build a canonical string key for schema identity enforcement in `update()`.
+    ///
+    /// When `include_metadata` is `false`, or when the schema has no metadata anywhere,
+    /// returns the structure-only JSON (v0.0.x format) — preserving the empty-metadata invariant.
+    ///
+    /// When `include_metadata` is `true` and metadata is present, appends `|` followed by a
+    /// canonical JSON object `{"field_meta": {...}, "schema_meta": {...}}`. The `|` separator is
+    /// unambiguous because JSON objects never end with `|`.
+    fn build_schema_equality_key(
+        normalized: &Schema,
+        original: &Schema,
+        include_metadata: bool,
+    ) -> String {
+        let structure = Self::serialized_schema(normalized);
+        if !include_metadata {
+            return structure;
+        }
+        let has_any_metadata = !original.metadata().is_empty()
+            || original.fields().iter().any(|f| !f.metadata().is_empty());
+        if !has_any_metadata {
+            return structure;
+        }
+
+        let field_meta: BTreeMap<&str, BTreeMap<&str, &str>> = original
+            .fields()
+            .iter()
+            .filter(|f| !f.metadata().is_empty())
+            .map(|f| {
+                let sorted: BTreeMap<&str, &str> = f
+                    .metadata()
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                (f.name().as_str(), sorted)
+            })
+            .collect();
+
+        let schema_meta: BTreeMap<&str, &str> = original
+            .metadata()
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let meta_json = serde_json::to_string(&serde_json::json!({
+            "field_meta": field_meta,
+            "schema_meta": schema_meta,
+        }))
+        .expect("Failed to serialize metadata equality key to string");
+
+        format!("{structure}|{meta_json}")
     }
 
     /// Top-down recursive traversal that routes data to `BTreeMap` entries.

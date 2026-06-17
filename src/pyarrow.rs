@@ -5,7 +5,7 @@
 )]
 use std::sync::{Arc, Mutex};
 
-use crate::ArrowDigester;
+use crate::{ArrowDigester, HasherConfig};
 use arrow::array::{RecordBatch, StructArray};
 use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_schema::Schema;
@@ -36,7 +36,10 @@ pub fn hash_record_batch(array_ptr: u64, schema_ptr: u64) -> Vec<u8> {
     };
 
     // Hash the table
-    ArrowDigester::hash_record_batch(&RecordBatch::from(StructArray::from(array_data)))
+    ArrowDigester::hash_record_batch(
+        &RecordBatch::from(StructArray::from(array_data)),
+        HasherConfig::default(),
+    )
 }
 
 /// Process an Arrow schema via C Data Interface
@@ -57,7 +60,7 @@ pub fn hash_schema(schema_ptr: u64) -> Vec<u8> {
     };
 
     // Hash the schema
-    ArrowDigester::hash_schema(&schema)
+    ArrowDigester::hash_schema(&schema, HasherConfig::default())
 }
 
 #[derive(uniffi::Object)]
@@ -81,7 +84,10 @@ impl InternalPyArrowDigester {
             Schema::try_from(&ffi_schema).expect("Failed to convert FFI schema to Arrow schema")
         };
         Self {
-            digester: Arc::new(Mutex::new(ArrowDigester::new(&schema))),
+            digester: Arc::new(Mutex::new(ArrowDigester::new(
+                &schema,
+                HasherConfig::default(),
+            ))),
         }
     }
 
