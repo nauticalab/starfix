@@ -103,24 +103,31 @@ fn normalize_data_type(data_type: &DataType) -> DataType {
     }
 }
 
-/// Normalize a single field: keep name and nullability, normalize the data type recursively.
+/// Normalize a single field: keep name, nullability, and metadata; normalize the data type recursively.
 fn normalize_field(field: &Field) -> Field {
-    Field::new(
+    let mut normalized = Field::new(
         field.name(),
         normalize_data_type(field.data_type()),
         field.is_nullable(),
-    )
+    );
+    if !field.metadata().is_empty() {
+        normalized = normalized.with_metadata(field.metadata().clone());
+    }
+    normalized
 }
 
-/// Normalize all fields in a schema to their canonical large equivalents.
+/// Normalize all fields in a schema to their canonical large equivalents, preserving metadata.
 fn normalize_schema(schema: &Schema) -> Schema {
-    Schema::new(
-        schema
-            .fields()
-            .iter()
-            .map(|f| Arc::new(normalize_field(f)))
-            .collect::<Vec<_>>(),
-    )
+    let fields: Vec<Arc<Field>> = schema
+        .fields()
+        .iter()
+        .map(|f| Arc::new(normalize_field(f)))
+        .collect();
+    if schema.metadata().is_empty() {
+        Schema::new(fields)
+    } else {
+        Schema::new_with_metadata(fields, schema.metadata().clone())
+    }
 }
 
 #[derive(Clone)]
@@ -134,15 +141,14 @@ pub struct ArrowDigesterCore<D: Digest> {
 impl<D: Digest> ArrowDigesterCore<D> {
     /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
     pub fn new(schema: &Schema, include_metadata: bool) -> Self {
-        // Normalize the schema to canonical large types (drops metadata — use original for metadata hashing)
+        // Normalize the schema to canonical large types (metadata is preserved by normalize_schema)
         let normalized = normalize_schema(schema);
 
-        // Hash the schema — passes original so Phase 2 can read metadata
+        // Hash the schema using the normalized form (which retains metadata)
         let schema_digest = Self::hash_schema(schema, include_metadata);
 
         // Build the equality key used in update() to enforce schema identity
-        let schema_equality_key =
-            Self::build_schema_equality_key(&normalized, schema, include_metadata);
+        let schema_equality_key = Self::build_schema_equality_key(&normalized, include_metadata);
 
         // Flatten all nested fields into a single map for per-field hashing
         let mut fields_digest_buffer = BTreeMap::new();
@@ -162,11 +168,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
     pub fn update(&mut self, record_batch: &RecordBatch) {
         let rb_schema = record_batch.schema();
         let rb_normalized = normalize_schema(&rb_schema);
-        let rb_equality_key = Self::build_schema_equality_key(
-            &rb_normalized,
-            rb_schema.as_ref(),
-            self.include_metadata,
-        );
+        let rb_equality_key =
+            Self::build_schema_equality_key(&rb_normalized, self.include_metadata);
         assert!(
             rb_equality_key == self.schema_equality_key,
             "Record batch schema does not match ArrowDigester schema"
@@ -399,14 +402,13 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// same hasher via `update_metadata_hash`. Phase 2 adds nothing when all metadata maps are empty,
     /// preserving the empty-metadata invariant.
     ///
-    /// `schema` must be the original (pre-normalization) schema so that metadata is available for
-    /// Phase 2. Normalization for Phase 1 is handled internally.
+    /// `normalize_schema` preserves metadata, so the normalized schema is used for both phases.
     pub fn hash_schema(schema: &Schema, include_metadata: bool) -> Vec<u8> {
         let normalized = normalize_schema(schema);
         let mut hasher = D::new();
         hasher.update(Self::serialized_schema(&normalized));
         if include_metadata {
-            Self::update_metadata_hash(&mut hasher, schema);
+            Self::update_metadata_hash(&mut hasher, &normalized);
         }
         hasher.finalize().to_vec()
     }
@@ -513,11 +515,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// canonical JSON object `{"field_meta": {...}, "schema_meta": {...}}`. Field paths in
     /// `field_meta` use [`DELIMITER_FOR_NESTED_FIELD`] and include metadata from nested fields.
     /// The `|` separator is unambiguous because JSON objects never end with `|`.
-    fn build_schema_equality_key(
-        normalized: &Schema,
-        original: &Schema,
-        include_metadata: bool,
-    ) -> String {
+    fn build_schema_equality_key(normalized: &Schema, include_metadata: bool) -> String {
         let structure = Self::serialized_schema(normalized);
         if !include_metadata {
             return structure;
@@ -525,16 +523,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
         // Collect all field metadata recursively (includes nested fields).
         let mut field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-        for field in original.fields() {
+        for field in normalized.fields() {
             field_meta.extend(Self::collect_nested_field_metadata(field, ""));
         }
 
-        let has_any_metadata = !original.metadata().is_empty() || !field_meta.is_empty();
+        let has_any_metadata = !normalized.metadata().is_empty() || !field_meta.is_empty();
         if !has_any_metadata {
             return structure;
         }
 
-        let schema_meta: BTreeMap<&str, &str> = original
+        let schema_meta: BTreeMap<&str, &str> = normalized
             .metadata()
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
