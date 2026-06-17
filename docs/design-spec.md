@@ -11,7 +11,7 @@ Starfix computes **stable, logical hashes** of Apache Arrow tables and record ba
 - Batch partitioning (one large batch vs. many small batches)
 - Presence or absence of a validity bitmap when all values are non-null
 
-The hash algorithm is parameterized via Rust's `digest::Digest` trait. The public `ArrowDigester` type binds it to **SHA-256** and prepends a 3-byte version prefix (`0x00 0x00 0x01` for v0.0.1).
+The hash algorithm is parameterized via Rust's `digest::Digest` trait. The public `ArrowDigester` type binds it to **SHA-256** and prepends a 3-byte version prefix (`0x00 0x00 0x01` for v0.0.1). A `HasherConfig` parameter (with `include_metadata: bool`, default `false`) controls whether Arrow metadata — key-value string maps attached to schemas and fields — is incorporated into the schema digest.
 
 ---
 
@@ -25,6 +25,7 @@ The hash algorithm is parameterized via Rust's `digest::Digest` trait. The publi
 | **Structural digest** | A running hash of element counts for list-type fields, separating structure from leaf data. |
 | **Schema digest** | A hash of the canonicalized JSON representation of the schema. |
 | **Field path** | A `/`-separated path for nested struct fields (e.g., `address/city`). |
+| **HasherConfig** | Configuration struct with `include_metadata: bool` (default `false`). When `true`, schema-level and per-field Arrow metadata is incorporated into the schema digest. |
 
 ---
 
@@ -122,9 +123,68 @@ All JSON objects have their keys sorted recursively via `sort_json_value` to ens
 
 ### 4.3 Schema Digest Computation
 
+Both phases below feed into a **single SHA-256 hasher instance**.
+
+**When `include_metadata = false` (default — Phase 1 only):**
+
 ```
 schema_digest = SHA256(canonical_json_string)
 ```
+
+This is identical to the existing behavior. Metadata attached to the schema or its fields is ignored.
+
+**When `include_metadata = true` (Phase 1 + Phase 2):**
+
+Phase 1 is identical — the canonical JSON bytes are fed into the hasher first:
+
+```
+hasher.update(canonical_json_string_bytes)
+```
+
+Phase 2 then appends per-field metadata and schema-level metadata into the same hasher.
+
+*Per-field metadata (Phase 2a):*
+
+Fields are traversed recursively (struct children, list/map element fields), collecting per-field metadata. Field paths use `/` as the delimiter. Only fields with non-empty metadata are included, and they are processed in alphabetical path order (via `BTreeMap`). For each such field path:
+
+```
+hasher.update( (path_bytes.len() as u64).to_le_bytes() )       // 8 bytes, u64 LE
+hasher.update( path_bytes )
+hasher.update( (meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
+hasher.update( meta_json_bytes )    // serde_json of BTreeMap-sorted key→value pairs
+```
+
+*Schema-level metadata (Phase 2b):*
+
+After all per-field metadata, if the schema-level metadata map is non-empty:
+
+```
+hasher.update( (schema_meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
+hasher.update( schema_meta_json_bytes )
+```
+
+**Empty-metadata invariant:** When a schema has no metadata on any field and no schema-level metadata, Phase 2 adds nothing to the hasher. Therefore, `include_metadata = true` on a metadata-free schema produces the same hash as `include_metadata = false`.
+
+---
+
+### 4.4 HasherConfig
+
+```rust
+pub struct HasherConfig {
+    pub include_metadata: bool,
+}
+```
+
+`HasherConfig::default()` sets `include_metadata = false`, preserving backward-compatible behavior.
+
+`HasherConfig` is passed as a parameter to the following public methods:
+- `ArrowDigester::new(schema: &Schema, config: HasherConfig)`
+- `ArrowDigester::hash_schema(schema: &Schema, config: HasherConfig) -> Vec<u8>`
+- `ArrowDigester::hash_record_batch(rb: &RecordBatch, config: HasherConfig) -> Vec<u8>`
+
+`hash_array()` is **not** affected — it operates on a single array without a schema context and never calls `hash_schema`.
+
+Future options (e.g., per-key filters, separate schema-level vs. field-level toggles) will be added as new fields on `HasherConfig` with default values, maintaining backward compatibility.
 
 ---
 
@@ -306,10 +366,14 @@ If the input is a dictionary array, it is first resolved to its plain value type
 
 ## 9. Schema Equality in `update()`
 
-When `update(record_batch)` is called, the record batch's schema is compared against the digester's schema **logically** — both schemas are serialized via `serialized_schema()` (which uses `data_type_to_value` with type canonicalization) and the resulting strings are compared. This means:
+When `update(record_batch)` is called, the record batch's schema is compared against the digester's schema using the `schema_equality_key` field on `ArrowDigesterCore` (renamed from `serialized_schema` in v0.1.0). The equality key is derived from `data_type_to_value` with type canonicalization.
+
+**When `include_metadata = false` (default):** Behavior is unchanged — equality is based solely on field names, types, and nullability. Metadata differences between the incoming batch's schema and the construction schema are ignored. This means:
 - Column order doesn't matter (both are sorted by `BTreeMap`).
 - `Utf8` vs `LargeUtf8`, `Binary` vs `LargeBinary`, `List` vs `LargeList` are treated as equivalent.
 - Dictionary types are canonicalized to their value types.
+
+**When `include_metadata = true`:** The `schema_equality_key` also incorporates metadata. Batches whose schema metadata (schema-level or field-level) differs from the schema used at construction time are **rejected** by `update()`.
 
 ---
 

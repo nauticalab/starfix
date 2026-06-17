@@ -64,13 +64,49 @@ Note: the Arrow-internal field name (typically `"item"`) is **omitted** — only
 - `"Int32"`, `"Boolean"`, `"Float64"`, `"LargeBinary"`, `"LargeUtf8"`, etc.
 - `{"Decimal128": [38, 5]}`, `{"Time32": "Second"}`, etc.
 
-### 2.2 Schema Digest
+### 2.2 Schema Digest (include_metadata = false)
 
 ```
 schema_digest = SHA-256(canonical_json_string_bytes)
 ```
 
 The UTF-8 bytes of the JSON string are fed directly into SHA-256. The result is 32 bytes.
+
+This is the default behaviour (`HasherConfig { include_metadata: false }`). Only the canonical JSON produced in Section 2.1 contributes to the digest.
+
+### 2.2.1 Schema Digest with Metadata (include_metadata = true)
+
+When `HasherConfig { include_metadata: true }` is set, the schema digest is computed by a **two-phase** process that feeds into a **single SHA-256 hasher instance**.
+
+**Phase 1 (always — identical to Section 2.2):**
+
+```
+hasher.update(canonical_json_string_bytes)
+```
+
+**Phase 2 (only when `include_metadata = true`):**
+
+Fields are traversed recursively (struct children, list/map element fields, etc.) to collect per-field metadata. Field paths use `/` as the delimiter and are processed in **alphabetical path order** (via `BTreeMap`).
+
+For each field path with **non-empty** metadata:
+
+```
+hasher.update( (path_bytes.len() as u64).to_le_bytes() )       // 8 bytes, u64 LE
+hasher.update( path_bytes )
+hasher.update( (meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
+hasher.update( meta_json_bytes )   // serde_json of BTreeMap-sorted key→value pairs
+```
+
+Then, if the **schema-level** metadata is non-empty:
+
+```
+hasher.update( (schema_meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
+hasher.update( schema_meta_json_bytes )
+```
+
+The final `schema_digest` is `hasher.finalize()` — 32 bytes, as before.
+
+**Empty-metadata invariant:** When a schema has no metadata at any level, Phase 2 adds nothing to the hasher. A schema with `include_metadata = true` therefore produces the **same hash** as `include_metadata = false` when no metadata is present.
 
 ### 2.3 Concrete Example
 
@@ -1134,6 +1170,109 @@ output = 0x000001 ++ final_digest.finalize()
 ```
 
 Note: unlike `hash_record_batch`, `hash_array` feeds the **type JSON** (not a schema digest) directly into the final digest. See Section 6 for the full `hash_array` layout.
+
+---
+
+### Example R: hash_schema with Per-Field Metadata (include_metadata = true)
+
+**Schema**: `{v: Int32 non-nullable}`, field `v` metadata: `{"unit": "meters"}`, `include_metadata = true`
+
+#### Step 1 (Phase 1): Canonical JSON
+
+The canonical JSON string for this schema is:
+```
+{"v":{"data_type":"Int32","nullable":false}}
+```
+
+UTF-8 bytes (44 bytes):
+```
+7B 22 76 22 3A 7B 22 64 61 74 61 5F 74 79 70 65
+22 3A 22 49 6E 74 33 32 22 2C 22 6E 75 6C 6C 61
+62 6C 65 22 3A 66 61 6C 73 65 7D 7D
+```
+
+```
+hasher.update(canonical_json_string_bytes)    // 44 bytes
+```
+
+#### Step 2 (Phase 2): Per-Field Metadata
+
+Field `v` has non-empty metadata `{"unit": "meters"}`. Its path is `"v"` (1 byte: `76`). The metadata JSON is `{"unit":"meters"}` (17 bytes, BTreeMap-sorted keys).
+
+Per-field encoding for path `"v"`:
+
+```
+hasher.update( 01 00 00 00 00 00 00 00 )   // path_len = 1 as u64 LE (8 bytes)
+hasher.update( 76 )                         // "v" (1 byte)
+hasher.update( 11 00 00 00 00 00 00 00 )   // meta_json_len = 17 as u64 LE (8 bytes)
+hasher.update( 7B 22 75 6E 69 74 22 3A 22 6D 65 74 65 72 73 22 7D )
+                                            // {"unit":"meters"} (17 bytes)
+```
+
+No schema-level metadata → nothing added for the schema level.
+
+Total bytes fed to hasher: 44 (Phase 1) + 8 + 1 + 8 + 17 (Phase 2) = 78 bytes.
+
+#### Step 3: Schema Digest
+
+```
+schema_digest = hasher.finalize()    // 32 bytes
+```
+
+#### Step 4: Final Output
+
+```
+output = 00 00 01 || schema_digest   // 35 bytes
+```
+
+Note: with `include_metadata = false` for this same schema, only the 44 Phase 1 bytes would be fed into SHA-256, producing a different digest.
+
+---
+
+### Example S: hash_schema with Schema-Level Metadata (include_metadata = true)
+
+**Schema**: `{v: Int32 non-nullable}`, no field metadata, schema-level metadata: `{"source": "sensor-1"}`, `include_metadata = true`
+
+#### Step 1 (Phase 1): Canonical JSON
+
+Same schema structure as Example R:
+```
+{"v":{"data_type":"Int32","nullable":false}}
+```
+
+```
+hasher.update(canonical_json_string_bytes)    // 44 bytes (same as Example R)
+```
+
+#### Step 2 (Phase 2): Per-Field Metadata
+
+Field `v` has no metadata → nothing added for field paths.
+
+#### Step 3 (Phase 2): Schema-Level Metadata
+
+The schema-level metadata `{"source":"sensor-1"}` is non-empty. Its JSON serialization (BTreeMap-sorted keys) is `{"source":"sensor-1"}` = 21 bytes:
+
+```
+7B 22 73 6F 75 72 63 65 22 3A 22 73 65 6E 73 6F
+72 2D 31 22 7D
+```
+
+Schema-level encoding:
+
+```
+hasher.update( 15 00 00 00 00 00 00 00 )   // schema_meta_json_len = 21 as u64 LE (8 bytes)
+hasher.update( 7B 22 73 6F 75 72 63 65 22 3A 22 73 65 6E 73 6F 72 2D 31 22 7D )
+                                            // {"source":"sensor-1"} (21 bytes)
+```
+
+Total bytes fed to hasher: 44 (Phase 1) + 8 + 21 (Phase 2 schema level) = 73 bytes.
+
+#### Step 4: Schema Digest and Final Output
+
+```
+schema_digest = hasher.finalize()           // 32 bytes
+output = 00 00 01 || schema_digest          // 35 bytes
+```
 
 ---
 
