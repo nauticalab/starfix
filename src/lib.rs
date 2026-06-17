@@ -34,9 +34,9 @@ pub struct ArrowDigester {
 
 impl ArrowDigester {
     /// Create a new instance of `ArrowDigester` with SHA-256 as the digest algorithm. The schema will be enforced on each update.
-    pub fn new(schema: &Schema) -> Self {
+    pub fn new(schema: &Schema, config: HasherConfig) -> Self {
         Self {
-            digester: ArrowDigesterCore::<Sha256>::new(schema),
+            digester: ArrowDigesterCore::<Sha256>::new(schema, config.include_metadata),
         }
     }
 
@@ -56,13 +56,19 @@ impl ArrowDigester {
     }
 
     /// Hash a complete `RecordBatch` in one go.
-    pub fn hash_record_batch(record_batch: &RecordBatch) -> Vec<u8> {
-        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(record_batch))
+    pub fn hash_record_batch(record_batch: &RecordBatch, config: HasherConfig) -> Vec<u8> {
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(
+            record_batch,
+            config.include_metadata,
+        ))
     }
 
     /// Hash a schema only.
-    pub fn hash_schema(schema: &Schema) -> Vec<u8> {
-        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_schema(schema))
+    pub fn hash_schema(schema: &Schema, config: HasherConfig) -> Vec<u8> {
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_schema(
+            schema,
+            config.include_metadata,
+        ))
     }
 
     fn prepend_version_bytes(digest: Vec<u8>) -> Vec<u8> {
