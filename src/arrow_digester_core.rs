@@ -411,40 +411,88 @@ impl<D: Digest> ArrowDigesterCore<D> {
         hasher.finalize().to_vec()
     }
 
+    /// Recursively collect per-field metadata from a field and all its nested children.
+    ///
+    /// Returns a `BTreeMap` keyed by the full field path (parent and child names joined by
+    /// [`DELIMITER_FOR_NESTED_FIELD`]). Only fields with non-empty metadata are included.
+    /// Because the result is a `BTreeMap`, entries are automatically ordered by path, giving
+    /// deterministic traversal regardless of struct child insertion order.
+    ///
+    /// Traversal descends into `Struct`, `List`, `LargeList`, `FixedSizeList`, and `Map` types.
+    fn collect_nested_field_metadata(
+        field: &Field,
+        prefix: &str,
+    ) -> BTreeMap<String, BTreeMap<String, String>> {
+        let path = if prefix.is_empty() {
+            field.name().to_owned()
+        } else {
+            format!("{prefix}{DELIMITER_FOR_NESTED_FIELD}{}", field.name())
+        };
+
+        let mut result: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+
+        if !field.metadata().is_empty() {
+            let sorted_meta: BTreeMap<String, String> = field
+                .metadata()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            result.insert(path.clone(), sorted_meta);
+        }
+
+        match field.data_type() {
+            DataType::Struct(children) => {
+                for child in children {
+                    result.extend(Self::collect_nested_field_metadata(child, &path));
+                }
+            }
+            DataType::List(inner)
+            | DataType::LargeList(inner)
+            | DataType::FixedSizeList(inner, _)
+            | DataType::Map(inner, _) => {
+                result.extend(Self::collect_nested_field_metadata(inner, &path));
+            }
+            _ => {}
+        }
+
+        result
+    }
+
     /// Feed per-field and schema-level metadata into `hasher` for Phase 2 of schema hashing.
     ///
-    /// Fields are visited in alphabetical order. Metadata keys within each map are sorted via
-    /// `BTreeMap` to guarantee determinism regardless of `HashMap` iteration order.
-    /// Nothing is written when both the per-field and schema-level metadata maps are empty,
+    /// All fields are visited recursively (struct children, list/map element fields, etc.) so
+    /// that metadata on nested fields is included. Field paths use
+    /// [`DELIMITER_FOR_NESTED_FIELD`] as a separator (e.g. `"parent/child"`). Metadata keys
+    /// within each map are sorted via `BTreeMap` to guarantee determinism regardless of
+    /// `HashMap` iteration order. Nothing is written when all metadata maps are empty,
     /// preserving the empty-metadata invariant.
     ///
-    /// Per-field encoding (per field, in alphabetical order, only when metadata is non-empty):
+    /// Per-field encoding (sorted by full path, only when field metadata is non-empty):
     /// ```text
-    /// u64 LE field_name_byte_len
-    /// || field_name_bytes
+    /// u64 LE field_path_byte_len
+    /// || field_path_bytes
     /// || u64 LE meta_json_byte_len
     /// || meta_json_bytes   (UTF-8 JSON of BTreeMap-sorted key→value pairs)
     /// ```
-    /// Both the field name and the metadata JSON are length-prefixed to prevent concatenation
-    /// ambiguity (e.g. a field named `"a:b"` cannot produce the same byte stream as two fields
-    /// `"a"` and `"b"`, and a metadata value containing `"}{` cannot shift boundaries).
+    /// Both the field path and the metadata JSON are length-prefixed to prevent concatenation
+    /// ambiguity.
     ///
     /// Schema-level encoding: `sorted_schema_meta_json_bytes` (without a length prefix) appended
     /// after all per-field entries, guarded by `!schema.metadata().is_empty()`.
     fn update_metadata_hash(hasher: &mut D, schema: &Schema) {
-        let mut sorted_fields: Vec<&Arc<Field>> = schema.fields().iter().collect();
-        sorted_fields.sort_by(|a, b| a.name().cmp(b.name()));
+        // Collect metadata from all fields recursively (BTreeMap gives deterministic order).
+        let mut all_field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        for field in schema.fields() {
+            all_field_meta.extend(Self::collect_nested_field_metadata(field, ""));
+        }
 
-        for field in sorted_fields {
-            if !field.metadata().is_empty() {
-                let sorted_meta: BTreeMap<&String, &String> = field.metadata().iter().collect();
-                let meta_json = serde_json::to_string(&sorted_meta)
-                    .expect("Failed to serialize field metadata to string");
-                hasher.update((field.name().len() as u64).to_le_bytes());
-                hasher.update(field.name().as_bytes());
-                hasher.update((meta_json.len() as u64).to_le_bytes());
-                hasher.update(meta_json.as_bytes());
-            }
+        for (path, meta) in &all_field_meta {
+            let meta_json =
+                serde_json::to_string(meta).expect("Failed to serialize field metadata to string");
+            hasher.update((path.len() as u64).to_le_bytes());
+            hasher.update(path.as_bytes());
+            hasher.update((meta_json.len() as u64).to_le_bytes());
+            hasher.update(meta_json.as_bytes());
         }
 
         if !schema.metadata().is_empty() {
@@ -457,12 +505,14 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Build a canonical string key for schema identity enforcement in `update()`.
     ///
-    /// When `include_metadata` is `false`, or when the schema has no metadata anywhere,
-    /// returns the structure-only JSON (v0.0.x format) — preserving the empty-metadata invariant.
+    /// When `include_metadata` is `false`, or when the schema has no metadata anywhere
+    /// (including nested fields), returns the structure-only JSON (v0.0.x format) — preserving
+    /// the empty-metadata invariant.
     ///
     /// When `include_metadata` is `true` and metadata is present, appends `|` followed by a
-    /// canonical JSON object `{"field_meta": {...}, "schema_meta": {...}}`. The `|` separator is
-    /// unambiguous because JSON objects never end with `|`.
+    /// canonical JSON object `{"field_meta": {...}, "schema_meta": {...}}`. Field paths in
+    /// `field_meta` use [`DELIMITER_FOR_NESTED_FIELD`] and include metadata from nested fields.
+    /// The `|` separator is unambiguous because JSON objects never end with `|`.
     fn build_schema_equality_key(
         normalized: &Schema,
         original: &Schema,
@@ -472,25 +522,17 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if !include_metadata {
             return structure;
         }
-        let has_any_metadata = !original.metadata().is_empty()
-            || original.fields().iter().any(|f| !f.metadata().is_empty());
+
+        // Collect all field metadata recursively (includes nested fields).
+        let mut field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        for field in original.fields() {
+            field_meta.extend(Self::collect_nested_field_metadata(field, ""));
+        }
+
+        let has_any_metadata = !original.metadata().is_empty() || !field_meta.is_empty();
         if !has_any_metadata {
             return structure;
         }
-
-        let field_meta: BTreeMap<&str, BTreeMap<&str, &str>> = original
-            .fields()
-            .iter()
-            .filter(|f| !f.metadata().is_empty())
-            .map(|f| {
-                let sorted: BTreeMap<&str, &str> = f
-                    .metadata()
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
-                    .collect();
-                (f.name().as_str(), sorted)
-            })
-            .collect();
 
         let schema_meta: BTreeMap<&str, &str> = original
             .metadata()

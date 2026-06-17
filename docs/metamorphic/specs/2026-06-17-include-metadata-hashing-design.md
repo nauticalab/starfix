@@ -89,12 +89,18 @@ existing behavior.
 
 **Phase 2 — Metadata (only when `include_metadata = true`):**
 
-For each field, sorted alphabetically by field name:
+Fields are traversed recursively (struct children, list/map element fields, etc.) so that
+metadata on nested fields is included. Field paths use `/` as a delimiter
+(e.g. `"parent/child"`).
+
+For each field path, sorted alphabetically by full path (BTreeMap order):
 ```
 if !field.metadata().is_empty():
-    hasher.update(field.name().len() as u64, little-endian)
-    hasher.update(field.name() as bytes)
-    hasher.update(serde_json::to_string(BTreeMap::from(field.metadata())))
+    meta_json = serde_json::to_string(BTreeMap::from(field.metadata()))
+    hasher.update(field_path.len() as u64, little-endian)
+    hasher.update(field_path as bytes)
+    hasher.update(meta_json.len() as u64, little-endian)
+    hasher.update(meta_json as bytes)
 ```
 
 Then, if schema-level metadata is non-empty:
@@ -105,8 +111,9 @@ hasher.update(serde_json::to_string(BTreeMap::from(schema.metadata())))
 Using `BTreeMap` for both field iteration order and key sorting within each metadata map
 ensures determinism regardless of the original `HashMap` iteration order.
 
-The `u64` length prefix on the field name prevents concatenation ambiguity (a field named
-`"a:b"` cannot produce the same byte stream as two fields `"a"` and `"b"`).
+Both the field path and the metadata JSON are length-prefixed (`u64` LE) to prevent
+concatenation ambiguity (a path `"a/b"` cannot produce the same byte stream as two sibling
+paths `"a"` and `"b"`, and a metadata value containing `"}{` cannot shift boundaries).
 
 ---
 
