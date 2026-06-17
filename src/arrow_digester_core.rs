@@ -415,22 +415,23 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Recursively collect per-field metadata from a field and all its nested children.
     ///
-    /// Returns a `BTreeMap` keyed by the full field path (parent and child names joined by
-    /// [`DELIMITER_FOR_NESTED_FIELD`]). Only fields with non-empty metadata are included.
-    /// Because the result is a `BTreeMap`, entries are automatically ordered by path, giving
-    /// deterministic traversal regardless of struct child insertion order.
+    /// `path` is the **full, already-computed path** for `field` — the caller is responsible
+    /// for computing it before the call. This matches the path-naming conventions used in
+    /// `extract_type_entries` / `traverse_list`:
     ///
-    /// Traversal descends into `Struct`, `List`, `LargeList`, `FixedSizeList`, and `Map` types.
+    /// - **Struct children**: path = `"<parent>{DELIMITER}<child_name>"` (e.g. `"s/child"`)
+    /// - **List / map element fields**: path = `"<list_field>/"` (trailing slash, **no element
+    ///   field name**) — because `element_type_to_value` in Phase 1 also omits the
+    ///   Arrow-internal element field name (e.g. `"item"`). Using the same convention means
+    ///   renaming only the internal element field name has no effect on the metadata hash.
+    ///
+    /// Returns a `BTreeMap` keyed by field path. Only fields with non-empty metadata are
+    /// included. Because the result is a `BTreeMap`, entries are automatically ordered by
+    /// path, giving deterministic traversal regardless of struct child insertion order.
     fn collect_nested_field_metadata(
         field: &Field,
-        prefix: &str,
+        path: &str,
     ) -> BTreeMap<String, BTreeMap<String, String>> {
-        let path = if prefix.is_empty() {
-            field.name().to_owned()
-        } else {
-            format!("{prefix}{DELIMITER_FOR_NESTED_FIELD}{}", field.name())
-        };
-
         let mut result: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
 
         if !field.metadata().is_empty() {
@@ -439,20 +440,25 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            result.insert(path.clone(), sorted_meta);
+            result.insert(path.to_owned(), sorted_meta);
         }
 
         match field.data_type() {
             DataType::Struct(children) => {
                 for child in children {
-                    result.extend(Self::collect_nested_field_metadata(child, &path));
+                    // Struct children: append "/" + child name, matching extract_type_entries.
+                    let child_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}{}", child.name());
+                    result.extend(Self::collect_nested_field_metadata(child, &child_path));
                 }
             }
             DataType::List(inner)
             | DataType::LargeList(inner)
             | DataType::FixedSizeList(inner, _)
             | DataType::Map(inner, _) => {
-                result.extend(Self::collect_nested_field_metadata(inner, &path));
+                // List/map element fields use a trailing-slash path (no element field name),
+                // matching the convention in traverse_list: `format!("{path}/")`.
+                let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                result.extend(Self::collect_nested_field_metadata(inner, &element_path));
             }
             _ => {}
         }
@@ -487,7 +493,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Collect metadata from all fields recursively (BTreeMap gives deterministic order).
         let mut all_field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for field in schema.fields() {
-            all_field_meta.extend(Self::collect_nested_field_metadata(field, ""));
+            all_field_meta.extend(Self::collect_nested_field_metadata(field, field.name()));
         }
 
         // Build a BTreeMap so "fields" sorts before "schema" deterministically.
@@ -534,7 +540,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Collect all field metadata recursively (includes nested fields).
         let mut field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for field in normalized.fields() {
-            field_meta.extend(Self::collect_nested_field_metadata(field, ""));
+            field_meta.extend(Self::collect_nested_field_metadata(field, field.name()));
         }
 
         let has_any_metadata = !normalized.metadata().is_empty() || !field_meta.is_empty();
