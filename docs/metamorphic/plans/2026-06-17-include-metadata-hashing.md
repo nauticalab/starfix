@@ -266,35 +266,53 @@ Add immediately after `hash_schema`:
 ```rust
     /// Feed per-field and schema-level metadata into `hasher` for Phase 2 of schema hashing.
     ///
-    /// Fields are visited in alphabetical order. Metadata keys within each map are sorted via
-    /// `BTreeMap` to guarantee determinism regardless of `HashMap` iteration order.
+    /// Builds a single JSON object with up to two keys — `"fields"` (BTreeMap of field path to
+    /// sorted metadata map) and `"schema"` (sorted schema-level metadata map) — and feeds the
+    /// serialized JSON as one `hasher.update()` call. `"fields"` sorts before `"schema"` in
+    /// BTreeMap alphabetical order, so the key ordering is deterministic.
+    ///
     /// Nothing is written when both the per-field and schema-level metadata maps are empty,
-    /// preserving the empty-metadata invariant.
-    ///
-    /// Per-field encoding: `u64 LE field_name_byte_len || field_name_bytes || sorted_meta_json_bytes`
-    /// The length prefix prevents ambiguity between a field named `"a:b"` and two fields `"a"`, `"b"`.
-    ///
-    /// Schema-level encoding: `sorted_schema_meta_json_bytes` appended after all field entries.
+    /// preserving the empty-metadata invariant. JSON is self-delimiting so no length prefixes
+    /// are needed.
     fn update_metadata_hash(hasher: &mut D, schema: &Schema) {
-        let mut sorted_fields: Vec<&Arc<Field>> = schema.fields().iter().collect();
-        sorted_fields.sort_by(|a, b| a.name().cmp(b.name()));
+        let mut meta_doc: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
 
-        for field in sorted_fields {
-            if !field.metadata().is_empty() {
-                let sorted_meta: BTreeMap<&String, &String> = field.metadata().iter().collect();
-                let meta_json = serde_json::to_string(&sorted_meta)
-                    .expect("Failed to serialize field metadata to string");
-                hasher.update((field.name().len() as u64).to_le_bytes());
-                hasher.update(field.name().as_bytes());
-                hasher.update(meta_json.as_bytes());
-            }
+        let field_meta: BTreeMap<&str, BTreeMap<&str, &str>> = schema
+            .fields()
+            .iter()
+            .filter(|f| !f.metadata().is_empty())
+            .map(|f| {
+                let sorted: BTreeMap<&str, &str> =
+                    f.metadata().iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                (f.name().as_str(), sorted)
+            })
+            .collect();
+
+        if !field_meta.is_empty() {
+            meta_doc.insert(
+                "fields",
+                serde_json::to_value(&field_meta)
+                    .expect("Failed to serialize field metadata"),
+            );
         }
 
         if !schema.metadata().is_empty() {
-            let sorted_meta: BTreeMap<&String, &String> = schema.metadata().iter().collect();
-            let meta_json = serde_json::to_string(&sorted_meta)
-                .expect("Failed to serialize schema metadata to string");
-            hasher.update(meta_json.as_bytes());
+            let sorted_schema_meta: BTreeMap<&str, &str> = schema
+                .metadata()
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            meta_doc.insert(
+                "schema",
+                serde_json::to_value(&sorted_schema_meta)
+                    .expect("Failed to serialize schema metadata"),
+            );
+        }
+
+        if !meta_doc.is_empty() {
+            let json = serde_json::to_string(&meta_doc)
+                .expect("Failed to serialize metadata document to string");
+            hasher.update(json.as_bytes());
         }
     }
 

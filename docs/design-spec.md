@@ -141,27 +141,18 @@ Phase 1 is identical — the canonical JSON bytes are fed into the hasher first:
 hasher.update(canonical_json_string_bytes)
 ```
 
-Phase 2 then appends per-field metadata and schema-level metadata into the same hasher.
+Phase 2 then appends metadata into the same hasher.
 
-*Per-field metadata (Phase 2a):*
+Phase 2 builds a BTreeMap `meta_doc` with at most two keys:
+- "fields": present when any field (including nested fields) has non-empty metadata.
+  Value is a BTreeMap<field_path, BTreeMap<key, value>> with paths in alphabetical order.
+- "schema": present when the schema-level metadata is non-empty.
+  Value is a BTreeMap<key, value> of the schema metadata.
 
-Fields are traversed recursively (struct children, list/map element fields), collecting per-field metadata. Field paths use `/` as the delimiter. Only fields with non-empty metadata are included, and they are processed in alphabetical path order (via `BTreeMap`). For each such field path:
+When meta_doc is non-empty:
+    hasher.update(serde_json::to_string(meta_doc).as_bytes())
 
-```
-hasher.update( (path_bytes.len() as u64).to_le_bytes() )       // 8 bytes, u64 LE
-hasher.update( path_bytes )
-hasher.update( (meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
-hasher.update( meta_json_bytes )    // serde_json of BTreeMap-sorted key→value pairs
-```
-
-*Schema-level metadata (Phase 2b):*
-
-After all per-field metadata, if the schema-level metadata map is non-empty:
-
-```
-hasher.update( (schema_meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
-hasher.update( schema_meta_json_bytes )
-```
+JSON is self-delimiting, so no length prefixes are needed.
 
 **Empty-metadata invariant:** When a schema has no metadata on any field and no schema-level metadata, Phase 2 adds nothing to the hasher. Therefore, `include_metadata = true` on a metadata-free schema produces the same hash as `include_metadata = false`.
 

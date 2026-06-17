@@ -86,22 +86,11 @@ hasher.update(canonical_json_string_bytes)
 
 **Phase 2 (only when `include_metadata = true`):**
 
-Fields are traversed recursively (struct children, list/map element fields, etc.) to collect per-field metadata. Field paths use `/` as the delimiter and are processed in **alphabetical path order** (via `BTreeMap`).
-
-For each field path with **non-empty** metadata:
-
 ```
-hasher.update( (path_bytes.len() as u64).to_le_bytes() )       // 8 bytes, u64 LE
-hasher.update( path_bytes )
-hasher.update( (meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
-hasher.update( meta_json_bytes )   // serde_json of BTreeMap-sorted key→value pairs
-```
-
-Then, if the **schema-level** metadata is non-empty:
-
-```
-hasher.update( (schema_meta_json_bytes.len() as u64).to_le_bytes() )  // 8 bytes, u64 LE
-hasher.update( schema_meta_json_bytes )
+meta_doc = BTreeMap{}
+if any field has metadata: meta_doc["fields"] = { path: BTreeMap{k:v}, ... }
+if schema.metadata() non-empty: meta_doc["schema"] = BTreeMap{k:v}
+if meta_doc non-empty: hasher.update(serde_json::to_string(meta_doc).as_bytes())
 ```
 
 The final `schema_digest` is `hasher.finalize()` — 32 bytes, as before.
@@ -1197,21 +1186,14 @@ hasher.update(canonical_json_string_bytes)    // 44 bytes
 
 #### Step 2 (Phase 2): Per-Field Metadata
 
-Field `v` has non-empty metadata `{"unit": "meters"}`. Its path is `"v"` (1 byte: `76`). The metadata JSON is `{"unit":"meters"}` (17 bytes, BTreeMap-sorted keys).
-
-Per-field encoding for path `"v"`:
-
 ```
-hasher.update( 01 00 00 00 00 00 00 00 )   // path_len = 1 as u64 LE (8 bytes)
-hasher.update( 76 )                         // "v" (1 byte)
-hasher.update( 11 00 00 00 00 00 00 00 )   // meta_json_len = 17 as u64 LE (8 bytes)
-hasher.update( 7B 22 75 6E 69 74 22 3A 22 6D 65 74 65 72 73 22 7D )
-                                            // {"unit":"meters"} (17 bytes)
+── Phase 2: single JSON metadata update ─────────────────────────────
+// meta_doc = {"fields": {"v": {"unit":"meters"}}}
+// ("schema" key absent — no schema-level metadata)
+hasher.update( {"fields":{"v":{"unit":"meters"}}} )   ← 34 bytes
 ```
 
-No schema-level metadata → nothing added for the schema level.
-
-Total bytes fed to hasher: 44 (Phase 1) + 8 + 1 + 8 + 17 (Phase 2) = 78 bytes.
+Total bytes fed to hasher: 44 (Phase 1) + 34 (Phase 2) = 78 bytes.
 
 #### Step 3: Schema Digest
 
@@ -1244,28 +1226,16 @@ Same schema structure as Example R:
 hasher.update(canonical_json_string_bytes)    // 44 bytes (same as Example R)
 ```
 
-#### Step 2 (Phase 2): Per-Field Metadata
-
-Field `v` has no metadata → nothing added for field paths.
-
-#### Step 3 (Phase 2): Schema-Level Metadata
-
-The schema-level metadata `{"source":"sensor-1"}` is non-empty. Its JSON serialization (BTreeMap-sorted keys) is `{"source":"sensor-1"}` = 21 bytes:
+#### Step 2 (Phase 2): Metadata
 
 ```
-7B 22 73 6F 75 72 63 65 22 3A 22 73 65 6E 73 6F
-72 2D 31 22 7D
+── Phase 2: single JSON metadata update ─────────────────────────────
+// meta_doc = {"schema": {"source":"sensor-1"}}
+// ("fields" key absent — no field has metadata)
+hasher.update( {"schema":{"source":"sensor-1"}} )   ← 32 bytes
 ```
 
-Schema-level encoding:
-
-```
-hasher.update( 15 00 00 00 00 00 00 00 )   // schema_meta_json_len = 21 as u64 LE (8 bytes)
-hasher.update( 7B 22 73 6F 75 72 63 65 22 3A 22 73 65 6E 73 6F 72 2D 31 22 7D )
-                                            // {"source":"sensor-1"} (21 bytes)
-```
-
-Total bytes fed to hasher: 44 (Phase 1) + 8 + 21 (Phase 2 schema level) = 73 bytes.
+Total bytes fed to hasher: 44 (Phase 1) + 32 (Phase 2) = 76 bytes.
 
 #### Step 4: Schema Digest and Final Output
 
