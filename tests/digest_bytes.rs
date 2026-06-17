@@ -20,7 +20,7 @@ mod tests {
     use arrow::buffer::NullBuffer;
     use arrow_schema::{DataType, Field, Schema};
     use sha2::{Digest as _, Sha256};
-    use starfix::ArrowDigester;
+    use starfix::{ArrowDigester, HasherConfig};
 
     const VERSION: [u8; 3] = [0x00, 0x00, 0x01];
 
@@ -63,7 +63,7 @@ mod tests {
 
         // Verify the library agrees on schema hash
         assert_eq!(
-            ArrowDigester::hash_schema(&schema),
+            ArrowDigester::hash_schema(&schema, HasherConfig::default()),
             with_version(schema_digest.to_vec()),
             "Schema hash mismatch — canonical JSON may differ"
         );
@@ -113,7 +113,7 @@ mod tests {
 
         // ── Verify ───────────────────────────────────────────────────────
         assert_eq!(
-            ArrowDigester::hash_record_batch(&batch),
+            ArrowDigester::hash_record_batch(&batch, HasherConfig::default()),
             expected,
             "Example A: two-column table hash mismatch"
         );
@@ -297,8 +297,8 @@ mod tests {
         let expected = with_version(final_digest.finalize().to_vec());
 
         // ── Verify both column orderings produce the same hash ───────────
-        let hash_xy = ArrowDigester::hash_record_batch(&batch_xy);
-        let hash_yx = ArrowDigester::hash_record_batch(&batch_yx);
+        let hash_xy = ArrowDigester::hash_record_batch(&batch_xy, HasherConfig::default());
+        let hash_yx = ArrowDigester::hash_record_batch(&batch_yx, HasherConfig::default());
 
         assert_eq!(hash_xy, hash_yx, "Column order should not affect hash");
         assert_eq!(
@@ -479,7 +479,7 @@ mod tests {
 
         let expected = with_version(final_digest.finalize().to_vec());
 
-        let digester = ArrowDigester::new(&schema);
+        let digester = ArrowDigester::new(&schema, HasherConfig::default());
         assert_eq!(
             digester.finalize(),
             expected,
@@ -513,7 +513,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut digester_stream = ArrowDigester::new(&schema);
+        let mut digester_stream = ArrowDigester::new(&schema, HasherConfig::default());
         digester_stream.update(&batch1);
         digester_stream.update(&batch2);
         let hash_stream = digester_stream.finalize();
@@ -524,7 +524,7 @@ mod tests {
             vec![Arc::new(Int32Array::from(vec![1_i32, 2, 3])) as ArrayRef],
         )
         .unwrap();
-        let hash_combined = ArrowDigester::hash_record_batch(&combined);
+        let hash_combined = ArrowDigester::hash_record_batch(&combined, HasherConfig::default());
 
         assert_eq!(
             hash_stream, hash_combined,
@@ -609,7 +609,7 @@ mod tests {
         let schema_digest = Sha256::digest(schema_json.as_bytes());
 
         assert_eq!(
-            ArrowDigester::hash_schema(&schema),
+            ArrowDigester::hash_schema(&schema, HasherConfig::default()),
             with_version(schema_digest.to_vec()),
             "Example K: schema hash mismatch"
         );
@@ -642,7 +642,7 @@ mod tests {
         let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
-            ArrowDigester::hash_record_batch(&batch),
+            ArrowDigester::hash_record_batch(&batch, HasherConfig::default()),
             expected,
             "Example K: struct column record batch hash mismatch"
         );
@@ -857,7 +857,7 @@ mod tests {
         let schema_digest = Sha256::digest(schema_json.as_bytes());
 
         assert_eq!(
-            ArrowDigester::hash_schema(&schema),
+            ArrowDigester::hash_schema(&schema, HasherConfig::default()),
             with_version(schema_digest.to_vec()),
             "Example N: schema hash mismatch"
         );
@@ -904,7 +904,7 @@ mod tests {
         let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
-            ArrowDigester::hash_record_batch(&batch),
+            ArrowDigester::hash_record_batch(&batch, HasherConfig::default()),
             expected,
             "Example N: list-of-struct record batch hash mismatch"
         );
@@ -983,7 +983,7 @@ mod tests {
         let schema_digest = Sha256::digest(schema_json.as_bytes());
 
         assert_eq!(
-            ArrowDigester::hash_schema(&schema),
+            ArrowDigester::hash_schema(&schema, HasherConfig::default()),
             with_version(schema_digest.to_vec()),
             "Example O: schema hash mismatch — check canonical JSON"
         );
@@ -1016,7 +1016,7 @@ mod tests {
         let expected = with_version(final_digest.finalize().to_vec());
 
         assert_eq!(
-            ArrowDigester::hash_record_batch(&batch),
+            ArrowDigester::hash_record_batch(&batch, HasherConfig::default()),
             expected,
             "Example O: nested struct record batch hash mismatch"
         );
@@ -1101,8 +1101,8 @@ mod tests {
         let expected = with_version(expected_schema_digest.to_vec());
 
         // ── Both schemas must produce that same hash ──────────────────────
-        let hash1 = ArrowDigester::hash_schema(&schema1);
-        let hash2 = ArrowDigester::hash_schema(&schema2);
+        let hash1 = ArrowDigester::hash_schema(&schema1, HasherConfig::default());
+        let hash2 = ArrowDigester::hash_schema(&schema2, HasherConfig::default());
 
         assert_eq!(
             hash1, expected,

@@ -20,7 +20,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use arrow::array::Decimal128Array;
-    use starfix::ArrowDigester;
+    use starfix::{ArrowDigester, HasherConfig};
 
     #[expect(clippy::too_many_lines, reason = "Comprehensive schema test")]
     #[test]
@@ -73,7 +73,7 @@ mod tests {
         // Empty Table Hashing Check
 
         assert_eq!(
-            encode(ArrowDigester::new(&schema).finalize()),
+            encode(ArrowDigester::new(&schema, HasherConfig::default()).finalize()),
             "0000015955baf5303c8545360b2f0a253065e9d83d91cd44f0bc947c1904dfd9d09aac"
         );
 
@@ -129,7 +129,10 @@ mod tests {
         .unwrap();
         // Hash the record batch
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch,
+                HasherConfig::default()
+            )),
             "000001487059003be1a84dbe29ba6e90ea50798a76d22e46e221b6a0c332421dc4062e"
         );
     }
@@ -387,11 +390,17 @@ mod tests {
         // Hash both record batches
         let hash1 = format!(
             "000001{}",
-            encode(ArrowDigester::hash_record_batch(batch1.as_ref().unwrap()))
+            encode(ArrowDigester::hash_record_batch(
+                batch1.as_ref().unwrap(),
+                HasherConfig::default()
+            ))
         );
         let hash2 = format!(
             "000001{}",
-            encode(ArrowDigester::hash_record_batch(batch2.as_ref().unwrap()))
+            encode(ArrowDigester::hash_record_batch(
+                batch2.as_ref().unwrap(),
+                HasherConfig::default()
+            ))
         );
         assert_eq!(hash1, hash2);
     }
@@ -425,7 +434,7 @@ mod tests {
 
         let batch2 = RecordBatch::try_new(Arc::clone(&schema), vec![uids2, fake_data2]).unwrap();
         // Hash both record batches
-        let mut digester = ArrowDigester::new(schema.as_ref());
+        let mut digester = ArrowDigester::new(schema.as_ref(), HasherConfig::default());
         digester.update(&batch1);
         digester.update(&batch2);
         assert_eq!(
@@ -472,8 +481,14 @@ mod tests {
             Field::new("col2", DataType::Boolean, false),
         ]);
 
-        let hash_nullable = hex::encode(ArrowDigester::hash_schema(&nullable_schema));
-        let hash_non_nullable = hex::encode(ArrowDigester::hash_schema(&non_nullable_schema));
+        let hash_nullable = hex::encode(ArrowDigester::hash_schema(
+            &nullable_schema,
+            HasherConfig::default(),
+        ));
+        let hash_non_nullable = hex::encode(ArrowDigester::hash_schema(
+            &non_nullable_schema,
+            HasherConfig::default(),
+        ));
 
         assert_ne!(
             hash_nullable, hash_non_nullable,
@@ -508,7 +523,7 @@ mod tests {
         .unwrap();
 
         // Hash batches incrementally
-        let mut digester_batches = ArrowDigester::new(schema.as_ref());
+        let mut digester_batches = ArrowDigester::new(schema.as_ref(), HasherConfig::default());
         digester_batches.update(&batch1);
         digester_batches.update(&batch2);
         let hash_batches = encode(digester_batches.finalize());
@@ -523,7 +538,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut digester_single = ArrowDigester::new(schema.as_ref());
+        let mut digester_single = ArrowDigester::new(schema.as_ref(), HasherConfig::default());
         digester_single.update(&combined_batch);
         let hash_single = encode(digester_single.finalize());
 
@@ -560,7 +575,7 @@ mod tests {
         .unwrap();
 
         // Hash batches incrementally
-        let mut digester_batches = ArrowDigester::new(schema.as_ref());
+        let mut digester_batches = ArrowDigester::new(schema.as_ref(), HasherConfig::default());
         digester_batches.update(&batch1);
         digester_batches.update(&batch2);
         let hash_batches = encode(digester_batches.finalize());
@@ -589,7 +604,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut digester_single = ArrowDigester::new(schema.as_ref());
+        let mut digester_single = ArrowDigester::new(schema.as_ref(), HasherConfig::default());
         digester_single.update(&combined_batch);
         let hash_single = encode(digester_single.finalize());
 
@@ -630,8 +645,14 @@ mod tests {
             true,
         )]);
 
-        let hash1 = encode(ArrowDigester::hash_schema(&schema1));
-        let hash2 = encode(ArrowDigester::hash_schema(&schema2));
+        let hash1 = encode(ArrowDigester::hash_schema(
+            &schema1,
+            HasherConfig::default(),
+        ));
+        let hash2 = encode(ArrowDigester::hash_schema(
+            &schema2,
+            HasherConfig::default(),
+        ));
 
         assert_eq!(
             hash1, hash2,
@@ -696,8 +717,14 @@ mod tests {
         let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(struct2) as ArrayRef]).unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "Struct field order in record batch should not affect hash"
         );
     }
@@ -711,8 +738,14 @@ mod tests {
         let schema2 = Schema::new(vec![Field::new("col", DataType::LargeBinary, true)]);
 
         assert_eq!(
-            encode(ArrowDigester::hash_schema(&schema1)),
-            encode(ArrowDigester::hash_schema(&schema2)),
+            encode(ArrowDigester::hash_schema(
+                &schema1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema2,
+                HasherConfig::default()
+            )),
             "Binary and LargeBinary schemas should be logically equivalent"
         );
     }
@@ -724,8 +757,14 @@ mod tests {
         let schema2 = Schema::new(vec![Field::new("col", DataType::LargeUtf8, true)]);
 
         assert_eq!(
-            encode(ArrowDigester::hash_schema(&schema1)),
-            encode(ArrowDigester::hash_schema(&schema2)),
+            encode(ArrowDigester::hash_schema(
+                &schema1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema2,
+                HasherConfig::default()
+            )),
             "Utf8 and LargeUtf8 schemas should be logically equivalent"
         );
     }
@@ -746,8 +785,14 @@ mod tests {
         )]);
 
         assert_eq!(
-            encode(ArrowDigester::hash_schema(&schema1)),
-            encode(ArrowDigester::hash_schema(&schema2)),
+            encode(ArrowDigester::hash_schema(
+                &schema1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema2,
+                HasherConfig::default()
+            )),
             "List and LargeList schemas should be logically equivalent"
         );
     }
@@ -808,8 +853,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "List and LargeList record batches with same data should produce same hash"
         );
     }
@@ -863,8 +914,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "Utf8 and LargeUtf8 record batches with same data should produce same hash"
         );
     }
@@ -892,8 +949,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "Binary and LargeBinary record batches with same data should produce same hash"
         );
     }
@@ -944,8 +1007,14 @@ mod tests {
         )]);
 
         assert_eq!(
-            encode(ArrowDigester::hash_schema(&schema1)),
-            encode(ArrowDigester::hash_schema(&schema2)),
+            encode(ArrowDigester::hash_schema(
+                &schema1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema2,
+                HasherConfig::default()
+            )),
             "List(Utf8) and LargeList(LargeUtf8) schemas should be logically equivalent"
         );
     }
@@ -1045,8 +1114,14 @@ mod tests {
         let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(struct2) as ArrayRef]).unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "Struct with List(Utf8) should hash same as Struct with LargeList(LargeUtf8)"
         );
     }
@@ -1056,7 +1131,7 @@ mod tests {
         // Create digester with Utf8 schema, feed batch with LargeUtf8 schema
         let schema_utf8 = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
 
-        let mut digester = ArrowDigester::new(&schema_utf8);
+        let mut digester = ArrowDigester::new(&schema_utf8, HasherConfig::default());
 
         let batch = RecordBatch::try_new(
             Arc::new(Schema::new(vec![Field::new(
@@ -1131,7 +1206,7 @@ mod tests {
             Field::new("b", DataType::Boolean, true),
         ]);
 
-        let mut digester = ArrowDigester::new(&schema);
+        let mut digester = ArrowDigester::new(&schema, HasherConfig::default());
 
         // Batch with columns in DIFFERENT order: [b, a]
         let reordered_schema = Arc::new(Schema::new(vec![
@@ -1210,8 +1285,14 @@ mod tests {
         )]);
 
         assert_eq!(
-            encode(ArrowDigester::hash_schema(&schema_z_first)),
-            encode(ArrowDigester::hash_schema(&schema_a_first)),
+            encode(ArrowDigester::hash_schema(
+                &schema_z_first,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema_a_first,
+                HasherConfig::default()
+            )),
             "Deeply nested struct field order should not affect schema hash"
         );
     }
@@ -1297,8 +1378,14 @@ mod tests {
         let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(outer2) as ArrayRef]).unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "Deeply nested struct field order in record batch should not affect hash"
         );
     }
@@ -1396,8 +1483,14 @@ mod tests {
         )]);
 
         assert_eq!(
-            encode(ArrowDigester::hash_schema(&schema1)),
-            encode(ArrowDigester::hash_schema(&schema2)),
+            encode(ArrowDigester::hash_schema(
+                &schema1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema2,
+                HasherConfig::default()
+            )),
             "List<Struct> schema hash should not depend on struct field order"
         );
     }
@@ -1470,8 +1563,14 @@ mod tests {
         let batch2 = RecordBatch::try_new(schema2, vec![Arc::new(list2) as ArrayRef]).unwrap();
 
         assert_eq!(
-            encode(ArrowDigester::hash_record_batch(&batch1)),
-            encode(ArrowDigester::hash_record_batch(&batch2)),
+            encode(ArrowDigester::hash_record_batch(
+                &batch1,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_record_batch(
+                &batch2,
+                HasherConfig::default()
+            )),
             "List<Struct> record batch hash should not depend on struct field order"
         );
     }
@@ -1505,12 +1604,12 @@ mod tests {
         .unwrap();
 
         // Digester fed batch in original order [a, b]
-        let mut digester1 = ArrowDigester::new(&schema_ab);
+        let mut digester1 = ArrowDigester::new(&schema_ab, HasherConfig::default());
         digester1.update(&batch_ab);
         let hash1 = encode(digester1.finalize());
 
         // Digester fed batch in reversed order [b, a]
-        let mut digester2 = ArrowDigester::new(&schema_ab);
+        let mut digester2 = ArrowDigester::new(&schema_ab, HasherConfig::default());
         digester2.update(&batch_ba);
         let hash2 = encode(digester2.finalize());
 
@@ -1614,13 +1713,13 @@ mod tests {
         .unwrap();
 
         // Digester created with canonical schema, fed canonical-order batch
-        let mut digester_canonical = ArrowDigester::new(&schema_canonical);
+        let mut digester_canonical = ArrowDigester::new(&schema_canonical, HasherConfig::default());
         digester_canonical.update(&batch_az);
         let hash_canonical = encode(digester_canonical.finalize());
 
         // Digester created with canonical schema, fed reversed-order batch
         // Must not panic (serialized_schema comparison must treat them as equal)
-        let mut digester_reversed = ArrowDigester::new(&schema_canonical);
+        let mut digester_reversed = ArrowDigester::new(&schema_canonical, HasherConfig::default());
         digester_reversed.update(&batch_za); // should NOT panic
         let hash_reversed = encode(digester_reversed.finalize());
 

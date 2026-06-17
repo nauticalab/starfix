@@ -1313,7 +1313,7 @@ mod tests {
             ),
         ]);
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
         assert_eq!(field_names.len(), 3);
@@ -1374,7 +1374,7 @@ mod tests {
         // [true, None, false, true] — valid values bit-packed Lsb0, null skipped
         let array = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1409,7 +1409,7 @@ mod tests {
         // [false, true, false] — all values bit-packed, no nulls
         let array = BooleanArray::from(vec![false, true, false]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1439,7 +1439,7 @@ mod tests {
         // [10, None, -3] — valid bytes: 0x0A, 0xFD
         let array = Int8Array::from(vec![Some(10_i8), None, Some(-3_i8)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int8, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int8, true)])),
@@ -1468,7 +1468,7 @@ mod tests {
         // [1, 2, 255]
         let array = UInt8Array::from(vec![1_u8, 2_u8, 255_u8]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt8, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt8, false)])),
@@ -1495,7 +1495,7 @@ mod tests {
         // -512 LE  = 00 fe
         let array = Int16Array::from(vec![Some(1000_i16), None, Some(-512_i16)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int16, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int16, true)])),
@@ -1524,7 +1524,7 @@ mod tests {
         // [100, 200, 65535]
         let array = UInt16Array::from(vec![100_u16, 200_u16, 0xFFFF_u16]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt16, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1559,7 +1559,7 @@ mod tests {
             half::f16::from_f32(-0.5),
         ]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float16, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1595,7 +1595,7 @@ mod tests {
 
         let schema = Schema::new(vec![Field::new("int32_col", DataType::Int32, true)]);
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
 
         digester.update(
             &RecordBatch::try_new(
@@ -1640,7 +1640,7 @@ mod tests {
         // [0, None, u32::MAX]
         let array = UInt32Array::from(vec![Some(0_u32), None, Some(u32::MAX)]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt32, true)])),
@@ -1673,7 +1673,7 @@ mod tests {
         // 2.5f32 LE: 00 00 20 40
         let array = Float32Array::from(vec![Some(1.0_f32), None, Some(2.5_f32)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1711,7 +1711,7 @@ mod tests {
             .with_precision_and_scale(9, 2)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1746,7 +1746,7 @@ mod tests {
             .with_precision_and_scale(9, 2)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal32(9, 2), false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1777,7 +1777,7 @@ mod tests {
         // [i64::MIN, None, 9_876_543_210]
         let array = Int64Array::from(vec![Some(i64::MIN), None, Some(9_876_543_210_i64)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Int64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Int64, true)])),
@@ -1806,7 +1806,7 @@ mod tests {
         // [0, None, u64::MAX]
         let array = UInt64Array::from(vec![Some(0_u64), None, Some(u64::MAX)]);
         let schema = Schema::new(vec![Field::new("col", DataType::UInt64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::UInt64, true)])),
@@ -1837,7 +1837,7 @@ mod tests {
         // [1.0, -0.5, π]
         let array = Float64Array::from(vec![1.0_f64, -0.5_f64, f64::consts::PI]);
         let schema = Schema::new(vec![Field::new("col", DataType::Float64, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1871,7 +1871,7 @@ mod tests {
             .with_precision_and_scale(18, 3)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1906,7 +1906,7 @@ mod tests {
             .with_precision_and_scale(18, 3)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal64(18, 3), false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -1937,7 +1937,7 @@ mod tests {
         // Days since Unix epoch: [0, None, 19000]
         let array = Date32Array::from(vec![Some(0_i32), None, Some(19000_i32)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Date32, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Date32, true)])),
@@ -1966,7 +1966,7 @@ mod tests {
         // Milliseconds since Unix epoch: [0, None, 1_000_000]
         let array = Date64Array::from(vec![Some(0_i64), None, Some(1_000_000_i64)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Date64, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Date64, true)])),
@@ -2001,7 +2001,7 @@ mod tests {
             DataType::Time32(TimeUnit::Second),
             true,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2038,7 +2038,7 @@ mod tests {
             DataType::Time64(TimeUnit::Microsecond),
             true,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2076,7 +2076,7 @@ mod tests {
             .with_precision_and_scale(38, 5)
             .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal128(38, 5), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2118,7 +2118,7 @@ mod tests {
         .with_precision_and_scale(76, 10)
         .unwrap();
         let schema = Schema::new(vec![Field::new("col", DataType::Decimal256(76, 10), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2158,7 +2158,7 @@ mod tests {
         let array = builder.finish();
 
         let schema = Schema::new(vec![Field::new("col", DataType::FixedSizeBinary(4), true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2196,7 +2196,7 @@ mod tests {
         // Null entries are skipped entirely in the data digest.
         let array = BinaryArray::from(vec![Some(b"hello".as_ref()), None, Some(b"world".as_ref())]);
         let schema = Schema::new(vec![Field::new("col", DataType::Binary, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Binary, true)])),
@@ -2228,7 +2228,7 @@ mod tests {
         // [b"ab", b"cde"] — all valid, length prefix is usize LE
         let array = LargeBinaryArray::from(vec![b"ab".as_ref(), b"cde".as_ref()]);
         let schema = Schema::new(vec![Field::new("col", DataType::LargeBinary, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2262,7 +2262,7 @@ mod tests {
         // Null entries are skipped entirely in the data digest.
         let array = StringArray::from(vec![Some("foo"), None, Some("ba")]);
         let schema = Schema::new(vec![Field::new("col", DataType::Utf8, true)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new("col", DataType::Utf8, true)])),
@@ -2294,7 +2294,7 @@ mod tests {
         // ["x", "yz"] — all valid, length prefix is u64 LE
         let array = LargeStringArray::from(vec!["x", "yz"]);
         let schema = Schema::new(vec![Field::new("col", DataType::LargeUtf8, false)]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2341,7 +2341,7 @@ mod tests {
             DataType::List(Arc::clone(&item_field)),
             false,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2399,7 +2399,7 @@ mod tests {
             DataType::LargeList(Arc::clone(&item_field)),
             false,
         )]);
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(
             &RecordBatch::try_new(
                 Arc::new(Schema::new(vec![Field::new(
@@ -2491,7 +2491,7 @@ mod tests {
             true, // column is nullable
         )]);
 
-        let digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
         // Should have: "x" (validity-only), "x/" (structural), "x//a" (data), "x//b" (data)
@@ -2543,7 +2543,7 @@ mod tests {
             true,
         )]);
 
-        let digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
         // Expected entries: "x", "x/", "x//a", "x//b/g", "x//b/g/", "x//b/h"
@@ -2704,7 +2704,7 @@ mod tests {
 
         let expected_hash = final_digest.finalize().to_vec();
 
-        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         digester.update(&batch);
 
         let actual_hash = digester.finalize();
@@ -2832,11 +2832,11 @@ mod tests {
         .unwrap();
 
         // ── Compare ──
-        let mut single = ArrowDigesterCore::<Sha256>::new(schema.as_ref());
+        let mut single = ArrowDigesterCore::<Sha256>::new(schema.as_ref(), false);
         single.update(&combined_batch);
         let single_hash = single.finalize();
 
-        let mut split = ArrowDigesterCore::<Sha256>::new(schema.as_ref());
+        let mut split = ArrowDigesterCore::<Sha256>::new(schema.as_ref(), false);
         split.update(&batch1);
         split.update(&batch2);
         let split_hash = split.finalize();
