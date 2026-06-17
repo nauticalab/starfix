@@ -73,11 +73,9 @@ impl Default for HasherConfig {
 ## Implementation: Two-Phase Schema Hashing
 
 `ArrowDigesterCore::hash_schema(schema: &Schema, include_metadata: bool) -> Vec<u8>` is
-updated to hash in two phases. **`hash_schema` receives the original (pre-normalization)
-schema** and normalizes internally for Phase 1, so that Phase 2 can still read the original
-metadata. (The existing `normalize_schema()` function drops all metadata when creating the
-canonical schema; if `hash_schema` were called on the already-normalized schema, all metadata
-would be gone before Phase 2 runs.)
+updated to hash in two phases. `normalize_schema` preserves both schema-level and per-field
+metadata, so the same normalized schema is used for both phases — no separate pre-normalization
+copy is needed.
 
 **Phase 1 — Structure (unchanged from v0.0.x):**
 ```

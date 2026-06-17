@@ -139,14 +139,14 @@ with:
 ```rust
     /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
     pub fn new(schema: &Schema, include_metadata: bool) -> Self {
-        // Normalize the schema to canonical large types (drops metadata — use original for metadata hashing)
+        // Normalize the schema to canonical large types (normalize_schema preserves metadata)
         let normalized = normalize_schema(schema);
 
-        // Hash the schema — passes original so Phase 2 can read metadata
+        // Hash the schema — hash_schema normalizes internally; passing original is equivalent
         let schema_digest = Self::hash_schema(schema, include_metadata);
 
         // Build the equality key used in update() to enforce schema identity
-        let schema_equality_key = Self::build_schema_equality_key(&normalized, schema, include_metadata);
+        let schema_equality_key = Self::build_schema_equality_key(&normalized, include_metadata);
 
         // Flatten all nested fields into a single map for per-field hashing
         let mut fields_digest_buffer = BTreeMap::new();
