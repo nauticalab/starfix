@@ -10,6 +10,22 @@ use crate::arrow_digester_core::ArrowDigesterCore;
 
 const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Version 0.0.1
 
+/// Configuration for the Arrow hasher.
+#[derive(Clone, Copy, Debug)]
+pub struct HasherConfig {
+    /// When `true`, schema-level and per-field Arrow metadata are included in the hash.
+    /// Default is `false`, preserving pre-v0.1.0 hash stability.
+    pub include_metadata: bool,
+}
+
+impl Default for HasherConfig {
+    fn default() -> Self {
+        Self {
+            include_metadata: false,
+        }
+    }
+}
+
 /// Maps `ArrowDigesterCore` to a SHA-256 digester with version prefix.
 #[derive(Clone)]
 pub struct ArrowDigester {
