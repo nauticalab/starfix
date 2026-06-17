@@ -469,18 +469,28 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// `HashMap` iteration order. Nothing is written when all metadata maps are empty,
     /// preserving the empty-metadata invariant.
     ///
+    /// All metadata blocks use the same length-prefixed encoding:
+    /// ```text
+    /// u64 LE byte_len
+    /// || bytes   (UTF-8 JSON of BTreeMap-sorted key→value pairs)
+    /// ```
+    ///
     /// Per-field encoding (sorted by full path, only when field metadata is non-empty):
     /// ```text
     /// u64 LE field_path_byte_len
     /// || field_path_bytes
     /// || u64 LE meta_json_byte_len
-    /// || meta_json_bytes   (UTF-8 JSON of BTreeMap-sorted key→value pairs)
+    /// || meta_json_bytes
     /// ```
-    /// Both the field path and the metadata JSON are length-prefixed to prevent concatenation
-    /// ambiguity.
     ///
-    /// Schema-level encoding: `sorted_schema_meta_json_bytes` (without a length prefix) appended
-    /// after all per-field entries, guarded by `!schema.metadata().is_empty()`.
+    /// Schema-level encoding (appended after all per-field entries, only when non-empty):
+    /// ```text
+    /// u64 LE schema_meta_json_byte_len
+    /// || schema_meta_json_bytes
+    /// ```
+    ///
+    /// Every block is length-prefixed to prevent concatenation ambiguity: no two distinct
+    /// (field-metadata, schema-metadata) pairs can produce the same byte stream.
     fn update_metadata_hash(hasher: &mut D, schema: &Schema) {
         // Collect metadata from all fields recursively (BTreeMap gives deterministic order).
         let mut all_field_meta: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
@@ -501,6 +511,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             let sorted_meta: BTreeMap<&String, &String> = schema.metadata().iter().collect();
             let meta_json = serde_json::to_string(&sorted_meta)
                 .expect("Failed to serialize schema metadata to string");
+            hasher.update((meta_json.len() as u64).to_le_bytes());
             hasher.update(meta_json.as_bytes());
         }
     }

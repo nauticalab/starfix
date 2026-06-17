@@ -1186,13 +1186,14 @@ mod tests {
     //     hasher.update(r#"{"v":{"data_type":"Int32","nullable":false}}"#)
     //
     //   Phase 2 — no per-field metadata (all field.metadata() maps empty).
-    //   Phase 2 — schema-level metadata (no length prefix):
+    //   Phase 2 — schema-level metadata (length-prefixed, same as per-field blocks):
     //     meta_json = serde_json::to_string(BTreeMap{"source"→"sensor-1"})
     //               = {"source":"sensor-1"}  (21 bytes)
+    //     hasher.update(21u64 LE)             // u64 LE schema_meta_json byte-length
     //     hasher.update(b{"source":"sensor-1"})
     //
-    //   Note: schema-level metadata is written WITHOUT a length prefix
-    //   (it is always last and delimited by the hasher boundary).
+    //   Every metadata block (per-field or schema-level) uses the same
+    //   length-prefixed encoding, preventing concatenation ambiguity.
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]
@@ -1217,7 +1218,8 @@ mod tests {
         // Phase 1
         schema_hasher.update(structure_json.as_bytes());
         // Phase 2 — no per-field entries
-        // Phase 2 — schema-level (no length prefix)
+        // Phase 2 — schema-level (length-prefixed)
+        schema_hasher.update((schema_meta_json.len() as u64).to_le_bytes()); // 15 00 00 00 00 00 00 00
         schema_hasher.update(schema_meta_json);
 
         let expected = with_version(schema_hasher.finalize().to_vec());
