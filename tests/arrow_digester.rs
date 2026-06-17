@@ -1969,6 +1969,65 @@ mod tests {
     }
 
     #[test]
+    fn list_element_field_name_does_not_affect_metadata_path() {
+        // Phase 1 (element_type_to_value) omits the Arrow-internal element field name.
+        // Phase 2 metadata paths must follow the same convention: the element field's
+        // metadata is keyed by "<list_field>/" (trailing slash), not "<list_field>/<name>".
+        // Two schemas with the same element metadata but different element field names
+        // must therefore produce the same hash.
+        let schema_item = Schema::new(vec![Field::new(
+            "nums",
+            DataType::List(Arc::new(
+                Field::new("item", DataType::Int32, false)
+                    .with_metadata([("unit".to_owned(), "kg".to_owned())].into()),
+            )),
+            false,
+        )]);
+        let schema_data = Schema::new(vec![Field::new(
+            "nums",
+            DataType::List(Arc::new(
+                Field::new("data", DataType::Int32, false)
+                    .with_metadata([("unit".to_owned(), "kg".to_owned())].into()),
+            )),
+            false,
+        )]);
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema_item, config)),
+            encode(ArrowDigester::hash_schema(&schema_data, config)),
+            "list element field name must not affect the metadata path"
+        );
+    }
+
+    #[test]
+    fn list_element_metadata_changes_hash() {
+        // Metadata on a list element field must change the hash when include_metadata=true.
+        let schema_no_meta = Schema::new(vec![Field::new(
+            "nums",
+            DataType::List(Arc::new(Field::new("item", DataType::Int32, false))),
+            false,
+        )]);
+        let schema_with_meta = Schema::new(vec![Field::new(
+            "nums",
+            DataType::List(Arc::new(
+                Field::new("item", DataType::Int32, false)
+                    .with_metadata([("unit".to_owned(), "kg".to_owned())].into()),
+            )),
+            false,
+        )]);
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_ne!(
+            encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
+            encode(ArrowDigester::hash_schema(&schema_with_meta, config)),
+            "list element field metadata must change the hash when include_metadata=true"
+        );
+    }
+
+    #[test]
     fn nested_field_metadata_changes_hash() {
         // Metadata on a struct child field must change the hash with include_metadata=true.
         // This validates recursive traversal into nested fields.
