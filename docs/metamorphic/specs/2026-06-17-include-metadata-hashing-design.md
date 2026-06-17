@@ -150,10 +150,13 @@ in Phase 1) is unchanged.
 
 `ArrowDigesterCore::new(schema: &Schema, include_metadata: bool)` receives the flag and uses
 it to compute both `schema_digest` and `schema_equality_key` at construction time.
-`include_metadata` is **not stored** on the struct — it is fully consumed in `new()`.
+`include_metadata` **must be stored** on the struct because `update()` needs it to
+recompute the equality key for each incoming record batch's schema and compare it against
+the stored `schema_equality_key`.
 
 `ArrowDigesterCore<D>` changes:
 - Field renamed: `serialized_schema: String` → `schema_equality_key: String`
+- New field: `include_metadata: bool`
 - `new` signature: `new(schema: &Schema, include_metadata: bool)`
 - `new` passes the **original** schema (before normalization) to `hash_schema` so that
   metadata is available for Phase 2
