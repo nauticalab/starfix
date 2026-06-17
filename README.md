@@ -16,14 +16,15 @@ The hashing system consists of three main hashing levels:
 2. **Field Digests** - Individual hashes for each field's data
 3. **Final Digest** - Combined hash from schema + all field digests
 
-### DigestBufferType Enum
+### DigestBufferType
 
-The codebase uses a `DigestBufferType` enum to differentiate between nullable and non-nullable fields:
+The codebase uses a `DigestBufferType` struct to differentiate between nullable and non-nullable fields:
 
 ```rust
-enum DigestBufferType<D: Digest> {
-    NonNullable(D),                    // Just the data digest
-    Nullable(BitVec, D),               // Null bits vector + data digest
+struct DigestBufferType<D: Digest> {
+    null_bits: Option<BitVec<u8, Lsb0>>,  // Present for nullable entries
+    structural: Option<D>,                  // Present for list-type entries
+    data: Option<D>,                        // Present for leaf and list-leaf entries
 }
 ```
 
@@ -104,7 +105,7 @@ When finalizing a nullable field digest:
 ```rust
 final_digest.update(null_bits.len().to_le_bytes());      // Size of bitvector
 for &word in null_bits.as_raw_slice() {
-    final_digest.update(word.to_be_bytes());              // Actual null bits
+    final_digest.update(word.to_le_bytes());              // Actual null bits
 }
 final_digest.update(data_digest.finalize());              // Data values
 ```
@@ -152,7 +153,7 @@ Booleans receive special handling because Arrow stores them as bit-packed values
 ```rust
 // For non-nullable:
 - Extract each boolean value
-- Pack into BitVec using MSB0 ordering
+- Pack into BitVec using Lsb0 ordering
 - Hash the raw bytes
 
 // For nullable:
@@ -244,6 +245,55 @@ Fields are stored in a `BTreeMap` to ensure **consistent alphabetical ordering**
 
 The schema digest is always the first component hashed into the final digest. This ensures that changes to schema structure produce different hashes, preventing false collisions.
 
+When `HasherConfig { include_metadata: true }` is passed, Arrow `metadata` attached at the schema level or per-field is also incorporated into the schema digest (see "Metadata Hashing" below).
+
+## Metadata Hashing (v0.1.0)
+
+By default, Arrow `metadata` (key-value string maps attached to schemas and fields) is **not** included in the hash. Two schemas that differ only in metadata produce the same hash. This preserves stability for consumers who do not use metadata.
+
+To include metadata, pass `HasherConfig { include_metadata: true }`:
+
+```rust
+use starfix::{ArrowDigester, HasherConfig};
+
+let config = HasherConfig { include_metadata: true };
+let hash = ArrowDigester::hash_record_batch(&batch, config);
+```
+
+### How the schema hash is computed with metadata
+
+Schema hashing is a two-phase process. Both phases feed into a **single SHA-256 hasher**:
+
+**Phase 1 — Structure (always):**
+The canonical JSON of field names, data types, and nullability is fed into the hasher. This is identical to `include_metadata = false`.
+
+**Phase 2 — Metadata (only when `include_metadata = true`):**
+
+*Per-field metadata* (fields traversed recursively — includes struct children, list element fields, etc.):
+For each field path with non-empty metadata, sorted alphabetically by full path:
+```
+hasher.update( path_len as u64 LE )    // 8 bytes
+hasher.update( path_bytes )
+hasher.update( meta_json_len as u64 LE )  // 8 bytes
+hasher.update( meta_json_bytes )           // serde_json of BTreeMap-sorted key→value pairs
+```
+
+*Schema-level metadata* (if schema.metadata() is non-empty):
+```
+hasher.update( schema_meta_json_len as u64 LE )  // 8 bytes
+hasher.update( schema_meta_json_bytes )
+```
+
+Every block is length-prefixed to prevent concatenation ambiguity.
+
+### Empty-metadata invariant
+
+When a schema has no metadata anywhere, Phase 2 adds nothing. `include_metadata = true` on a metadata-free schema produces the exact same hash as `include_metadata = false`.
+
+### Schema equality enforcement
+
+When `include_metadata = true`, `update()` also enforces that incoming record batches have the same metadata as the schema used at construction. Batches with differing metadata are rejected.
+
 ## Collision Prevention
 
 The hashing algorithm includes multiple safeguards against collisions:
@@ -274,7 +324,7 @@ Result: Different hashes! ✓
 
 ### 3. Schema Digests
 
-Encodes all metadata (type information, field names, nullability) into the hash:
+Encodes the schema structure (field names, data types, nullability) — and optionally Arrow field/schema metadata when `include_metadata = true` — into the hash:
 
 ```
 Field "col1" Int32 (non-nullable) ≠ Field "col1" Int32 (nullable)
@@ -325,7 +375,7 @@ The hashing algorithm ensures deterministic output because:
 1. **Schema fields are sorted** - BTreeMap maintains alphabetical order
 2. **Field order is deterministic** - Always process in alphabetical field name order
 3. **Data types are consistent** - Each type uses the same hashing strategy
-4. **Byte order is consistent** - Uses little-endian for length prefixes and big-endian for bitvectors
+4. **Byte order is consistent** - Uses little-endian for length prefixes and Lsb0 bit order for bitvectors
 5. **Null handling is predictable** - Same rules applied consistently
 
 **Implication:** The same data in different storage order or location will always produce the same hash.
@@ -441,19 +491,19 @@ println!("Hash: {}", hex::encode(hash));
 
 ```rust
 use arrow::record_batch::RecordBatch;
-use starfix::ArrowDigester;
+use starfix::{ArrowDigester, HasherConfig};
 
 let batch = RecordBatch::try_new(...)?;
-let hash = ArrowDigester::hash_record_batch(&batch);
+let hash = ArrowDigester::hash_record_batch(&batch, HasherConfig::default());
 println!("Hash: {}", hex::encode(hash));
 ```
 
 ### Streaming Multiple Batches
 
 ```rust
-use starfix::ArrowDigester;
+use starfix::{ArrowDigester, HasherConfig};
 
-let mut digester = ArrowDigester::new(schema);
+let mut digester = ArrowDigester::new(schema, HasherConfig::default());
 digester.update(&batch1);
 digester.update(&batch2);
 digester.update(&batch3);
@@ -482,15 +532,15 @@ The code uses `/` as the delimiter for nested field hierarchies. This was chosen
 ### About Byte Order
 
 - **Length prefixes**: Little-endian (`to_le_bytes()`) - standard for Arrow
-- **Bitvector words**: Big-endian (`to_be_bytes()`) - matches bitvector convention
+- **Validity bitmaps**: u8 words in Lsb0 bit order (endianness is irrelevant for single-byte words)
 - **Size fields**: Little-endian - consistent with Arrow buffers
 
 ### About Bitpacking
 
-Boolean values and null indicators use `BitVec<u8, Msb0>` (Most Significant Bit ordering):
+Boolean values and null indicators use `BitVec<u8, Lsb0>` (Least Significant Bit ordering):
 - Compresses 8 boolean values into 1 byte
 - Reduces hash input size by 8x for boolean arrays
-- Uses MSB0 for consistent bit ordering
+- Uses Lsb0 for consistent bit ordering
 
 ---
 
