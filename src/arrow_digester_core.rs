@@ -144,7 +144,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Normalize the schema to canonical large types (metadata is preserved by normalize_schema)
         let normalized = normalize_schema(schema);
 
-        // Hash the schema using the normalized form (which retains metadata)
+        // Hash the schema — hash_schema normalizes internally, so passing the original here is equivalent
         let schema_digest = Self::hash_schema(schema, include_metadata);
 
         // Build the equality key used in update() to enforce schema identity
