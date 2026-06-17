@@ -1796,4 +1796,175 @@ mod tests {
             "different null placements inside list must produce different hashes"
         );
     }
+
+    #[test]
+    fn metadata_excluded_by_default() {
+        // Two schemas with identical structure but different field metadata
+        // must hash identically when include_metadata = false (the default).
+        let schema_no_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
+        let schema_with_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)
+            .with_metadata([("ARROW:extension:name".to_string(), "my_ext".to_string())].into())]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(
+                &schema_no_meta,
+                HasherConfig::default()
+            )),
+            encode(ArrowDigester::hash_schema(
+                &schema_with_meta,
+                HasherConfig::default()
+            )),
+        );
+    }
+
+    #[test]
+    fn field_metadata_changes_hash() {
+        // With include_metadata=true, adding field metadata must change the hash.
+        let schema_no_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
+        let schema_with_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)
+            .with_metadata([("ARROW:extension:name".to_string(), "my_ext".to_string())].into())]);
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_ne!(
+            encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
+            encode(ArrowDigester::hash_schema(&schema_with_meta, config)),
+        );
+    }
+
+    #[test]
+    fn schema_metadata_changes_hash() {
+        // With include_metadata=true, schema-level metadata must change the hash.
+        let schema_no_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
+        let schema_with_meta = Schema::new_with_metadata(
+            vec![Field::new("x", DataType::Int32, false)],
+            [("version".to_string(), "2".to_string())].into(),
+        );
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_ne!(
+            encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
+            encode(ArrowDigester::hash_schema(&schema_with_meta, config)),
+        );
+    }
+
+    #[test]
+    fn metadata_key_ordering_is_deterministic() {
+        // Same metadata key-value pairs, inserted in different HashMap order.
+        // BTreeMap sorting guarantees the same hash regardless of insertion order.
+        use std::collections::HashMap;
+
+        let mut meta_a: HashMap<String, String> = HashMap::new();
+        meta_a.insert("alpha".to_string(), "1".to_string());
+        meta_a.insert("beta".to_string(), "2".to_string());
+        meta_a.insert("gamma".to_string(), "3".to_string());
+
+        let mut meta_b: HashMap<String, String> = HashMap::new();
+        meta_b.insert("gamma".to_string(), "3".to_string());
+        meta_b.insert("alpha".to_string(), "1".to_string());
+        meta_b.insert("beta".to_string(), "2".to_string());
+
+        let schema_a = Schema::new(vec![
+            Field::new("x", DataType::Int32, false).with_metadata(meta_a)
+        ]);
+        let schema_b = Schema::new(vec![
+            Field::new("x", DataType::Int32, false).with_metadata(meta_b)
+        ]);
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema_a, config)),
+            encode(ArrowDigester::hash_schema(&schema_b, config)),
+        );
+    }
+
+    #[test]
+    fn empty_metadata_invariant() {
+        // A schema with no metadata must produce the same hash regardless of include_metadata.
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::LargeUtf8, true),
+        ]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema, HasherConfig::default())),
+            encode(ArrowDigester::hash_schema(
+                &schema,
+                HasherConfig {
+                    include_metadata: true
+                }
+            )),
+        );
+    }
+
+    #[test]
+    fn unicode_metadata() {
+        // Unicode keys and values must hash without panic, and the hash must differ
+        // from a schema with no metadata.
+        let schema_with_meta = Schema::new(vec![Field::new("data", DataType::LargeUtf8, false)
+            .with_metadata(
+                [
+                    (
+                        "emoji_key_\u{1F511}".to_string(),
+                        "value_\u{2713}".to_string(),
+                    ),
+                    (
+                        "\u{4E2D}\u{6587}".to_string(),
+                        "\u{65E5}\u{672C}\u{8A9E}".to_string(),
+                    ),
+                ]
+                .into(),
+            )]);
+        let schema_no_meta = Schema::new(vec![Field::new("data", DataType::LargeUtf8, false)]);
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        let hash_with = ArrowDigester::hash_schema(&schema_with_meta, config);
+        let hash_without = ArrowDigester::hash_schema(&schema_no_meta, config);
+        assert_ne!(hash_with, hash_without);
+    }
+
+    #[test]
+    fn large_metadata_value() {
+        // A kilobyte-scale metadata value must hash without panic and change the hash
+        // versus a schema with no metadata.
+        let large_value = "x".repeat(10_000);
+        let schema_large = Schema::new(vec![Field::new("col", DataType::Int32, false)
+            .with_metadata([("big".to_string(), large_value)].into())]);
+        let schema_no_meta = Schema::new(vec![Field::new("col", DataType::Int32, false)]);
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_ne!(
+            ArrowDigester::hash_schema(&schema_large, config),
+            ArrowDigester::hash_schema(&schema_no_meta, config),
+        );
+    }
+
+    #[test]
+    fn schema_vs_field_metadata_independence() {
+        // The same key-value pair on field-level vs schema-level must produce different hashes
+        // with include_metadata=true, confirming both layers are encoded distinctly.
+        let schema_field_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)
+            .with_metadata([("key".to_string(), "value".to_string())].into())]);
+        let schema_schema_meta = Schema::new_with_metadata(
+            vec![Field::new("x", DataType::Int32, false)],
+            [("key".to_string(), "value".to_string())].into(),
+        );
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+        assert_ne!(
+            encode(ArrowDigester::hash_schema(&schema_field_meta, config)),
+            encode(ArrowDigester::hash_schema(&schema_schema_meta, config)),
+        );
+    }
 }
