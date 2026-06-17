@@ -206,3 +206,86 @@ All tests live in `tests/arrow_digester.rs` unless otherwise noted.
 | **Unicode keys/values** | Metadata with Unicode keys and values hashes without panic |
 | **Large metadata values** | Metadata with a kilobyte-scale value hashes correctly |
 | **Schema-level vs field-level independence** | Schema metadata change does not affect hash the same way as equivalent field metadata change (hashes differ) |
+
+---
+
+## Worked Examples
+
+These examples trace the exact byte sequence fed into SHA-256 for two schemas with
+`include_metadata = true`. Each `hasher.update(...)` call annotates the raw bytes and their
+human-readable meaning. Both phases feed into a single SHA-256 instance; the final Starfix
+hash prepends the three-byte version prefix `00 00 01`.
+
+### Example 1 — per-field metadata only
+
+**Schema:** `{v: Int32 non-nullable}`, field `v` metadata: `{"unit": "meters"}`
+
+```
+hasher ← SHA-256()
+
+── Phase 1: structure (always) ──────────────────────────────────────────────
+hasher.update(
+  7B 22 76 22 3A 7B 22 64 61 74 61 5F 74 79 70 65
+  22 3A 22 49 6E 74 33 32 22 2C 22 6E 75 6C 6C 61
+  62 6C 65 22 3A 66 61 6C 73 65 7D 7D
+)
+── {"v":{"data_type":"Int32","nullable":false}}   (44 bytes)
+
+── Phase 2: per-field metadata (BTreeMap order — one field "v") ─────────────
+hasher.update( 01 00 00 00 00 00 00 00 )  ← field path byte-length = 1
+hasher.update( 76 )                        ← "v"
+hasher.update( 11 00 00 00 00 00 00 00 )  ← meta_json byte-length = 17
+hasher.update( 7B 22 75 6E 69 74 22 3A 22 6D 65 74 65 72 73 22 7D )
+── {"unit":"meters"}   (17 bytes)
+
+── (schema has no metadata — nothing added) ─────────────────────────────────
+
+schema_digest = hasher.finalize()          ← 32 bytes
+output        = 00 00 01 || schema_digest  ← 35 bytes total
+```
+
+The structure JSON in Phase 1 is identical to `include_metadata = false` for the same schema.
+Phase 2 appends 8 + 1 + 8 + 17 = 34 additional bytes to the hasher state
+(path_len u64, path bytes, meta_json_len u64, meta_json bytes).
+
+---
+
+### Example 2 — field metadata and schema-level metadata combined
+
+**Schema:** `{score: Int32 non-nullable}`, field `score` metadata: `{"unit": "points"}`,
+schema-level metadata: `{"owner": "team-a"}`
+
+```
+hasher ← SHA-256()
+
+── Phase 1: structure (always) ──────────────────────────────────────────────
+hasher.update(
+  7B 22 73 63 6F 72 65 22 3A 7B 22 64 61 74 61 5F
+  74 79 70 65 22 3A 22 49 6E 74 33 32 22 2C 22 6E
+  75 6C 6C 61 62 6C 65 22 3A 66 61 6C 73 65 7D 7D
+)
+── {"score":{"data_type":"Int32","nullable":false}}   (48 bytes)
+
+── Phase 2: per-field metadata (BTreeMap order — one field "score") ─────────
+hasher.update( 05 00 00 00 00 00 00 00 )  ← field path byte-length = 5
+hasher.update( 73 63 6F 72 65 )           ← "score"
+hasher.update( 11 00 00 00 00 00 00 00 )  ← meta_json byte-length = 17
+hasher.update( 7B 22 75 6E 69 74 22 3A 22 70 6F 69 6E 74 73 22 7D )
+── {"unit":"points"}   (17 bytes)
+
+── Phase 2: schema-level metadata ───────────────────────────────────────────
+hasher.update( 12 00 00 00 00 00 00 00 )  ← schema_meta_json byte-length = 18
+hasher.update( 7B 22 6F 77 6E 65 72 22 3A 22 74 65 61 6D 2D 61 22 7D )
+── {"owner":"team-a"}   (18 bytes)
+
+schema_digest = hasher.finalize()          ← 32 bytes
+output        = 00 00 01 || schema_digest  ← 35 bytes total
+```
+
+Both the field-level and schema-level blocks are length-prefixed with a `u64` LE byte-count,
+so the concatenation is unambiguous regardless of metadata key or value content.
+
+When this schema is used with `hash_record_batch`, the `schema_digest` above is fed as the
+first update into the final combiner, followed by the per-field data digests exactly as in
+the non-metadata path. The metadata flag only affects what goes into `schema_digest`; data
+hashing is unchanged.
