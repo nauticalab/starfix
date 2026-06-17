@@ -105,15 +105,19 @@ if !field.metadata().is_empty():
 
 Then, if schema-level metadata is non-empty:
 ```
-hasher.update(serde_json::to_string(BTreeMap::from(schema.metadata())))
+schema_meta_json = serde_json::to_string(BTreeMap::from(schema.metadata()))
+hasher.update(schema_meta_json.len() as u64, little-endian)
+hasher.update(schema_meta_json as bytes)
 ```
 
 Using `BTreeMap` for both field iteration order and key sorting within each metadata map
 ensures determinism regardless of the original `HashMap` iteration order.
 
-Both the field path and the metadata JSON are length-prefixed (`u64` LE) to prevent
-concatenation ambiguity (a path `"a/b"` cannot produce the same byte stream as two sibling
-paths `"a"` and `"b"`, and a metadata value containing `"}{` cannot shift boundaries).
+Every metadata block — both per-field and schema-level — is length-prefixed (`u64` LE).
+This prevents concatenation ambiguity: no two distinct (field-metadata, schema-metadata)
+pairs can produce the same byte stream fed into the hasher. A path `"a/b"` cannot produce
+the same byte stream as two sibling paths `"a"` and `"b"`; a schema-level metadata block
+cannot be mistaken for the tail of a per-field entry.
 
 ---
 
