@@ -1943,8 +1943,8 @@ mod tests {
             include_metadata: true,
         };
         assert_ne!(
-            ArrowDigester::hash_schema(&schema_large, config),
-            ArrowDigester::hash_schema(&schema_no_meta, config),
+            encode(ArrowDigester::hash_schema(&schema_large, config)),
+            encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
         );
     }
 
