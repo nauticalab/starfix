@@ -184,7 +184,12 @@ pub struct HasherConfig {
 
 `hash_array()` is **not** affected — it operates on a single array without a schema context and never calls `hash_schema`.
 
-Future options (e.g., per-key filters, separate schema-level vs. field-level toggles) will be added as new fields on `HasherConfig` with default values, maintaining backward compatibility.
+Future options (e.g., per-key filters, separate schema-level vs. field-level toggles) will be added as new fields on `HasherConfig`. Because `HasherConfig` is a plain public struct, adding a new field is a source-breaking change for callers that construct it with an exhaustive literal (e.g., `HasherConfig { include_metadata: true }`). Callers should construct configs using the struct-update syntax to stay forward-compatible:
+
+```rust
+// Forward-compatible: new fields receive their Default values automatically
+let config = HasherConfig { include_metadata: true, ..HasherConfig::default() };
+```
 
 ---
 

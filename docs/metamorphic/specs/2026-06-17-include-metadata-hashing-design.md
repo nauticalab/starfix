@@ -52,7 +52,15 @@ impl Default for HasherConfig {
 ```
 
 `HasherConfig::default()` reproduces the pre-v0.1.0 behavior exactly. Future options
-(per-key filters, separate schema vs. field toggles) are added as new fields with defaults.
+(per-key filters, separate schema vs. field toggles) will be added as new fields with
+defaults, but because `HasherConfig` is a plain public struct, each new field is a
+source-breaking change for any caller that constructs it with an exhaustive literal.
+Callers should use the struct-update syntax to stay forward-compatible:
+
+```rust
+// Forward-compatible construction — new fields automatically receive their Default values
+let config = HasherConfig { include_metadata: true, ..HasherConfig::default() };
+```
 
 ### Changed methods on `ArrowDigester`
 
