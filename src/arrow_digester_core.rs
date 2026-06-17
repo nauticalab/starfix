@@ -418,10 +418,19 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Nothing is written when both the per-field and schema-level metadata maps are empty,
     /// preserving the empty-metadata invariant.
     ///
-    /// Per-field encoding: `u64 LE field_name_byte_len || field_name_bytes || sorted_meta_json_bytes`
-    /// The length prefix prevents ambiguity between a field named `"a:b"` and two fields `"a"`, `"b"`.
+    /// Per-field encoding (per field, in alphabetical order, only when metadata is non-empty):
+    /// ```text
+    /// u64 LE field_name_byte_len
+    /// || field_name_bytes
+    /// || u64 LE meta_json_byte_len
+    /// || meta_json_bytes   (UTF-8 JSON of BTreeMap-sorted key→value pairs)
+    /// ```
+    /// Both the field name and the metadata JSON are length-prefixed to prevent concatenation
+    /// ambiguity (e.g. a field named `"a:b"` cannot produce the same byte stream as two fields
+    /// `"a"` and `"b"`, and a metadata value containing `"}{` cannot shift boundaries).
     ///
-    /// Schema-level encoding: `sorted_schema_meta_json_bytes` appended after all field entries.
+    /// Schema-level encoding: `sorted_schema_meta_json_bytes` (without a length prefix) appended
+    /// after all per-field entries, guarded by `!schema.metadata().is_empty()`.
     fn update_metadata_hash(hasher: &mut D, schema: &Schema) {
         let mut sorted_fields: Vec<&Arc<Field>> = schema.fields().iter().collect();
         sorted_fields.sort_by(|a, b| a.name().cmp(b.name()));
