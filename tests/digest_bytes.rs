@@ -1116,6 +1116,192 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
+    // Example R: hash_schema with per-field metadata (include_metadata = true)
+    //   Schema: {v: Int32 non-nullable}
+    //   Field "v" metadata: {"unit": "meters"}
+    //   include_metadata: true
+    //
+    //   Two-phase schema hashing feeds into a single SHA-256 hasher:
+    //
+    //   Phase 1 — structure (same as include_metadata = false):
+    //     hasher.update(r#"{"v":{"data_type":"Int32","nullable":false}}"#)
+    //
+    //   Phase 2 — per-field metadata (BTreeMap order, one field "v"):
+    //     path = "v" (1 byte)
+    //     meta_json = serde_json::to_string(BTreeMap{{"unit"→"meters"}})
+    //               = {"unit":"meters"}  (17 bytes)
+    //     hasher.update(1u64 LE)      // u64 LE path byte-length
+    //     hasher.update(b"v")         // path bytes
+    //     hasher.update(17u64 LE)     // u64 LE meta_json byte-length
+    //     hasher.update(b{"unit":"meters"})
+    //
+    //   Schema-level metadata: empty → nothing added.
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn example_r_hash_schema_with_field_metadata() {
+        let schema = Schema::new(vec![Field::new("v", DataType::Int32, false)
+            .with_metadata([("unit".to_owned(), "meters".to_owned())].into())]);
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        // ── Phase 1: structure ───────────────────────────────────────────
+        // normalize_schema preserves metadata but serialized_schema encodes
+        // only structure (field names, data types, nullability).
+        let structure_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
+
+        // ── Phase 2: per-field metadata ──────────────────────────────────
+        // Field "v": sorted BTreeMap → {"unit":"meters"} (17 bytes)
+        let field_path = b"v"; // 1 byte
+        let meta_json = br#"{"unit":"meters"}"#; // 17 bytes
+
+        let mut schema_hasher = Sha256::new();
+        // Phase 1
+        schema_hasher.update(structure_json.as_bytes());
+        // Phase 2 — field "v" (length-prefixed path + length-prefixed JSON)
+        schema_hasher.update((field_path.len() as u64).to_le_bytes()); // 01 00 00 00 00 00 00 00
+        schema_hasher.update(field_path); // 76
+        schema_hasher.update((meta_json.len() as u64).to_le_bytes()); // 11 00 00 00 00 00 00 00
+        schema_hasher.update(meta_json); // {"unit":"meters"}
+                                         // Schema-level metadata: empty → skip
+
+        let expected = with_version(schema_hasher.finalize().to_vec());
+
+        assert_eq!(
+            ArrowDigester::hash_schema(&schema, config),
+            expected,
+            "Example R: hash_schema with field metadata mismatch"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Example S: hash_schema with schema-level metadata (include_metadata = true)
+    //   Schema: {v: Int32 non-nullable}
+    //   No field metadata.
+    //   Schema-level metadata: {"source": "sensor-1"}
+    //   include_metadata: true
+    //
+    //   Phase 1 — structure (unchanged):
+    //     hasher.update(r#"{"v":{"data_type":"Int32","nullable":false}}"#)
+    //
+    //   Phase 2 — no per-field metadata (all field.metadata() maps empty).
+    //   Phase 2 — schema-level metadata (no length prefix):
+    //     meta_json = serde_json::to_string(BTreeMap{"source"→"sensor-1"})
+    //               = {"source":"sensor-1"}  (21 bytes)
+    //     hasher.update(b{"source":"sensor-1"})
+    //
+    //   Note: schema-level metadata is written WITHOUT a length prefix
+    //   (it is always last and delimited by the hasher boundary).
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn example_s_hash_schema_with_schema_metadata() {
+        let schema = Schema::new_with_metadata(
+            vec![Field::new("v", DataType::Int32, false)],
+            [("source".to_owned(), "sensor-1".to_owned())].into(),
+        );
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        // ── Phase 1: structure ───────────────────────────────────────────
+        let structure_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
+
+        // ── Phase 2: schema-level metadata ───────────────────────────────
+        // No field has metadata → nothing from the per-field loop.
+        // Schema has metadata: BTreeMap{"source"→"sensor-1"} → {"source":"sensor-1"} (21 bytes)
+        let schema_meta_json = br#"{"source":"sensor-1"}"#; // 21 bytes
+
+        let mut schema_hasher = Sha256::new();
+        // Phase 1
+        schema_hasher.update(structure_json.as_bytes());
+        // Phase 2 — no per-field entries
+        // Phase 2 — schema-level (no length prefix)
+        schema_hasher.update(schema_meta_json);
+
+        let expected = with_version(schema_hasher.finalize().to_vec());
+
+        assert_eq!(
+            ArrowDigester::hash_schema(&schema, config),
+            expected,
+            "Example S: hash_schema with schema-level metadata mismatch"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Example T: hash_record_batch with per-field metadata
+    //   Schema: {score: Int32 non-nullable}
+    //   Field "score" metadata: {"unit": "points"}
+    //   Data: [100, 200]  (non-nullable)
+    //   include_metadata: true
+    //
+    //   Schema hash (Phase 1 + Phase 2, single hasher):
+    //     Phase 1: structure_json = {"score":{"data_type":"Int32","nullable":false}}
+    //     Phase 2: field "score"
+    //       path = "score" (5 bytes)
+    //       meta_json = {"unit":"points"} (17 bytes)
+    //       hasher.update(5u64 LE)           // path byte-length
+    //       hasher.update(b"score")          // path
+    //       hasher.update(17u64 LE)          // meta_json byte-length
+    //       hasher.update(b{"unit":"points"})
+    //
+    //   Data hash — field "score" (Int32, non-nullable):
+    //     score_data = SHA-256(100_i32_LE || 200_i32_LE)
+    //                = SHA-256(64 00 00 00  c8 00 00 00)
+    //
+    //   Final combination:
+    //     SHA-256(schema_digest || score_data_finalized)
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn example_t_hash_record_batch_with_field_metadata() {
+        let schema = Schema::new(vec![Field::new("score", DataType::Int32, false)
+            .with_metadata([("unit".to_owned(), "points".to_owned())].into())]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![Arc::new(Int32Array::from(vec![100_i32, 200])) as ArrayRef],
+        )
+        .unwrap();
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        // ── Schema hash (Phase 1 + Phase 2) ─────────────────────────────
+        let structure_json = r#"{"score":{"data_type":"Int32","nullable":false}}"#;
+        let field_path = b"score"; // 5 bytes
+        let meta_json = br#"{"unit":"points"}"#; // 17 bytes
+
+        let mut schema_hasher = Sha256::new();
+        schema_hasher.update(structure_json.as_bytes());
+        schema_hasher.update((field_path.len() as u64).to_le_bytes()); // 05 00 00 00 00 00 00 00
+        schema_hasher.update(field_path); // s c o r e
+        schema_hasher.update((meta_json.len() as u64).to_le_bytes()); // 11 00 00 00 00 00 00 00
+        schema_hasher.update(meta_json); // {"unit":"points"}
+        let schema_digest = schema_hasher.finalize();
+
+        // ── Data hash: field "score" (Int32, non-nullable) ───────────────
+        // [100, 200] as i32 LE: 64 00 00 00  c8 00 00 00
+        let mut score_data = Sha256::new();
+        score_data.update(100_i32.to_le_bytes()); // 64 00 00 00
+        score_data.update(200_i32.to_le_bytes()); // c8 00 00 00
+        let score_data_finalized = score_data.finalize();
+
+        // ── Final combination ────────────────────────────────────────────
+        let mut final_digest = Sha256::new();
+        final_digest.update(schema_digest);
+        final_digest.update(score_data_finalized); // "score" (non-nullable, data-only)
+
+        let expected = with_version(final_digest.finalize().to_vec());
+
+        assert_eq!(
+            ArrowDigester::hash_record_batch(&batch, config),
+            expected,
+            "Example T: hash_record_batch with field metadata mismatch"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     // Example Q: Nested Struct via hash_array
     //   StructArray [{inner: {x: 5, y: 7}}, {inner: {x: 9, y: 11}}]
     //   Outer struct: non-nullable, one child "inner" (non-nullable Struct)
