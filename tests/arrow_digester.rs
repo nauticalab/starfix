@@ -1803,7 +1803,7 @@ mod tests {
         // must hash identically when include_metadata = false (the default).
         let schema_no_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
         let schema_with_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)
-            .with_metadata([("ARROW:extension:name".to_string(), "my_ext".to_string())].into())]);
+            .with_metadata([("ARROW:extension:name".to_owned(), "my_ext".to_owned())].into())]);
 
         assert_eq!(
             encode(ArrowDigester::hash_schema(
@@ -1822,7 +1822,7 @@ mod tests {
         // With include_metadata=true, adding field metadata must change the hash.
         let schema_no_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
         let schema_with_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)
-            .with_metadata([("ARROW:extension:name".to_string(), "my_ext".to_string())].into())]);
+            .with_metadata([("ARROW:extension:name".to_owned(), "my_ext".to_owned())].into())]);
 
         let config = HasherConfig {
             include_metadata: true,
@@ -1839,7 +1839,7 @@ mod tests {
         let schema_no_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
         let schema_with_meta = Schema::new_with_metadata(
             vec![Field::new("x", DataType::Int32, false)],
-            [("version".to_string(), "2".to_string())].into(),
+            [("version".to_owned(), "2".to_owned())].into(),
         );
 
         let config = HasherConfig {
@@ -1858,14 +1858,14 @@ mod tests {
         use std::collections::HashMap;
 
         let mut meta_a: HashMap<String, String> = HashMap::new();
-        meta_a.insert("alpha".to_string(), "1".to_string());
-        meta_a.insert("beta".to_string(), "2".to_string());
-        meta_a.insert("gamma".to_string(), "3".to_string());
+        meta_a.insert("alpha".to_owned(), "1".to_owned());
+        meta_a.insert("beta".to_owned(), "2".to_owned());
+        meta_a.insert("gamma".to_owned(), "3".to_owned());
 
         let mut meta_b: HashMap<String, String> = HashMap::new();
-        meta_b.insert("gamma".to_string(), "3".to_string());
-        meta_b.insert("alpha".to_string(), "1".to_string());
-        meta_b.insert("beta".to_string(), "2".to_string());
+        meta_b.insert("gamma".to_owned(), "3".to_owned());
+        meta_b.insert("alpha".to_owned(), "1".to_owned());
+        meta_b.insert("beta".to_owned(), "2".to_owned());
 
         let schema_a = Schema::new(vec![
             Field::new("x", DataType::Int32, false).with_metadata(meta_a)
@@ -1910,12 +1910,12 @@ mod tests {
             .with_metadata(
                 [
                     (
-                        "emoji_key_\u{1F511}".to_string(),
-                        "value_\u{2713}".to_string(),
+                        "emoji_key_\u{1F511}".to_owned(),
+                        "value_\u{2713}".to_owned(),
                     ),
                     (
-                        "\u{4E2D}\u{6587}".to_string(),
-                        "\u{65E5}\u{672C}\u{8A9E}".to_string(),
+                        "\u{4E2D}\u{6587}".to_owned(),
+                        "\u{65E5}\u{672C}\u{8A9E}".to_owned(),
                     ),
                 ]
                 .into(),
@@ -1936,7 +1936,7 @@ mod tests {
         // versus a schema with no metadata.
         let large_value = "x".repeat(10_000);
         let schema_large = Schema::new(vec![Field::new("col", DataType::Int32, false)
-            .with_metadata([("big".to_string(), large_value)].into())]);
+            .with_metadata([("big".to_owned(), large_value)].into())]);
         let schema_no_meta = Schema::new(vec![Field::new("col", DataType::Int32, false)]);
 
         let config = HasherConfig {
@@ -1953,10 +1953,10 @@ mod tests {
         // The same key-value pair on field-level vs schema-level must produce different hashes
         // with include_metadata=true, confirming both layers are encoded distinctly.
         let schema_field_meta = Schema::new(vec![Field::new("x", DataType::Int32, false)
-            .with_metadata([("key".to_string(), "value".to_string())].into())]);
+            .with_metadata([("key".to_owned(), "value".to_owned())].into())]);
         let schema_schema_meta = Schema::new_with_metadata(
             vec![Field::new("x", DataType::Int32, false)],
-            [("key".to_string(), "value".to_string())].into(),
+            [("key".to_owned(), "value".to_owned())].into(),
         );
 
         let config = HasherConfig {
