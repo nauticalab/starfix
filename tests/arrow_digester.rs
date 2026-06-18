@@ -1884,6 +1884,164 @@ mod tests {
     }
 
     #[test]
+    fn metadata_key_ordering_across_multiple_fields_is_deterministic() {
+        // Each field has multiple metadata keys in a different insertion order.
+        // Both fields and schema-level metadata are shuffled.
+        // All three layers must be sorted independently.
+        use std::collections::HashMap;
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        // ── Field metadata (two fields, keys shuffled per field) ──────────
+        let make_schema = |x_keys: [(&str, &str); 3], y_keys: [(&str, &str); 3]| {
+            let x_meta: HashMap<String, String> = x_keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let y_meta: HashMap<String, String> = y_keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            Schema::new(vec![
+                Field::new("x", DataType::Int32, false).with_metadata(x_meta),
+                Field::new("y", DataType::Float64, false).with_metadata(y_meta),
+            ])
+        };
+
+        // Same logical metadata, different insertion order for every field.
+        let schema_a = make_schema(
+            [("p", "1"), ("q", "2"), ("r", "3")],
+            [("s", "4"), ("t", "5"), ("u", "6")],
+        );
+        let schema_b = make_schema(
+            [("r", "3"), ("p", "1"), ("q", "2")], // x keys shuffled
+            [("u", "6"), ("s", "4"), ("t", "5")], // y keys shuffled
+        );
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema_a, config)),
+            encode(ArrowDigester::hash_schema(&schema_b, config)),
+            "per-field metadata key order must not affect the hash"
+        );
+    }
+
+    #[test]
+    fn schema_level_metadata_key_ordering_is_deterministic() {
+        // Schema-level metadata with multiple keys in different insertion orders
+        // must produce the same hash.
+        use std::collections::HashMap;
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        let make_schema = |keys: [(&str, &str); 3]| {
+            let meta: HashMap<String, String> = keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            Schema::new_with_metadata(vec![Field::new("v", DataType::Int32, false)], meta)
+        };
+
+        let schema_a = make_schema([("env", "prod"), ("region", "us"), ("version", "2")]);
+        let schema_b = make_schema([("version", "2"), ("env", "prod"), ("region", "us")]);
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema_a, config)),
+            encode(ArrowDigester::hash_schema(&schema_b, config)),
+            "schema-level metadata key order must not affect the hash"
+        );
+    }
+
+    #[test]
+    fn metadata_ordering_deterministic_across_all_layers() {
+        // Field metadata (multiple fields), schema-level metadata, and a struct child
+        // all with shuffled key insertion orders — must all produce the same hash.
+        use arrow_schema::Fields;
+        use std::collections::HashMap;
+
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        let make_schema = |child_keys: [(&str, &str); 2],
+                           top_keys: [(&str, &str); 2],
+                           schema_keys: [(&str, &str); 2]| {
+            let child_meta: HashMap<String, String> = child_keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let top_meta: HashMap<String, String> = top_keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let schema_meta: HashMap<String, String> = schema_keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+
+            let child_field =
+                Arc::new(Field::new("c", DataType::Int32, false).with_metadata(child_meta));
+            let struct_field = Field::new(
+                "s",
+                DataType::Struct(Fields::from(vec![child_field])),
+                false,
+            )
+            .with_metadata(top_meta);
+
+            Schema::new_with_metadata(vec![struct_field], schema_meta)
+        };
+
+        let schema_a = make_schema(
+            [("x", "1"), ("y", "2")], // child field keys
+            [("m", "3"), ("n", "4")], // struct field keys
+            [("a", "5"), ("b", "6")], // schema-level keys
+        );
+        let schema_b = make_schema(
+            [("y", "2"), ("x", "1")], // child keys shuffled
+            [("n", "4"), ("m", "3")], // struct keys shuffled
+            [("b", "6"), ("a", "5")], // schema keys shuffled
+        );
+
+        assert_eq!(
+            encode(ArrowDigester::hash_schema(&schema_a, config)),
+            encode(ArrowDigester::hash_schema(&schema_b, config)),
+            "metadata key insertion order must not affect the hash at any nesting level"
+        );
+    }
+
+    #[test]
+    fn same_metadata_key_on_different_fields_is_path_isolated() {
+        // The same key name on different fields must be kept separate.
+        // Swapping the values between fields must produce a different hash.
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        let schema_ab = Schema::new(vec![
+            Field::new("a", DataType::Int32, false)
+                .with_metadata([("unit".to_owned(), "kg".to_owned())].into()),
+            Field::new("b", DataType::Int32, false)
+                .with_metadata([("unit".to_owned(), "m".to_owned())].into()),
+        ]);
+        // Swapped: "a" gets "m", "b" gets "kg"
+        let schema_ba = Schema::new(vec![
+            Field::new("a", DataType::Int32, false)
+                .with_metadata([("unit".to_owned(), "m".to_owned())].into()),
+            Field::new("b", DataType::Int32, false)
+                .with_metadata([("unit".to_owned(), "kg".to_owned())].into()),
+        ]);
+
+        assert_ne!(
+            encode(ArrowDigester::hash_schema(&schema_ab, config)),
+            encode(ArrowDigester::hash_schema(&schema_ba, config)),
+            "swapping metadata values between fields must change the hash"
+        );
+    }
+
+    #[test]
     fn empty_metadata_invariant() {
         // A schema with no metadata must produce the same hash regardless of include_metadata.
         let schema = Schema::new(vec![
