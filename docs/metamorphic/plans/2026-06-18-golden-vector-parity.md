@@ -64,6 +64,9 @@ version = "0.3.0"          # ← bumped from 0.1.0
 serde = { version = "1.0.228", features = ["derive"] }   # ← add features = ["derive"]
 arrow-ipc = { version = "57.0.0" }                       # ← new
 base64 = "0.22"                                           # ← new
+hex = "0.4.3"                                             # ← move from [dev-dependencies]; binary needs it
+
+# In [dev-dependencies], remove the hex line — it is now covered by [dependencies] above.
 
 # … existing [[bin]] for uniffi-bindgen unchanged …
 
@@ -77,7 +80,7 @@ name = "emit_golden_metadata"                             # ← new
 cargo build 2>&1 | head -20
 ```
 
-Expected: no errors (warnings about unused imports are fine at this stage).
+Expected: no errors.
 
 - [ ] **Step 3: Commit**
 
@@ -115,17 +118,14 @@ git commit -m "chore: bump to v0.3.0; add arrow-ipc, base64, serde derive"
 #![expect(clippy::unwrap_used, reason = "CLI tool — panics are acceptable")]
 
 use std::collections::HashMap;
-use std::io::Cursor;
-use std::sync::Arc;
 
-use arrow::array::RecordBatch;
 use arrow_ipc::writer::StreamWriter;
 use arrow_schema::{DataType, Field, Schema};
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use starfix::{ArrowDigester, HasherConfig};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct GoldenFixture {
     version: String,
     generated_by: String,
@@ -133,7 +133,7 @@ struct GoldenFixture {
     vectors: Vec<GoldenVector>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct GoldenVector {
     id: String,
     description: String,
