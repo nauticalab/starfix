@@ -28,7 +28,7 @@ Top-level structure:
 
 ```json
 {
-  "version": "0.2",
+  "version": "0.3",
   "generated_by": "cargo run --bin emit_golden_metadata",
   "rust_commit": "<output of `git rev-parse HEAD` at generation time>",
   "vectors": [ ... ]
@@ -94,7 +94,7 @@ Responsibilities:
 - Serialises each to an Arrow IPC stream, base64-encodes it
 - Calls `ArrowDigester` to produce the authoritative hash
 - Writes the complete JSON to stdout
-- Embeds a `rust_commit` field via `env!("CARGO_PKG_VERSION")` or a build-time `GIT_SHA` env var
+- Embeds a `rust_commit` field by running `git rev-parse HEAD` via `std::process::Command` at generation time
 
 The file header contains a comment documenting the full regeneration procedure (see
 § Regeneration Workflow below).
@@ -220,26 +220,146 @@ When the Rust hasher changes and the fixture must be updated:
 Both repos are bumped to `v0.3.0` as part of this work. The hash format byte prefix
 (`[0, 0, 1]` — hash spec version 0.0.1) is unchanged; this is a package version bump only.
 
-| Repo | Change | When |
-|---|---|---|
-| `nauticalab/starfix` | `Cargo.toml` `version` → `"0.3.0"` | In this PR |
-| `nauticalab/starfix` | `v0.3.0` git tag | Created on merge to `main` |
-| `nauticalab/starfix-python` | No `pyproject.toml` change (`hatch-vcs` reads from git tag) | — |
-| `nauticalab/starfix-python` | `v0.3.0` git tag | Created on merge to `main` |
+### Why `Cargo.toml` version and git tags are kept in sync
 
-The Rust `Cargo.toml` version must always match the latest git tag. After bumping
-`Cargo.toml` to `0.3.0` and merging, tag both repos simultaneously:
+Cargo requires a hardcoded version in `Cargo.toml`; there is no `hatch-vcs`-style
+auto-derivation from git tags. The invariant is enforced instead by using `cargo-release`,
+which atomically bumps `Cargo.toml`, commits the change, creates the matching git tag, and
+pushes both — making it structurally impossible to tag without also updating `Cargo.toml`.
 
-```bash
-# in starfix
-git tag v0.3.0 && git push origin v0.3.0
+### `release.toml` (new file, `nauticalab/starfix`)
 
-# in starfix-python
-git tag v0.3.0 && git push origin v0.3.0
+```toml
+pre-release-commit-message = "chore: release v{{version}}"
+tag-name                   = "v{{version}}"
+push                       = true
+publish                    = false   # wheels go via maturin, not crates.io
 ```
 
-The `maturin-release.yml` workflow in `starfix` triggers on tags and handles wheel
-building and PyPI publication automatically.
+### `cargo-release` CI enforcement (new job in `maturin-release.yml`)
+
+A lightweight check that runs on every tag push and fails if the tag name does not match
+the version in `Cargo.toml`:
+
+```yaml
+verify-version-tag-sync:
+  runs-on: ubuntu-latest
+  if: startsWith(github.ref, 'refs/tags/')
+  steps:
+    - uses: actions/checkout@v4
+    - name: Verify Cargo.toml version matches tag
+      run: |
+        TAG="${GITHUB_REF#refs/tags/v}"
+        CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+        if [ "$TAG" != "$CARGO_VERSION" ]; then
+          echo "Tag $TAG does not match Cargo.toml version $CARGO_VERSION"
+          exit 1
+        fi
+```
+
+### Manually-triggered release workflows
+
+#### `nauticalab/starfix` — new `.github/workflows/release.yml`
+
+```yaml
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.3.0)'
+        required: true
+        type: string
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.91.1
+
+      - run: cargo install cargo-release
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Release
+        run: cargo release ${{ inputs.version }} --execute --no-confirm
+```
+
+A GitHub App token (rather than `GITHUB_TOKEN`) is required for checkout so that the tag
+push from `cargo-release` triggers the downstream `maturin-release.yml` workflow.
+`GITHUB_TOKEN`-pushed events do not trigger other workflows (GitHub's recursion guard).
+
+Required secrets: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` — a GitHub App with
+`contents:write` on `nauticalab/starfix`.
+
+**What this workflow does end-to-end:**
+1. `cargo-release` bumps `Cargo.toml` → commits → creates `v{version}` tag → pushes both
+2. Tag push fires `maturin-release.yml` → builds wheels → publishes to PyPI
+
+#### `nauticalab/starfix-python` — new `.github/workflows/release.yml`
+
+`hatch-vcs` reads the version from git tags automatically; there is no version file to
+bump. The release workflow only needs to create and push the tag:
+
+```yaml
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.3.0)'
+        required: true
+        type: string
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tag and push release
+        run: |
+          git tag v${{ inputs.version }}
+          git push origin v${{ inputs.version }}
+```
+
+Tag push fires the existing `publish.yml` → pure-Python package published to PyPI.
+
+### Release procedure (coordinated across both repos)
+
+1. Merge the PLT-1735 PRs in both repos to `main`
+2. Trigger `starfix` → Actions → **release** → Run workflow → version: `0.3.0`
+3. Trigger `starfix-python` → Actions → **release** → Run workflow → version: `0.3.0`
+4. Confirm both PyPI packages show `0.3.0`
 
 ---
 
@@ -260,3 +380,10 @@ building and PyPI publication automatically.
   valid.
 - **Fixture drift:** Mitigated by the `golden-sync-check` CI job. If the GitHub App secret
   expires or is revoked, the drift check will fail loudly rather than silently passing.
+- **Version/tag sync:** The `verify-version-tag-sync` CI job enforces the invariant on every
+  tag push. If someone bypasses `cargo-release` and creates a tag manually without bumping
+  `Cargo.toml`, this job will catch it and fail the `maturin-release.yml` run before any
+  wheels are built.
+- **GitHub App token for release:** Both release workflows require `RELEASE_APP_ID` and
+  `RELEASE_APP_PRIVATE_KEY` secrets. If these expire or are revoked the workflows will fail
+  at the token-generation step with a clear error — no silent failure.
