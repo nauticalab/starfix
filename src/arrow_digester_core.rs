@@ -167,13 +167,26 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Hash a record batch and update the internal digests.
     pub fn update(&mut self, record_batch: &RecordBatch) {
         let rb_schema = record_batch.schema();
-        let rb_normalized = normalize_schema(&rb_schema);
-        let rb_equality_key =
-            Self::build_schema_equality_key(&rb_normalized, self.include_metadata);
-        assert!(
-            rb_equality_key == self.schema_equality_key,
-            "Record batch schema does not match ArrowDigester schema"
-        );
+
+        // Fast path (include_metadata = false): serialized_schema normalizes types internally
+        // via data_type_to_value, so normalize_schema is not needed and we can compare
+        // directly — avoiding the allocation of a normalized Schema/Fields/Arc<Field> tree.
+        //
+        // Metadata path (include_metadata = true): normalize first (normalize_schema preserves
+        // metadata), then build the full equality key that includes the metadata JSON.
+        if self.include_metadata {
+            let rb_normalized = normalize_schema(&rb_schema);
+            let rb_equality_key = Self::build_schema_equality_key(&rb_normalized, true);
+            assert!(
+                rb_equality_key == self.schema_equality_key,
+                "Record batch schema does not match ArrowDigester schema"
+            );
+        } else {
+            assert!(
+                Self::serialized_schema(&rb_schema) == self.schema_equality_key,
+                "Record batch schema does not match ArrowDigester schema"
+            );
+        }
 
         let schema = record_batch.schema();
         for col_idx in 0..record_batch.num_columns() {
