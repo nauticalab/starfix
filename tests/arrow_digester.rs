@@ -1898,11 +1898,11 @@ mod tests {
         let make_schema = |x_keys: [(&str, &str); 3], y_keys: [(&str, &str); 3]| {
             let x_meta: HashMap<String, String> = x_keys
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
             let y_meta: HashMap<String, String> = y_keys
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
             Schema::new(vec![
                 Field::new("x", DataType::Int32, false).with_metadata(x_meta),
@@ -1940,7 +1940,7 @@ mod tests {
         let make_schema = |keys: [(&str, &str); 3]| {
             let meta: HashMap<String, String> = keys
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
             Schema::new_with_metadata(vec![Field::new("v", DataType::Int32, false)], meta)
         };
@@ -1971,15 +1971,15 @@ mod tests {
                            schema_keys: [(&str, &str); 2]| {
             let child_meta: HashMap<String, String> = child_keys
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
             let top_meta: HashMap<String, String> = top_keys
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
             let schema_meta: HashMap<String, String> = schema_keys
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
 
             let child_field =
