@@ -48,7 +48,8 @@ mod tests {
         );
         let raw = fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("fixture not found at {path} — run `cargo run --bin emit_golden_metadata > tests/golden/include_metadata_v0.3.json`"));
-        serde_json::from_str(&raw).unwrap()
+        serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("failed to parse fixture at {path}: {e}"))
     }
 
     fn decode_ipc(ipc_b64: &str) -> (Arc<Schema>, Option<RecordBatch>) {
@@ -57,6 +58,10 @@ mod tests {
         let mut reader = StreamReader::try_new(cursor, None).unwrap();
         let schema = reader.schema();
         let batch = reader.next().and_then(Result::ok);
+        assert!(
+            reader.next().is_none(),
+            "IPC stream contains more than one batch"
+        );
         (schema, batch)
     }
 
@@ -147,9 +152,26 @@ mod tests {
             .get("key_reorder_shuffled")
             .expect("key_reorder_shuffled must exist");
 
+        let (schema_c, _) = decode_ipc(&canonical.ipc_b64);
+        let (schema_s, _) = decode_ipc(&shuffled.ipc_b64);
+        let config = HasherConfig {
+            include_metadata: true,
+        };
+
+        let hash_c = encode(ArrowDigester::hash_schema(&schema_c, config));
+        let hash_s = encode(ArrowDigester::hash_schema(&schema_s, config));
+
         assert_eq!(
-            canonical.expected_hash, shuffled.expected_hash,
-            "key_reorder_canonical and key_reorder_shuffled must have identical expected_hash"
+            hash_c, canonical.expected_hash,
+            "key_reorder_canonical: live hash drifted from fixture"
+        );
+        assert_eq!(
+            hash_s, shuffled.expected_hash,
+            "key_reorder_shuffled: live hash drifted from fixture"
+        );
+        assert_eq!(
+            hash_c, hash_s,
+            "key-reorder produced different hashes — insertion order must not affect the hash"
         );
     }
 }
