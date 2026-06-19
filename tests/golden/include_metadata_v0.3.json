@@ -1,0 +1,79 @@
+{
+  "version": "0.3",
+  "generated_by": "cargo run --bin emit_golden_metadata",
+  "rust_commit": "c652de91e2163738da20cca424a5ffc68f16f53f",
+  "vectors": [
+    {
+      "id": "no_metadata_include_false",
+      "description": "Schema {id: Int64, name: LargeUtf8}, no metadata, include_metadata=false",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAIAAABUAAAAFAAAABAAFAAQAA4ADwAEAAAACAAQAAAAGAAAAAwAAAAAAAEUEAAAAAAAAAAEAAQABAAAAAQAAABuYW1lAAAAABAAFAAQAAAADwAEAAAACAAQAAAAGAAAACAAAAAAAAACHAAAAAgADAAEAAsACAAAAEAAAAAAAAABAAAAAAIAAABpZAAA/////wAAAAA=",
+      "expected_hash": "00000131f10e388ffb366939a37d877568320d681eb2c6e81793259274afd3b10ae38d"
+    },
+    {
+      "id": "schema_level_metadata",
+      "description": "Schema-level metadata {version: 2}, include_metadata=true",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAA4ADAALAAQACgAAABQAAAAAAAABBAAKAAwAAAAIAAQACgAAAAgAAAA0AAAAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAEAAAAyAAAABwAAAHZlcnNpb24AAQAAABQAAAAQABQAEAAAAA8ABAAAAAgAEAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAABAAAAAAAAAAQAAAAACAAAAaWQAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "00000185971192458c11308853f8647b688810b7efd3afb5e1a3811ebf1c449969b18d"
+    },
+    {
+      "id": "field_metadata_single_field",
+      "description": "Single field x: Int32 with metadata {unit: kg}, include_metadata=true",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAYAAAAAAASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAeAAAAAEAAAAMAAAACAAMAAgABAAIAAAACAAAAAwAAAACAAAAa2cAAAQAAAB1bml0AAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "000001d1490be52114b6a5284a89e91522b111f3e6ee1534edf2e472956f07360df020"
+    },
+    {
+      "id": "field_metadata_multiple_fields",
+      "description": "Two fields x:{unit:kg}, y:{unit:m}, include_metadata=true",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "/////zgBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAIAAACIAAAAGAAAAAAAEgAaABQAAAATAAgAAAAMAAQAEgAAADAAAAAYAAAAHAAAAAAAAAMYAAAAAAAGAAgABgAGAAAAAAACAAAAAAABAAAAeQAAAAEAAAAEAAAAkP///wgAAAAMAAAAAQAAAG0AAAAEAAAAdW5pdAAAEgAYABQAAAATAAgAAAAMAAQAEgAAADQAAAAYAAAAIAAAAAAAAAIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAAAQAAAHgAAAABAAAADAAAAAgADAAIAAQACAAAAAgAAAAMAAAAAgAAAGtnAAAEAAAAdW5pdAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001fdaa74e60eec18b816ac8e732f943fe405aaa9465ad3b788c083322b0bf16757"
+    },
+    {
+      "id": "schema_and_field_metadata",
+      "description": "Schema metadata {version:1} + field metadata {unit:kg}, include_metadata=true",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAA4ADAALAAQACgAAABQAAAAAAAABBAAKAAwAAAAIAAQACgAAAAgAAAAsAAAAAQAAAAQAAACE////CAAAAAwAAAABAAAAMQAAAAcAAAB2ZXJzaW9uAAEAAAAYAAAAAAASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAeAAAAAEAAAAMAAAACAAMAAgABAAIAAAACAAAAAwAAAACAAAAa2cAAAQAAAB1bml0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////8AAAAA",
+      "expected_hash": "000001dd9181cde304d1e39d424283c46d0b63126fa12e1272ce92ca34d7d4389dec65"
+    },
+    {
+      "id": "unicode_metadata",
+      "description": "Field metadata with emoji and CJK keys/values, include_metadata=true",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAYAAAAAAASABgAFAAAABMACAAAAAwABAASAAAALAAAABgAAAAMAAAAAAAAFBAAAAAAAAAABAAEAAQAAAAEAAAAZGF0YQAAAAACAAAAOAAAAAQAAADY////CAAAABQAAAAJAAAA5pel5pys6KqeAAAABgAAAOS4reaWhwAACAAMAAgABAAIAAAACAAAABQAAAAJAAAAdmFsdWVf4pyTAAAADgAAAGVtb2ppX2tleV/wn5SRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////8AAAAA",
+      "expected_hash": "00000155498f11ff0803127d60f8c6daa18b8c8dbb3411d2962e08ee0dfbce7054706b"
+    },
+    {
+      "id": "key_reorder_canonical",
+      "description": "Field metadata {alpha,beta,gamma} inserted in alphabetical order, include_metadata=true",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAYAAAAAAASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAeAAAAAMAAABUAAAAKAAAAAQAAADA////CAAAAAwAAAABAAAAMwAAAAUAAABnYW1tYQAAAOD///8IAAAADAAAAAEAAAAyAAAABAAAAGJldGEAAAAACAAMAAgABAAIAAAACAAAAAwAAAABAAAAMQAAAAUAAABhbHBoYQAAAP////8AAAAA",
+      "expected_hash": "0000016a68d96d5c89d9b5de01d104c7ad1f51f9956bd8758691c9241ecacf32c701bf"
+    },
+    {
+      "id": "key_reorder_shuffled",
+      "description": "Same metadata {alpha,beta,gamma} inserted in shuffled order — expected_hash must equal key_reorder_canonical",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAYAAAAAAASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAeAAAAAMAAABUAAAAKAAAAAQAAADA////CAAAAAwAAAABAAAAMwAAAAUAAABnYW1tYQAAAOD///8IAAAADAAAAAEAAAAyAAAABAAAAGJldGEAAAAACAAMAAgABAAIAAAACAAAAAwAAAABAAAAMQAAAAUAAABhbHBoYQAAAP////8AAAAA",
+      "expected_hash": "0000016a68d96d5c89d9b5de01d104c7ad1f51f9956bd8758691c9241ecacf32c701bf"
+    },
+    {
+      "id": "empty_metadata_invariant",
+      "description": "Schema with no metadata — hash(include_metadata=false) must equal hash(include_metadata=true)",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAIAAABUAAAAFAAAABAAFAAQAA4ADwAEAAAACAAQAAAAGAAAAAwAAAAAAAEUEAAAAAAAAAAEAAQABAAAAAQAAABuYW1lAAAAABAAFAAQAAAADwAEAAAACAAQAAAAGAAAACAAAAAAAAACHAAAAAgADAAEAAsACAAAAEAAAAAAAAABAAAAAAIAAABpZAAA/////wAAAAA=",
+      "expected_hash": "00000131f10e388ffb366939a37d877568320d681eb2c6e81793259274afd3b10ae38d"
+    }
+  ]
+}
