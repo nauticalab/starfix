@@ -211,14 +211,19 @@ fn build_vectors() -> Vec<GoldenVector> {
     };
 
     // ── 8. key_reorder_shuffled ───────────────────────────────────────────────
-    // Same logical metadata as canonical; HashMap iteration may produce same IPC bytes
-    // within one process run, but the hash is always identical — that is the invariant.
+    // Note: arrow-ipc's `metadata_to_fb` sorts keys before writing FlatBuffers
+    // (see arrow-ipc convert.rs: `ordered_keys.sort()`), so both canonical and shuffled
+    // produce byte-identical IPC streams regardless of HashMap insertion order.
+    // The IPC-level key-ordering invariant is therefore validated at the hasher unit-test
+    // level (tests/arrow_digester.rs) rather than here. These two vectors serve as
+    // a regression pair confirming that the hasher produces the same authoritative hash
+    // from both schemas — and that the Python implementation agrees.
     {
         let schema = Schema::new(vec![Field::new("x", DataType::Int32, false)
             .with_metadata(meta(&[("gamma", "3"), ("alpha", "1"), ("beta", "2")]))]);
         vectors.push(GoldenVector {
             id: "key_reorder_shuffled".to_owned(),
-            description: "Same metadata {alpha,beta,gamma} inserted in shuffled order — expected_hash must equal key_reorder_canonical".to_owned(),
+            description: "Same metadata {alpha,beta,gamma} with shuffled HashMap input — arrow-ipc normalises key order before FlatBuffers encoding, so expected_hash equals key_reorder_canonical".to_owned(),
             method: "hash_schema".to_owned(),
             include_metadata: true,
             ipc_b64: schema_to_ipc_b64(&schema),

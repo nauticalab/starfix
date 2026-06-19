@@ -1,7 +1,7 @@
 {
   "version": "0.3",
   "generated_by": "cargo run --bin emit_golden_metadata",
-  "rust_commit": "c652de91e2163738da20cca424a5ffc68f16f53f",
+  "rust_commit": "8eae026401c23f9c3807755d353fb26242a908a1",
   "vectors": [
     {
       "id": "no_metadata_include_false",
@@ -61,7 +61,7 @@
     },
     {
       "id": "key_reorder_shuffled",
-      "description": "Same metadata {alpha,beta,gamma} inserted in shuffled order — expected_hash must equal key_reorder_canonical",
+      "description": "Same metadata {alpha,beta,gamma} with shuffled HashMap input — arrow-ipc normalises key order before FlatBuffers encoding, so expected_hash equals key_reorder_canonical",
       "method": "hash_schema",
       "include_metadata": true,
       "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAYAAAAAAASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAeAAAAAMAAABUAAAAKAAAAAQAAADA////CAAAAAwAAAABAAAAMwAAAAUAAABnYW1tYQAAAOD///8IAAAADAAAAAEAAAAyAAAABAAAAGJldGEAAAAACAAMAAgABAAIAAAACAAAAAwAAAABAAAAMQAAAAUAAABhbHBoYQAAAP////8AAAAA",
