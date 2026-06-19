@@ -46,9 +46,11 @@ Each entry in `vectors`:
 | `ipc_b64` | string | Base64-encoded Arrow IPC stream (schema + optional rows) |
 | `expected_hash` | string | Rust-authoritative hex-encoded hash digest |
 
-Arrow IPC is used for `ipc_b64` because it captures the exact bytes — including metadata key
-insertion order — that were fed to the Rust hasher. This eliminates any risk of Python
-constructing subtly different Arrow data.
+Arrow IPC is used for `ipc_b64` because it provides a stable, self-contained encoding of the
+Arrow schema (including all metadata) that both Rust and Python can deserialize identically.
+Note: `arrow-ipc`'s `metadata_to_fb` sorts metadata keys alphabetically before FlatBuffers
+encoding (`ordered_keys.sort()` in convert.rs), so the IPC byte stream is deterministic
+regardless of HashMap insertion order at the producer side.
 
 ---
 
@@ -67,8 +69,12 @@ constructing subtly different Arrow data.
 | `empty_metadata_invariant` | No metadata at all — tested with `include_metadata=false`; `expected_hash` must equal that of the same schema hashed with `include_metadata=true` | `false` |
 
 The `key_reorder_canonical` / `key_reorder_shuffled` pair encodes the key-ordering determinism
-invariant directly in the fixture: two different IPC blobs (different insertion orders) map to
-the same `expected_hash`.
+invariant directly in the fixture. Because `arrow-ipc` sorts metadata keys alphabetically before
+FlatBuffers encoding, both vectors produce **byte-identical IPC blobs** — the insertion-order
+invariant is enforced at the IPC level, not the hasher level. Both vectors therefore share the
+same `ipc_b64` and the same `expected_hash`. The test verifies that the hasher also produces
+matching output when the live hasher is called directly on schemas built with different insertion
+orders.
 
 The `empty_metadata_invariant` entry pins the empty-metadata fixed point: a schema with no
 metadata must produce the same hash regardless of `include_metadata`. Only one entry is needed
@@ -374,10 +380,12 @@ Tag push fires the existing `publish.yml` → pure-Python package published to P
 
 ## Risks
 
-- **IPC metadata order:** Arrow IPC preserves key insertion order in its FlatBuffers encoding.
-  This is load-bearing for the `key_reorder_*` vectors. If a future Arrow version changes this
-  behaviour the vectors would need to be regenerated, but the fixture format itself remains
-  valid.
+- **IPC metadata order:** Arrow IPC does **not** preserve key insertion order — `metadata_to_fb`
+  in arrow-ipc sorts keys alphabetically before FlatBuffers encoding (`ordered_keys.sort()` in
+  convert.rs). As a result, the `key_reorder_canonical` and `key_reorder_shuffled` vectors
+  produce byte-identical IPC blobs. If a future Arrow version changes this sorting behaviour,
+  the `key_reorder_*` IPC blobs would diverge and the vectors would need to be regenerated;
+  the fixture format itself remains valid.
 - **Fixture drift:** Mitigated by the `golden-sync-check` CI job. If the GitHub App secret
   expires or is revoked, the drift check will fail loudly rather than silently passing.
 - **Version/tag sync:** The `verify-version-tag-sync` CI job enforces the invariant on every

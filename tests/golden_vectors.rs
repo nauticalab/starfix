@@ -14,7 +14,6 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::io::Cursor;
-    use std::result::Result;
     use std::sync::Arc;
 
     use arrow::array::RecordBatch;
@@ -57,11 +56,16 @@ mod tests {
         let cursor = Cursor::new(bytes);
         let mut reader = StreamReader::try_new(cursor, None).unwrap();
         let schema = reader.schema();
-        let batch = reader.next().and_then(Result::ok);
-        assert!(
-            reader.next().is_none(),
-            "IPC stream contains more than one batch"
-        );
+        let batch = match reader.next() {
+            None => None,
+            Some(Ok(b)) => Some(b),
+            Some(Err(e)) => panic!("IPC stream decode error: {e}"),
+        };
+        match reader.next() {
+            None => {}
+            Some(Ok(_)) => panic!("IPC stream contains more than one batch"),
+            Some(Err(e)) => panic!("IPC stream error reading past first batch: {e}"),
+        }
         (schema, batch)
     }
 
