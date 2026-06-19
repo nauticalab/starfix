@@ -30,8 +30,23 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
+  verify-version-tag-sync:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Cargo.toml version matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          if [ "$TAG" != "$CARGO_VERSION" ]; then
+            echo "ERROR: Tag v${TAG} does not match Cargo.toml version ${CARGO_VERSION}"
+            exit 1
+          fi
+          echo "OK: Tag v${TAG} matches Cargo.toml version ${CARGO_VERSION}"
+
   linux:
-    needs: [test]
+    needs: [test, verify-version-tag-sync]
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -126,7 +141,7 @@ jobs:
   #         path: dist
 
   macos:
-    needs: [test]
+    needs: [test, verify-version-tag-sync]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -153,7 +168,7 @@ jobs:
           path: dist
 
   sdist:
-    needs: [test]
+    needs: [test, verify-version-tag-sync]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
