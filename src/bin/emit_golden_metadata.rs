@@ -50,7 +50,13 @@ fn git_sha() -> String {
         .output()
         .map_or_else(
             |_| "unknown".to_owned(),
-            |o| String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+            |o| {
+                if o.status.success() {
+                    String::from_utf8_lossy(&o.stdout).trim().to_owned()
+                } else {
+                    "unknown".to_owned()
+                }
+            },
         )
 }
 
