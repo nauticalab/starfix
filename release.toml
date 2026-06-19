@@ -1,0 +1,12 @@
+# cargo-release configuration for nauticalab/starfix.
+#
+# Usage:
+#   cargo release <version> --execute --no-confirm
+#
+# This atomically bumps Cargo.toml, commits, creates a v<version> git tag,
+# and pushes both. The tag push triggers maturin-release.yml which builds
+# and publishes Python wheels to PyPI.
+pre-release-commit-message = "chore: release v{{version}}"
+tag-name                   = "v{{version}}"
+push                       = true
+publish                    = false
