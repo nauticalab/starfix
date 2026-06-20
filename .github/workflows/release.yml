@@ -46,16 +46,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # cargo-release bumps Cargo.toml, commits "chore: release v<version>",
-      # creates the v<version> tag, and pushes both to the repo.
-      # Publishing is disabled in release.toml (publish = false) because
-      # cargo-release checks for a registry token before calling `cargo publish`,
-      # which prevents the OIDC exchange from ever running. Publishing is handled
-      # by the separate step below.
-      - name: Release (version bump, commit, tag, push)
-        run: cargo release ${{ inputs.version }} --execute --no-confirm
+      # Exchange the GitHub OIDC JWT for a short-lived crates.io API token using
+      # crates.io trusted publishing (https://crates.io/docs/trusted-publishing).
+      # Setting CARGO_REGISTRY_TOKEN in GITHUB_ENV lets cargo-release's pre-publish
+      # token check pass, so publish = true in release.toml works without any
+      # stored API token secret.
+      - name: Get crates.io OIDC token
+        run: |
+          OIDC_TOKEN=$(curl -sSf "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=crates.io" \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            | jq -r '.value')
+          CRATES_TOKEN=$(curl -sSf https://crates.io/api/v0/trusted_publishing/tokens \
+            -H "Content-Type: application/json" \
+            -d "{\"jwt\": \"${OIDC_TOKEN}\"}" \
+            | jq -r '.token')
+          echo "::add-mask::${CRATES_TOKEN}"
+          echo "CARGO_REGISTRY_TOKEN=${CRATES_TOKEN}" >> "${GITHUB_ENV}"
 
-      # `cargo publish` natively supports crates.io trusted publishing via OIDC
-      # when id-token: write is granted. No CARGO_REGISTRY_TOKEN secret needed.
-      - name: Publish to crates.io
-        run: cargo publish
+      # cargo-release atomically bumps Cargo.toml, commits "chore: release v<version>",
+      # creates the v<version> tag, pushes both, then publishes to crates.io.
+      - name: Release
+        run: cargo release ${{ inputs.version }} --execute --no-confirm
