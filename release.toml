@@ -3,13 +3,20 @@
 # Usage:
 #   cargo release <version> --execute --no-confirm
 #
-# This atomically bumps Cargo.toml, commits, creates a v<version> git tag,
-# publishes the crate to crates.io, and pushes both the commit and the tag.
+# cargo-release handles: bumping Cargo.toml, committing, creating the
+# v<version> git tag, and pushing both the commit and the tag.
 # The tag push triggers ci.yml which runs tests and verifies version/tag sync.
+#
+# Publishing to crates.io is NOT handled by cargo-release (publish = false).
+# cargo-release performs its own pre-publish token existence check before ever
+# calling `cargo publish`, which means it fails before cargo's native OIDC
+# exchange with crates.io can run. Instead, a separate `cargo publish` step in
+# release.yml handles publishing — cargo publish natively supports OIDC trusted
+# publishing without requiring any token secret.
 #
 # The Python package "starfix" is a separate project released exclusively
 # through nauticalab/starfix-python.
 pre-release-commit-message = "chore: release v{{version}}"
 tag-name                   = "v{{version}}"
 push                       = true
-publish                    = true
+publish                    = false
