@@ -46,5 +46,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Release
+      # cargo-release bumps Cargo.toml, commits "chore: release v<version>",
+      # creates the v<version> tag, and pushes both to the repo.
+      # Publishing is disabled in release.toml (publish = false) because
+      # cargo-release checks for a registry token before calling `cargo publish`,
+      # which prevents the OIDC exchange from ever running. Publishing is handled
+      # by the separate step below.
+      - name: Release (version bump, commit, tag, push)
         run: cargo release ${{ inputs.version }} --execute --no-confirm
+
+      # `cargo publish` natively supports crates.io trusted publishing via OIDC
+      # when id-token: write is granted. No CARGO_REGISTRY_TOKEN secret needed.
+      - name: Publish to crates.io
+        run: cargo publish
