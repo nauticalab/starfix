@@ -11,6 +11,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # cargo-release commits + pushes
+      id-token: write   # crates.io trusted publishing (OIDC — no API token needed)
     steps:
       # A GitHub App token is required here even though cargo-release only writes
       # to this same repository. GitHub's recursion guard prevents GITHUB_TOKEN-
@@ -45,5 +48,3 @@ jobs:
 
       - name: Release
         run: cargo release ${{ inputs.version }} --execute --no-confirm
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
