@@ -4,9 +4,12 @@
 #   cargo release <version> --execute --no-confirm
 #
 # This atomically bumps Cargo.toml, commits, creates a v<version> git tag,
-# and pushes both. The tag push triggers maturin-release.yml which builds
-# and publishes Python wheels to PyPI.
+# publishes the crate to crates.io, and pushes both the commit and the tag.
+# The tag push triggers ci.yml which runs tests and verifies version/tag sync.
+#
+# The Python package "starfix" is a separate project released exclusively
+# through nauticalab/starfix-python.
 pre-release-commit-message = "chore: release v{{version}}"
 tag-name                   = "v{{version}}"
 push                       = true
-publish                    = false
+publish                    = true
