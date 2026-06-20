@@ -48,22 +48,16 @@ jobs:
 
       # Exchange the GitHub OIDC JWT for a short-lived crates.io API token using
       # crates.io trusted publishing (https://crates.io/docs/trusted-publishing).
-      # Setting CARGO_REGISTRY_TOKEN in GITHUB_ENV lets cargo-release's pre-publish
-      # token check pass, so publish = true in release.toml works without any
-      # stored API token secret.
-      - name: Get crates.io OIDC token
-        run: |
-          OIDC_TOKEN=$(curl -sSf "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=crates.io" \
-            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            | jq -er '.value')
-          CRATES_TOKEN=$(curl -sSf https://crates.io/api/v0/trusted_publishing/tokens \
-            -H "Content-Type: application/json" \
-            -d "{\"jwt\": \"${OIDC_TOKEN}\"}" \
-            | jq -er '.token')
-          echo "::add-mask::${CRATES_TOKEN}"
-          echo "CARGO_REGISTRY_TOKEN=${CRATES_TOKEN}" >> "${GITHUB_ENV}"
+      # The post step of this action automatically revokes the token on job completion.
+      - name: Authenticate with crates.io (trusted publishing)
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18  # v1.0.5
 
       # cargo-release atomically bumps Cargo.toml, commits "chore: release v<version>",
       # creates the v<version> tag, pushes both, then publishes to crates.io.
+      # CARGO_REGISTRY_TOKEN satisfies cargo-release's pre-publish token check so
+      # publish = true in release.toml works without any stored API token secret.
       - name: Release
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: cargo release ${{ inputs.version }} --execute --no-confirm
