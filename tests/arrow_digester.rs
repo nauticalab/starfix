@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
-    use std::sync::Arc;
+    use std::{collections::HashSet, sync::Arc};
 
     use arrow::{
         array::{
@@ -317,7 +317,7 @@ mod tests {
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&TimestampNanosecondArray::from(
-                values.clone()
+                values
             ),)),
             "000001f677ef0e42e9e40ea092471f82283212833ab6b4ff9bb45e86e88590f8d15796"
         );
@@ -347,7 +347,7 @@ mod tests {
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&DurationNanosecondArray::from(
-                values.clone()
+                values
             ),)),
             "00000189a38c5a7adf4b19b3e0d467f042ab2389fed8ae5f1d2af8555dd6131478a49b"
         );
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn timestamp_units_differ() {
         let values = vec![Some(1_000_i64), Some(2_000_i64)];
-        let hashes = [
+        let hashes: Vec<String> = vec![
             hex::encode(ArrowDigester::hash_array(&TimestampSecondArray::from(
                 values.clone(),
             ))),
@@ -367,17 +367,15 @@ mod tests {
                 values.clone(),
             ))),
             hex::encode(ArrowDigester::hash_array(&TimestampNanosecondArray::from(
-                values.clone(),
+                values,
             ))),
         ];
-        for i in 0..hashes.len() {
-            for j in (i + 1)..hashes.len() {
-                assert_ne!(
-                    hashes[i], hashes[j],
-                    "units {i} and {j} produced identical hashes"
-                );
-            }
-        }
+        let unique: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+        assert_eq!(
+            unique.len(),
+            4,
+            "all timestamp units must produce distinct hashes"
+        );
     }
 
     #[test]
@@ -387,7 +385,7 @@ mod tests {
             values.clone(),
         )));
         let utc = hex::encode(ArrowDigester::hash_array(
-            &TimestampMicrosecondArray::from(values.clone()).with_timezone("UTC"),
+            &TimestampMicrosecondArray::from(values).with_timezone("UTC"),
         ));
         assert_ne!(
             naive, utc,
@@ -398,7 +396,7 @@ mod tests {
     #[test]
     fn duration_units_differ() {
         let values = vec![Some(1_000_i64), Some(2_000_i64)];
-        let hashes = [
+        let hashes: Vec<String> = vec![
             hex::encode(ArrowDigester::hash_array(&DurationSecondArray::from(
                 values.clone(),
             ))),
@@ -409,14 +407,15 @@ mod tests {
                 values.clone(),
             ))),
             hex::encode(ArrowDigester::hash_array(&DurationNanosecondArray::from(
-                values.clone(),
+                values,
             ))),
         ];
-        for i in 0..hashes.len() {
-            for j in (i + 1)..hashes.len() {
-                assert_ne!(hashes[i], hashes[j]);
-            }
-        }
+        let unique: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+        assert_eq!(
+            unique.len(),
+            4,
+            "all duration units must produce distinct hashes"
+        );
     }
 
     /// Test binary array hashing.
