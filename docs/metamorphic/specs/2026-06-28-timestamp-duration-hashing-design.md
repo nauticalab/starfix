@@ -185,4 +185,4 @@ No other files require changes.
 1. **Rust:** Write failing tests → implement fix → run `cargo test` → capture golden hashes → update `schema()` golden hash
 2. **Python:** Write failing tests (using Rust golden values) → implement fix → run pytest
 3. **Formatting:** Run `cargo fmt` before committing (required by CLAUDE.md)
-4. **Two PRs:** One per repo, both targeting `dev`; Python PR notes dependency on Rust golden values
+4. **Two PRs:** One per repo, both targeting `main`; Python PR notes dependency on Rust golden values
