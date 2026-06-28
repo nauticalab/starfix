@@ -70,6 +70,32 @@ schema-level metadata, not data-buffer metadata. This is the same physical layou
 
 ---
 
+## Polars Round-Trip Behaviour
+
+Verified against polars 1.42.0 / pyarrow 24.0.0:
+
+| Type | Round-trip result | Stable? |
+|---|---|---|
+| `timestamp[ms/us/ns]` (any tz) | Type preserved verbatim | ✅ |
+| `timestamp[us/ms/ns]` tz-naive | Type preserved verbatim | ✅ |
+| `duration[ms/us/ns]` | Type preserved verbatim | ✅ |
+| `timestamp[s, tz=*]` | **Coerced to `timestamp[ms, tz=*]`** | ❌ |
+| `duration[s]` | **Coerced to `duration[ms]`** | ❌ |
+| Polars native `datetime` | Always produces `timestamp[us, tz=UTC]` | ✅ |
+| Timezone strings | Preserved verbatim (`UTC`, `America/New_York`, etc.) | ✅ |
+
+**Design decision:** starfix does **not** normalise `s`→`ms`. The hasher correctly
+hashes whatever Arrow type it receives per the Arrow spec. `timestamp[s, value=1]` and
+`timestamp[ms, value=1]` represent different points in time and must produce different
+hashes. The `s`→`ms` coercion is a Polars limitation.
+
+**Practical implication for users:** Projects that pass Arrow data through Polars before
+hashing should avoid `timestamp[s]` and `duration[s]` columns if hash stability across
+the Polars boundary is required. Use `ms`, `us`, or `ns` instead — all three survive
+Polars round-trips intact.
+
+---
+
 ## Design
 
 ### Rust fix (`src/arrow_digester_core.rs`)
