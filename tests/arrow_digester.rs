@@ -6,12 +6,14 @@ mod tests {
     use arrow::{
         array::{
             ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal32Array,
-            Decimal64Array, DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
-            Int64Array, Int8Array, LargeBinaryArray, LargeListArray, LargeListBuilder,
+            Decimal64Array, DictionaryArray, DurationMicrosecondArray, DurationMillisecondArray,
+            DurationNanosecondArray, DurationSecondArray, Float32Array, Float64Array, Int16Array,
+            Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeListArray, LargeListBuilder,
             LargeStringArray, LargeStringBuilder, ListArray, ListBuilder, RecordBatch, StringArray,
             StringBuilder, StructArray, Time32MillisecondArray, Time32SecondArray,
-            Time64MicrosecondArray, Time64NanosecondArray, UInt16Array, UInt32Array, UInt64Array,
-            UInt8Array,
+            Time64MicrosecondArray, Time64NanosecondArray, TimestampMicrosecondArray,
+            TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt16Array,
+            UInt32Array, UInt64Array, UInt8Array,
         },
         datatypes::{Int32Type, Int8Type},
     };
@@ -51,6 +53,65 @@ mod tests {
                 false,
             ),
             Field::new("time64_nano", DataType::Time64(TimeUnit::Nanosecond), false),
+            // timestamp — all 4 units, tz-aware (UTC)
+            Field::new(
+                "timestamp_s_utc",
+                DataType::Timestamp(TimeUnit::Second, Some("UTC".into())),
+                false,
+            ),
+            Field::new(
+                "timestamp_ms_utc",
+                DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())),
+                false,
+            ),
+            Field::new(
+                "timestamp_us_utc",
+                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                false,
+            ),
+            Field::new(
+                "timestamp_ns_utc",
+                DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
+                false,
+            ),
+            // timestamp — all 4 units, tz-naive
+            Field::new(
+                "timestamp_s",
+                DataType::Timestamp(TimeUnit::Second, None),
+                false,
+            ),
+            Field::new(
+                "timestamp_ms",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new(
+                "timestamp_us",
+                DataType::Timestamp(TimeUnit::Microsecond, None),
+                false,
+            ),
+            Field::new(
+                "timestamp_ns",
+                DataType::Timestamp(TimeUnit::Nanosecond, None),
+                false,
+            ),
+            // duration — all 4 units
+            Field::new("duration_s", DataType::Duration(TimeUnit::Second), false),
+            Field::new(
+                "duration_ms",
+                DataType::Duration(TimeUnit::Millisecond),
+                false,
+            ),
+            Field::new(
+                "duration_us",
+                DataType::Duration(TimeUnit::Microsecond),
+                false,
+            ),
+            Field::new(
+                "duration_ns",
+                DataType::Duration(TimeUnit::Nanosecond),
+                false,
+            ),
             Field::new("binary", DataType::Binary, true),
             Field::new("large_binary", DataType::LargeBinary, true),
             Field::new("utf8", DataType::Utf8, true),
@@ -74,7 +135,7 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(&schema, HasherConfig::default()).finalize()),
-            "0000015955baf5303c8545360b2f0a253065e9d83d91cd44f0bc947c1904dfd9d09aac"
+            "0000012ac1decf89ab7e337d5df56bafd330f7e9a761953c58c39d5a3a8c49f6dfd4ff"
         );
 
         let batch = RecordBatch::try_new(
@@ -97,6 +158,21 @@ mod tests {
                 Arc::new(Time32MillisecondArray::from(vec![3_600_000_i32])),
                 Arc::new(Time64MicrosecondArray::from(vec![3_600_000_000_i64])),
                 Arc::new(Time64NanosecondArray::from(vec![3_600_000_000_000_i64])),
+                // timestamp arrays (tz-aware UTC, all units; raw value = 1_000 ticks)
+                Arc::new(TimestampSecondArray::from(vec![1_000_i64]).with_timezone("UTC")),
+                Arc::new(TimestampMillisecondArray::from(vec![1_000_i64]).with_timezone("UTC")),
+                Arc::new(TimestampMicrosecondArray::from(vec![1_000_i64]).with_timezone("UTC")),
+                Arc::new(TimestampNanosecondArray::from(vec![1_000_i64]).with_timezone("UTC")),
+                // timestamp arrays (tz-naive, all units)
+                Arc::new(TimestampSecondArray::from(vec![1_000_i64])),
+                Arc::new(TimestampMillisecondArray::from(vec![1_000_i64])),
+                Arc::new(TimestampMicrosecondArray::from(vec![1_000_i64])),
+                Arc::new(TimestampNanosecondArray::from(vec![1_000_i64])),
+                // duration arrays (all units; 1_000 ticks each)
+                Arc::new(DurationSecondArray::from(vec![1_000_i64])),
+                Arc::new(DurationMillisecondArray::from(vec![1_000_i64])),
+                Arc::new(DurationMicrosecondArray::from(vec![1_000_i64])),
+                Arc::new(DurationNanosecondArray::from(vec![1_000_i64])),
                 Arc::new(BinaryArray::from(vec![Some(b"data1".as_ref())])),
                 Arc::new(LargeBinaryArray::from(vec![Some(b"large1".as_ref())])),
                 Arc::new(StringArray::from(vec![Some("text1")])),
@@ -133,7 +209,7 @@ mod tests {
                 &batch,
                 HasherConfig::default()
             )),
-            "000001487059003be1a84dbe29ba6e90ea50798a76d22e46e221b6a0c332421dc4062e"
+            "0000011d2c77a01beb74029cb2a71fe52eac4ac3ef7b31b55df717fc8098dee73735cf"
         );
     }
 
@@ -189,6 +265,158 @@ mod tests {
         let hash_millis = hex::encode(ArrowDigester::hash_array(&time32_millis));
 
         assert_ne!(hash_second, hash_millis);
+    }
+
+    #[test]
+    fn timestamp_array_hashing() {
+        let values = vec![Some(0_i64), None, Some(1_000_i64)];
+
+        // tz-aware UTC, all 4 units
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(
+                &TimestampSecondArray::from(values.clone()).with_timezone("UTC"),
+            )),
+            "0000017cef6166a14741f94906bd3146ffa197d1b5756d594eb46304b678b21e44c40b"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(
+                &TimestampMillisecondArray::from(values.clone()).with_timezone("UTC"),
+            )),
+            "000001fd253a835218d5605ce8bb348699f973b93e29fbe21fe6e532468f988ece4ce5"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(
+                &TimestampMicrosecondArray::from(values.clone()).with_timezone("UTC"),
+            )),
+            "0000013af741ca0fe5bd48d0bd39e1993c60e7c032f23c4cf4be6c11cc4b50ce56013e"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(
+                &TimestampNanosecondArray::from(values.clone()).with_timezone("UTC"),
+            )),
+            "000001f5b86904b4b7f2c6a18c7c4febda142bf622e4d01752f42b8f832c0a68a4d9c0"
+        );
+        // tz-naive, all 4 units
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&TimestampSecondArray::from(
+                values.clone()
+            ),)),
+            "0000016ee5249d352c03cc820af39e98b7043993d467207cb6ca34c8d13cfacf141e30"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&TimestampMillisecondArray::from(
+                values.clone()
+            ),)),
+            "000001ef46619d2be8259335ed0943f42ea3ced19ff6d75471a64b2f03aea89afa4842"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&TimestampMicrosecondArray::from(
+                values.clone()
+            ),)),
+            "0000017e624eb2847f79f940d7123980b076aea1c1ecd3adaa34bdae24fa00f05afda3"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&TimestampNanosecondArray::from(
+                values.clone()
+            ),)),
+            "000001f677ef0e42e9e40ea092471f82283212833ab6b4ff9bb45e86e88590f8d15796"
+        );
+    }
+
+    #[test]
+    fn duration_array_hashing() {
+        let values = vec![Some(0_i64), None, Some(1_000_i64)];
+
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&DurationSecondArray::from(
+                values.clone()
+            ),)),
+            "0000013540d23a4abf1dfbc939a9e5514be69e364cec466ef900fa35050dc3cf2994fa"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&DurationMillisecondArray::from(
+                values.clone()
+            ),)),
+            "000001564a87e1e07898af07a4a212e3db83f911ac287134f28c772bf5fb4da683402c"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&DurationMicrosecondArray::from(
+                values.clone()
+            ),)),
+            "0000017904faf3043cf870f0c139cba0282cdaf11c590aeb80f2a0d6b103893ba5da2a"
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&DurationNanosecondArray::from(
+                values.clone()
+            ),)),
+            "00000189a38c5a7adf4b19b3e0d467f042ab2389fed8ae5f1d2af8555dd6131478a49b"
+        );
+    }
+
+    #[test]
+    fn timestamp_units_differ() {
+        let values = vec![Some(1_000_i64), Some(2_000_i64)];
+        let hashes = [
+            hex::encode(ArrowDigester::hash_array(&TimestampSecondArray::from(
+                values.clone(),
+            ))),
+            hex::encode(ArrowDigester::hash_array(&TimestampMillisecondArray::from(
+                values.clone(),
+            ))),
+            hex::encode(ArrowDigester::hash_array(&TimestampMicrosecondArray::from(
+                values.clone(),
+            ))),
+            hex::encode(ArrowDigester::hash_array(&TimestampNanosecondArray::from(
+                values.clone(),
+            ))),
+        ];
+        for i in 0..hashes.len() {
+            for j in (i + 1)..hashes.len() {
+                assert_ne!(
+                    hashes[i], hashes[j],
+                    "units {i} and {j} produced identical hashes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn timestamp_tz_differs() {
+        let values = vec![Some(1_000_i64), Some(2_000_i64)];
+        let naive = hex::encode(ArrowDigester::hash_array(&TimestampMicrosecondArray::from(
+            values.clone(),
+        )));
+        let utc = hex::encode(ArrowDigester::hash_array(
+            &TimestampMicrosecondArray::from(values.clone()).with_timezone("UTC"),
+        ));
+        assert_ne!(
+            naive, utc,
+            "tz-naive and tz=UTC must produce different hashes"
+        );
+    }
+
+    #[test]
+    fn duration_units_differ() {
+        let values = vec![Some(1_000_i64), Some(2_000_i64)];
+        let hashes = [
+            hex::encode(ArrowDigester::hash_array(&DurationSecondArray::from(
+                values.clone(),
+            ))),
+            hex::encode(ArrowDigester::hash_array(&DurationMillisecondArray::from(
+                values.clone(),
+            ))),
+            hex::encode(ArrowDigester::hash_array(&DurationMicrosecondArray::from(
+                values.clone(),
+            ))),
+            hex::encode(ArrowDigester::hash_array(&DurationNanosecondArray::from(
+                values.clone(),
+            ))),
+        ];
+        for i in 0..hashes.len() {
+            for j in (i + 1)..hashes.len() {
+                assert_ne!(hashes[i], hashes[j]);
+            }
+        }
     }
 
     /// Test binary array hashing.
