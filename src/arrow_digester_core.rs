@@ -938,10 +938,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
             | DataType::Decimal64(_, _) => {
                 Self::hash_fixed_size_array(effective_array, digest, 8);
             }
-            DataType::Timestamp(_, _) => todo!(),
+            DataType::Timestamp(_, _) => {
+                // int64 physical storage; unit and tz are schema metadata, not data bytes
+                Self::hash_fixed_size_array(effective_array, digest, 8);
+            }
             DataType::Time32(_) => Self::hash_fixed_size_array(effective_array, digest, 4),
             DataType::Time64(_) => Self::hash_fixed_size_array(effective_array, digest, 8),
-            DataType::Duration(_) => todo!(),
+            DataType::Duration(_) => {
+                // int64 physical storage; unit is schema metadata, not data bytes
+                Self::hash_fixed_size_array(effective_array, digest, 8);
+            }
             DataType::Interval(_) => todo!(),
             // Small variants are normalized above — these arms are unreachable
             DataType::Binary | DataType::Utf8 | DataType::List(_) => {
@@ -1244,11 +1250,12 @@ mod tests {
     use arrow::{
         array::{
             ArrayRef, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal128Array,
-            Decimal32Array, FixedSizeBinaryBuilder, Float16Array, Float32Array, Float64Array,
-            Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeListArray,
-            LargeListBuilder, LargeStringArray, ListBuilder, PrimitiveBuilder, RecordBatch,
-            StringArray, StructArray, Time32SecondArray, Time64MicrosecondArray, UInt16Array,
-            UInt32Array, UInt64Array, UInt8Array,
+            Decimal32Array, DurationMicrosecondArray, FixedSizeBinaryBuilder, Float16Array,
+            Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+            LargeBinaryArray, LargeListArray, LargeListBuilder, LargeStringArray, ListBuilder,
+            PrimitiveBuilder, RecordBatch, StringArray, StructArray, Time32SecondArray,
+            Time64MicrosecondArray, TimestampMicrosecondArray, UInt16Array, UInt32Array,
+            UInt64Array, UInt8Array,
         },
         datatypes::Int32Type,
     };
@@ -2149,6 +2156,91 @@ mod tests {
         assert!(!null_bit_vec[1]);
         assert!(null_bit_vec[2]);
 
+        let mut manual = Sha256::new();
+        manual.update(0_i64.to_le_bytes());
+        manual.update(3_600_000_000_i64.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    // ── Timestamp / Duration ──────────────────────────────────────────────
+
+    #[test]
+    fn digest_timestamp_nullable_bytes() {
+        // Microseconds since epoch: [0, None, 3_600_000_000]
+        let array =
+            TimestampMicrosecondArray::from(vec![Some(0_i64), None, Some(3_600_000_000_i64)])
+                .with_timezone("UTC");
+        let mut digester = ArrowDigesterCore::<Sha256>::new(
+            &Schema::new(vec![Field::new(
+                "col",
+                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                true,
+            )]),
+            false,
+        );
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0], "index 0 should be valid");
+        assert!(!null_bit_vec[1], "index 1 (None) should be null");
+        assert!(null_bit_vec[2], "index 2 should be valid");
+
+        // Physical storage: int64 LE bytes for valid elements only
+        let mut manual = Sha256::new();
+        manual.update(0_i64.to_le_bytes());
+        manual.update(3_600_000_000_i64.to_le_bytes());
+        assert_eq!(data_digest.clone().finalize(), manual.finalize());
+    }
+
+    #[test]
+    fn digest_duration_nullable_bytes() {
+        // Duration microseconds: [0, None, 3_600_000_000]
+        let array =
+            DurationMicrosecondArray::from(vec![Some(0_i64), None, Some(3_600_000_000_i64)]);
+        let mut digester = ArrowDigesterCore::<Sha256>::new(
+            &Schema::new(vec![Field::new(
+                "col",
+                DataType::Duration(TimeUnit::Microsecond),
+                true,
+            )]),
+            false,
+        );
+        digester.update(
+            &RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "col",
+                    DataType::Duration(TimeUnit::Microsecond),
+                    true,
+                )])),
+                vec![Arc::new(array)],
+            )
+            .unwrap(),
+        );
+
+        let buf = &digester.fields_digest_buffer["col"];
+        let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable");
+        let data_digest = buf.data.as_ref().expect("Expected data digest");
+
+        assert_eq!(null_bit_vec.len(), 3);
+        assert!(null_bit_vec[0], "index 0 should be valid");
+        assert!(!null_bit_vec[1], "index 1 (None) should be null");
+        assert!(null_bit_vec[2], "index 2 should be valid");
+
+        // Physical storage: int64 LE bytes for valid elements only
         let mut manual = Sha256::new();
         manual.update(0_i64.to_le_bytes());
         manual.update(3_600_000_000_i64.to_le_bytes());
