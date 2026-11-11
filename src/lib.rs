@@ -25,6 +25,10 @@ const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Hash format version 0.0.1 
 /// hash is domain separated from every other combination of those three options (see
 /// `docs/byte-layout-spec.md`, Section 9).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent on/off hashing options, mirrored one-to-one by Python keyword arguments"
+)]
 pub struct HasherConfig {
     /// When `true`, schema-level and per-field Arrow metadata are included in the hash.
     /// Default is `false`, preserving pre-v0.1.0 hash stability.

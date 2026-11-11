@@ -6,9 +6,9 @@
 mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
     #![expect(clippy::indexing_slicing, reason = "Okay in test")]
-    #![expect(clippy::too_many_lines, reason = "Okay in test")]
 
     use std::collections::{HashMap, HashSet};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::Arc;
 
     use arrow::array::{
@@ -223,7 +223,7 @@ mod tests {
     fn streaming_rejects_reordered_batch_when_columns_ordered() {
         let mut d = ArrowDigester::new(&two_col_batch(true).schema(), cfg(0x01));
         d.update(&two_col_batch(true));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let res = catch_unwind(AssertUnwindSafe(|| {
             d.update(&two_col_batch(false));
         }));
         assert!(res.is_err(), "reordered batch must be rejected");
@@ -351,15 +351,18 @@ mod tests {
         Schema::new(vec![Field::new("s", outer, false)])
     }
 
-    fn list_of_struct_type(inner_ab: bool, large: bool) -> DataType {
+    fn ab_struct_type(inner_ab: bool) -> DataType {
         let a = Field::new("a", DataType::Int32, false);
         let b = Field::new("b", DataType::Utf8, true);
-        let st = if inner_ab {
+        if inner_ab {
             DataType::Struct(Fields::from(vec![a, b]))
         } else {
             DataType::Struct(Fields::from(vec![b, a]))
-        };
-        let item = Arc::new(Field::new("item", st, true));
+        }
+    }
+
+    fn list_of_struct_type(inner_ab: bool, large: bool) -> DataType {
+        let item = Arc::new(Field::new("item", ab_struct_type(inner_ab), true));
         if large {
             DataType::LargeList(item)
         } else {
@@ -396,9 +399,7 @@ mod tests {
 
         // struct in fixed-size list (schema only)
         let fsl = |ab: bool| {
-            let DataType::List(item) = list_of_struct_type(ab, false) else {
-                unreachable!()
-            };
+            let item = Arc::new(Field::new("item", ab_struct_type(ab), true));
             Schema::new(vec![Field::new(
                 "f",
                 DataType::FixedSizeList(item, 2),
@@ -410,9 +411,7 @@ mod tests {
 
         // map value struct (schema only)
         let map = |ab: bool| {
-            let DataType::List(item) = list_of_struct_type(ab, false) else {
-                unreachable!()
-            };
+            let item = Field::new("value", ab_struct_type(ab), true);
             let entries = Field::new(
                 "entries",
                 DataType::Struct(Fields::from(vec![
@@ -486,7 +485,7 @@ mod tests {
     fn streaming_rejects_reordered_struct_batch_when_struct_fields_ordered() {
         let mut d = ArrowDigester::new(&struct_col_batch(true).schema(), cfg(0x02));
         d.update(&struct_col_batch(true));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let res = catch_unwind(AssertUnwindSafe(|| {
             d.update(&struct_col_batch(false));
         }));
         assert!(
@@ -494,9 +493,9 @@ mod tests {
             "batch with reordered struct fields must be rejected"
         );
 
-        let mut d = ArrowDigester::new(&struct_col_batch(true).schema(), cfg(0x01));
-        d.update(&struct_col_batch(true));
-        d.update(&struct_col_batch(false)); // accepted: struct order not part of the hash
+        let mut d_cols = ArrowDigester::new(&struct_col_batch(true).schema(), cfg(0x01));
+        d_cols.update(&struct_col_batch(true));
+        d_cols.update(&struct_col_batch(false)); // accepted: struct order not part of the hash
     }
 
     // ── domain separation ───────────────────────────────────────────────────
@@ -586,8 +585,11 @@ mod tests {
 
     // ── rejection of ambiguous names ────────────────────────────────────────
 
-    fn panics<F: FnOnce()>(f: F) -> bool {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err()
+    fn panics<F>(f: F) -> bool
+    where
+        F: FnOnce(),
+    {
+        catch_unwind(AssertUnwindSafe(f)).is_err()
     }
 
     #[test]

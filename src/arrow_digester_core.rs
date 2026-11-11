@@ -3,7 +3,11 @@
     clippy::todo,
     reason = "First iteration of code, will add proper error handling later. Allow for unsupported data types for now"
 )]
-use std::{collections::BTreeMap, iter::repeat_n, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    iter::repeat_n,
+    sync::Arc,
+};
 
 use arrow::{
     array::{
@@ -21,6 +25,25 @@ use digest::Digest;
 use crate::HasherConfig;
 
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
+
+/// Domain-separation tag prefix (byte-layout spec Section 9.1): `0x00 "starfix-options-v1"`.
+/// Canonical JSON never starts with `0x00`, so tagged inputs never equal untagged ones.
+const OPTIONS_TAG_PREFIX: &[u8; 19] = b"\x00starfix-options-v1";
+
+/// The option flags byte: bit 0 `ordered_columns`, bit 1 `ordered_struct_fields`,
+/// bit 2 `nested_validity`. `include_metadata` is not a flag.
+const fn option_flags(config: HasherConfig) -> u8 {
+    (config.ordered_columns as u8)
+        | ((config.ordered_struct_fields as u8) << 1_u8)
+        | ((config.nested_validity as u8) << 2_u8)
+}
+
+/// `OPTIONS_TAG_PREFIX || flags` — written only when `flags != 0`.
+fn options_tag(flags: u8) -> Vec<u8> {
+    let mut tag = OPTIONS_TAG_PREFIX.to_vec();
+    tag.push(flags);
+    tag
+}
 
 #[derive(Clone)]
 struct DigestBufferType<D: Digest> {
@@ -155,7 +178,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
     pub fn new_with_config(schema: &Schema, config: HasherConfig) -> Self {
-        let include_metadata = config.include_metadata;
         // Normalize the schema to canonical large types (metadata is preserved by normalize_schema)
         let normalized = normalize_schema(schema);
 
@@ -163,12 +185,12 @@ impl<D: Digest> ArrowDigesterCore<D> {
         let schema_digest = Self::hash_schema_with_config(schema, config);
 
         // Build the equality key used in update() to enforce schema identity
-        let schema_equality_key = Self::build_schema_equality_key(&normalized, include_metadata);
+        let schema_equality_key = Self::build_schema_equality_key(&normalized, config);
 
         // Flatten all nested fields into a single map for per-field hashing
         let mut fields_digest_buffer = BTreeMap::new();
         for field in &normalized.fields {
-            Self::extract_fields_name(field, "", &mut fields_digest_buffer);
+            Self::extract_fields_name(field, "", config.nested_validity, &mut fields_digest_buffer);
         }
 
         Self {
@@ -189,18 +211,29 @@ impl<D: Digest> ArrowDigesterCore<D> {
         //
         // Metadata path (include_metadata = true): normalize first (normalize_schema preserves
         // metadata), then build the full equality key that includes the metadata JSON.
+        let flags = option_flags(self.config);
         if self.config.include_metadata {
             let rb_normalized = normalize_schema(&rb_schema);
-            let rb_equality_key = Self::build_schema_equality_key(&rb_normalized, true);
+            let rb_equality_key = Self::build_schema_equality_key(&rb_normalized, self.config);
             assert!(
                 rb_equality_key == self.schema_equality_key,
                 "Record batch schema does not match ArrowDigester schema"
             );
-        } else {
+        } else if flags == 0 {
             assert!(
                 Self::serialized_schema(&rb_schema) == self.schema_equality_key,
                 "Record batch schema does not match ArrowDigester schema"
             );
+        } else {
+            assert!(
+                Self::canonical_schema_json(&rb_schema, self.config) == self.schema_equality_key,
+                "Record batch schema does not match ArrowDigester schema"
+            );
+        }
+        if flags != 0 {
+            // An unordered top level is keyed by name, so a batch with duplicate column names
+            // can match the digester's key; reject it like the digester's own schema.
+            Self::validate_schema_paths(&rb_schema);
         }
 
         let schema = record_batch.schema();
@@ -215,6 +248,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 array.as_ref(),
                 &path,
                 None, // no ancestor struct nulls at top level
+                self.config.nested_validity,
                 &mut self.fields_digest_buffer,
             );
         }
@@ -236,7 +270,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         Self::hash_array_with_config(array, HasherConfig::default())
     }
 
-    pub fn hash_array_with_config(array: &dyn Array, _config: HasherConfig) -> Vec<u8> {
+    pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
+        let flags = option_flags(config);
         // Resolve dictionary arrays to their plain value type
         let (effective_type, resolved_array);
         let effective_array: &dyn Array =
@@ -253,11 +288,19 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Normalize to canonical large types
         let normalized_type = normalize_data_type(&effective_type);
 
+        if flags != 0 {
+            Self::validate_type_paths(&normalized_type);
+        }
+
         let mut final_digest = D::new();
+        if flags != 0 {
+            final_digest.update(options_tag(flags));
+        }
 
         // Use canonical type serialization for metadata (data_type_to_value also normalizes,
         // but we pass the already-normalized type for consistency)
-        let canonical_type = Self::data_type_to_value(&normalized_type);
+        let canonical_type =
+            Self::data_type_to_value(&normalized_type, config.ordered_struct_fields);
         let data_type_serialized = serde_json::to_string(&canonical_type)
             .expect("Failed to serialize data type to string");
 
@@ -270,6 +313,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             &effective_type,
             effective_array.is_nullable(),
             "",
+            config.nested_validity,
             &mut fields,
         );
 
@@ -280,6 +324,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             effective_array,
             "",
             None,
+            config.nested_validity,
             &mut fields,
         );
 
@@ -345,7 +390,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             .iter()
             .map(|field| {
                 let value = serde_json::json!({
-                    "data_type": Self::data_type_to_value(field.data_type()),
+                    "data_type": Self::data_type_to_value(field.data_type(), false),
                     "nullable": field.is_nullable(),
                 });
                 (field.name().clone(), Self::sort_json_value(value))
@@ -355,33 +400,72 @@ impl<D: Digest> ArrowDigesterCore<D> {
         serde_json::to_string(&fields_digest).expect("Failed to serialize field_digest to bytes")
     }
 
+    /// Phase 1 canonical schema JSON under `config` (byte-layout spec Sections 2.1 and 9.2).
+    ///
+    /// With both order options off this is exactly `serialized_schema` (v0.4.0). With
+    /// `ordered_columns` the top level is a JSON array of `{data_type, name, nullable}` in schema
+    /// order; with `ordered_struct_fields` struct children keep their declaration order.
+    fn canonical_schema_json(schema: &Schema, config: HasherConfig) -> String {
+        if !config.ordered_columns && !config.ordered_struct_fields {
+            return Self::serialized_schema(schema);
+        }
+        let ordered_struct_fields = config.ordered_struct_fields;
+        if config.ordered_columns {
+            let columns: Vec<serde_json::Value> = schema
+                .fields
+                .iter()
+                .map(|field| {
+                    Self::sort_json_value(Self::inner_field_to_value(field, ordered_struct_fields))
+                })
+                .collect();
+            serde_json::to_string(&columns).expect("Failed to serialize ordered columns")
+        } else {
+            let fields_digest: BTreeMap<String, serde_json::Value> = schema
+                .fields
+                .iter()
+                .map(|field| {
+                    let value = serde_json::json!({
+                        "data_type": Self::data_type_to_value(field.data_type(), ordered_struct_fields),
+                        "nullable": field.is_nullable(),
+                    });
+                    (field.name().clone(), Self::sort_json_value(value))
+                })
+                .collect();
+            serde_json::to_string(&fields_digest)
+                .expect("Failed to serialize field_digest to bytes")
+        }
+    }
+
     /// Convert a `DataType` to a JSON value, recursively converting any inner `Field`
     /// references to only include `name`, `data_type`, and `nullable`.
     ///
     /// Types are first normalized via `normalize_data_type` (Utf8→LargeUtf8, Binary→LargeBinary,
     /// List→LargeList, Dictionary→value type) so the JSON always reflects canonical forms.
-    fn data_type_to_value(data_type: &DataType) -> serde_json::Value {
+    fn data_type_to_value(data_type: &DataType, ordered_struct_fields: bool) -> serde_json::Value {
         // Normalize first so all downstream serialization uses canonical types
         let canonical = normalize_data_type(data_type);
         let value = match &canonical {
             DataType::Struct(fields) => {
-                let mut sorted_fields: Vec<_> = fields.iter().collect();
-                sorted_fields.sort_by_key(|f| f.name().clone());
-                let fields_json: Vec<serde_json::Value> = sorted_fields
+                // Unordered (default): children sorted by name. Ordered: declaration order.
+                let mut children: Vec<_> = fields.iter().collect();
+                if !ordered_struct_fields {
+                    children.sort_by_key(|f| f.name().clone());
+                }
+                let fields_json: Vec<serde_json::Value> = children
                     .iter()
-                    .map(|f| Self::inner_field_to_value(f))
+                    .map(|f| Self::inner_field_to_value(f, ordered_struct_fields))
                     .collect();
                 serde_json::json!({ "Struct": fields_json })
             }
             // After normalization, all list types are LargeList
             DataType::LargeList(field) => {
-                serde_json::json!({ "LargeList": Self::element_type_to_value(field) })
+                serde_json::json!({ "LargeList": Self::element_type_to_value(field, ordered_struct_fields) })
             }
             DataType::FixedSizeList(field, size) => {
-                serde_json::json!({ "FixedSizeList": [Self::element_type_to_value(field), size] })
+                serde_json::json!({ "FixedSizeList": [Self::element_type_to_value(field, ordered_struct_fields), size] })
             }
             DataType::Map(field, sorted) => {
-                serde_json::json!({ "Map": [Self::inner_field_to_value(field), sorted] })
+                serde_json::json!({ "Map": [Self::inner_field_to_value(field, ordered_struct_fields), sorted] })
             }
             // For all non-nested types (including LargeUtf8, LargeBinary after normalization),
             // Arrow's default serde is sufficient
@@ -392,19 +476,19 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Convert an inner field (e.g., struct child) to a JSON value
     /// with `name`, `data_type`, and `nullable`.
-    fn inner_field_to_value(field: &Field) -> serde_json::Value {
+    fn inner_field_to_value(field: &Field, ordered_struct_fields: bool) -> serde_json::Value {
         serde_json::json!({
             "name": field.name(),
-            "data_type": Self::data_type_to_value(field.data_type()),
+            "data_type": Self::data_type_to_value(field.data_type(), ordered_struct_fields),
             "nullable": field.is_nullable(),
         })
     }
 
     /// Convert a container element field (e.g., list item) to a JSON value
     /// with only `data_type` and `nullable`, omitting the Arrow-internal field name.
-    fn element_type_to_value(field: &Field) -> serde_json::Value {
+    fn element_type_to_value(field: &Field, ordered_struct_fields: bool) -> serde_json::Value {
         serde_json::json!({
-            "data_type": Self::data_type_to_value(field.data_type()),
+            "data_type": Self::data_type_to_value(field.data_type(), ordered_struct_fields),
             "nullable": field.is_nullable(),
         })
     }
@@ -436,23 +520,18 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// preserving the empty-metadata invariant.
     ///
     /// `normalize_schema` preserves metadata, so the normalized schema is used for both phases.
-    #[cfg(test)]
-    pub fn hash_schema(schema: &Schema, include_metadata: bool) -> Vec<u8> {
-        Self::hash_schema_with_config(
-            schema,
-            HasherConfig {
-                include_metadata,
-                ..HasherConfig::default()
-            },
-        )
-    }
-
-    /// Hash the schema (see `hash_schema` docs above for the two phases).
     pub fn hash_schema_with_config(schema: &Schema, config: HasherConfig) -> Vec<u8> {
         let include_metadata = config.include_metadata;
+        let flags = option_flags(config);
+        if flags != 0 {
+            Self::validate_schema_paths(schema);
+        }
         let normalized = normalize_schema(schema);
         let mut hasher = D::new();
-        hasher.update(Self::serialized_schema(&normalized));
+        if flags != 0 {
+            hasher.update(options_tag(flags));
+        }
+        hasher.update(Self::canonical_schema_json(&normalized, config));
         if include_metadata {
             Self::update_metadata_hash(&mut hasher, &normalized);
         }
@@ -577,9 +656,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// same JSON object format used in `update_metadata_hash`:
     /// `{"fields": {...}, "schema": {...}}`. The `|` separator is unambiguous because JSON
     /// objects never end with `|`.
-    fn build_schema_equality_key(normalized: &Schema, include_metadata: bool) -> String {
-        let structure = Self::serialized_schema(normalized);
-        if !include_metadata {
+    fn build_schema_equality_key(normalized: &Schema, config: HasherConfig) -> String {
+        let structure = Self::canonical_schema_json(normalized, config);
+        if !config.include_metadata {
             return structure;
         }
 
@@ -627,6 +706,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &dyn Array,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
+        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         // Normalize small variants
@@ -664,6 +744,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     nullable,
                     path,
                     ancestor_struct_nulls,
+                    nested_validity,
                     fields,
                 );
             }
@@ -674,6 +755,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     nullable,
                     path,
                     ancestor_struct_nulls,
+                    nested_validity,
                     fields,
                 );
             }
@@ -695,6 +777,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         nullable: bool,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
+        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let list_array = array
@@ -748,6 +831,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     sub_array.as_ref(),
                     &list_path,
                     None, // list elements don't have ancestor struct nulls
+                    nested_validity,
                     fields,
                 );
             }
@@ -760,6 +844,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         nullable: bool,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
+        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let struct_array = array
@@ -773,6 +858,23 @@ impl<D: Digest> ArrowDigesterCore<D> {
         } else {
             ancestor_struct_nulls.cloned()
         };
+
+        // nested_validity: a nullable struct records its own (combined) validity at its path —
+        // in its validity-only entry, or, for a list element, in the list's element entry.
+        if nested_validity && nullable {
+            let null_bits = fields
+                .get_mut(path)
+                .and_then(|entry| entry.null_bits.as_mut())
+                .expect("nested_validity: nullable struct must have a validity entry");
+            match &combined_nulls {
+                Some(nb) => {
+                    for i in 0..struct_array.len() {
+                        null_bits.push(nb.is_valid(i));
+                    }
+                }
+                None => null_bits.extend(repeat_n(true, struct_array.len())),
+            }
+        }
 
         // Use the ORIGINAL struct array's fields (not the canonical ones from
         // the type tree) so that data_type matches the actual child array.
@@ -795,6 +897,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 child_array.as_ref(),
                 &child_path,
                 combined_nulls.as_ref(),
+                nested_validity,
                 fields,
             );
         }
@@ -1147,6 +1250,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
+        nested_validity: bool,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let path = Self::construct_field_name_hierarchy(parent_field_name, field.name());
@@ -1154,6 +1258,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             field.data_type(),
             field.is_nullable(),
             &path,
+            nested_validity,
             fields_digest_buffer,
         );
     }
@@ -1165,19 +1270,32 @@ impl<D: Digest> ArrowDigesterCore<D> {
         data_type: &DataType,
         nullable: bool,
         path: &str,
+        nested_validity: bool,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let canonical = normalize_data_type(data_type);
 
+        // nested_validity: a nullable container that is a list element (an entry already
+        // exists at its path: the list's element entry, which has null_bits because the element
+        // is nullable) records its validity in that entry instead of replacing it.
+        let reuse_list_element_entry =
+            nested_validity && nullable && fields_digest_buffer.contains_key(path);
+
         match &canonical {
             DataType::Struct(fields) => {
-                // Struct is transparent — no entry, just recurse into children.
+                // Struct is transparent by default — no entry, just recurse into children.
+                // nested_validity: a nullable struct gets a validity-only entry at its path.
+                if nested_validity && nullable && !reuse_list_element_entry {
+                    fields_digest_buffer
+                        .insert(path.to_owned(), DigestBufferType::new_validity_only());
+                }
                 for child_field in fields {
                     let child_path = Self::construct_field_name_hierarchy(path, child_field.name());
                     Self::extract_type_entries(
                         child_field.data_type(),
                         child_field.is_nullable(),
                         &child_path,
+                        nested_validity,
                         fields_digest_buffer,
                     );
                 }
@@ -1185,7 +1303,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::LargeList(value_field) | DataType::List(value_field) => {
                 // For a nullable field that is a list, create a validity-only entry
                 // at the field path (column-level or field-level null tracking).
-                if nullable {
+                // Default layout: for a list element this REPLACES the outer list's element
+                // entry (frozen v0.4.0 behaviour); nested_validity reuses it instead.
+                if nullable && !reuse_list_element_entry {
                     fields_digest_buffer
                         .insert(path.to_owned(), DigestBufferType::new_validity_only());
                 }
@@ -1208,6 +1328,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                             inner_type,
                             value_field.is_nullable(),
                             &list_path,
+                            nested_validity,
                             fields_digest_buffer,
                         );
                     }
@@ -1222,6 +1343,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                             inner_type,
                             value_field.is_nullable(),
                             &list_path,
+                            nested_validity,
                             fields_digest_buffer,
                         );
                     }
@@ -1239,6 +1361,55 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 fields_digest_buffer
                     .insert(path.to_owned(), DigestBufferType::new_data_only(nullable));
             }
+        }
+    }
+
+    /// Reject schemas whose node paths are ambiguous (byte-layout spec Section 9.6).
+    ///
+    /// # Panics
+    /// When two columns, two children of one struct, or two nodes of the type tree map to
+    /// the same path (e.g. duplicate names, or a column `"a/b"` next to struct `a { b }`).
+    fn validate_schema_paths(schema: &Schema) {
+        let mut seen = HashSet::new();
+        for field in schema.fields() {
+            Self::claim_node_path(field.name(), &mut seen);
+            Self::collect_node_paths(field.data_type(), field.name(), &mut seen);
+        }
+    }
+
+    /// `hash_array` variant of `validate_schema_paths`: the array itself is the node at `""`.
+    fn validate_type_paths(data_type: &DataType) {
+        let mut seen = HashSet::new();
+        Self::claim_node_path("", &mut seen);
+        Self::collect_node_paths(data_type, "", &mut seen);
+    }
+
+    fn claim_node_path(path: &str, seen: &mut HashSet<String>) {
+        assert!(
+            seen.insert(path.to_owned()),
+            "Ambiguous field path {path:?}: duplicate field names, or a field name containing \
+             {DELIMITER_FOR_NESTED_FIELD:?} that collides with a nested field, are not supported \
+             when ordered_columns, ordered_struct_fields or nested_validity is enabled"
+        );
+    }
+
+    fn collect_node_paths(data_type: &DataType, path: &str, seen: &mut HashSet<String>) {
+        match normalize_data_type(data_type) {
+            DataType::Struct(children) => {
+                for child in &children {
+                    let child_path = Self::construct_field_name_hierarchy(path, child.name());
+                    Self::claim_node_path(&child_path, seen);
+                    Self::collect_node_paths(child.data_type(), &child_path, seen);
+                }
+            }
+            DataType::LargeList(element)
+            | DataType::FixedSizeList(element, _)
+            | DataType::Map(element, _) => {
+                let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                Self::claim_node_path(&element_path, seen);
+                Self::collect_node_paths(element.data_type(), &element_path, seen);
+            }
+            _ => {}
         }
     }
 
