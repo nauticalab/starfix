@@ -1,5 +1,11 @@
 # Starfix Arrow Logical Hashing - Design Specification
 
+> **Hash format 2 (v0.5, ITL-898).** The byte-level sections of this document (data
+> serialization, digest assembly, `hash_array`) describe **hash format 1** (starfix ≤ 0.4) and are
+> kept as background. The authoritative specification of the current format is
+> `docs/byte-layout-spec.md`; its Section 10 lists what changed. The design record is
+> `docs/metamorphic/specs/2026-11-11-format-2-design.md`.
+
 ## 1. Overview
 
 Starfix computes **stable, logical hashes** of Apache Arrow tables and record batches. Two tables that are *logically equivalent* must produce the **same hash**, regardless of:

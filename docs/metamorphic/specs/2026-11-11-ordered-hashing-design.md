@@ -2,6 +2,11 @@
 
 **Issue:** ITL-898
 **Date:** 2026-11-11
+> **Superseded in part (2026-11-11):** the developer then chose to bump to hash format 2; the
+> final design is `2026-11-11-format-2-design.md` and the specification is
+> `docs/byte-layout-spec.md`. The order options (D1, D3–D6) are unchanged in format 2; the
+> options tag became the always-written format-2 header; D7 rejection applies in every mode.
+
 **Status:** D1 and D3–D7 implemented as recommended. **D2 superseded** by the developer's
 ruling of 2026-11-11 (below). The authoritative byte layout is `docs/byte-layout-spec.md`
 (Section 9: order options; Section 10: the v0.5 fix). Version prefix: open, variant (a) or (b).
