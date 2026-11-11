@@ -24,7 +24,7 @@ mod tests {
     use sha2::{Digest as _, Sha256};
     use starfix::{ArrowDigester, HasherConfig};
 
-    const VERSION: [u8; 3] = [0, 0, 1];
+    const VERSION: [u8; 3] = [0, 0, 2];
 
     // ── helpers ────────────────────────────────────────────────────────────
 
@@ -38,9 +38,11 @@ mod tests {
         }
     }
 
+    /// Format-2 header (byte-layout spec Section 1).
     fn tag(flags: u8) -> Vec<u8> {
         let mut t = vec![0x00_u8];
-        t.extend_from_slice(b"starfix-options-v1");
+        t.extend_from_slice(b"starfix");
+        t.extend_from_slice(&VERSION);
         t.push(flags);
         t
     }
@@ -210,9 +212,10 @@ mod tests {
         );
         let json = r#"[{"data_type":"Int32","name":"b","nullable":false},{"data_type":"Int32","name":"a","nullable":false}]"#;
         let schema_digest = sha(&[&tag(0x01), json.as_bytes()]);
-        // entries in path order: "a", "b"
+        // row count, then entries in path order: "a", "b"
         let expected = versioned(&sha(&[
             &schema_digest,
+            &1_u64.to_le_bytes(),
             &sha(&[&6_i32.to_le_bytes()]),
             &sha(&[&5_i32.to_le_bytes()]),
         ]));
@@ -326,6 +329,7 @@ mod tests {
         let expected = versioned(&sha(&[
             &tag(0x02),
             json.as_bytes(),
+            &1_u64.to_le_bytes(),          // array length
             &sha(&[&2_i32.to_le_bytes()]), // entry "a"
             &sha(&[&1_i32.to_le_bytes()]), // entry "z"
         ]));
@@ -523,7 +527,8 @@ mod tests {
         let schema = Schema::new(vec![Field::new("v", DataType::Int32, false)]);
         let object_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
         let array_json = r#"[{"data_type":"Int32","name":"v","nullable":false}]"#;
-        for flags in 0x01_u8..=0x03 {
+        // the header (with its flags byte) is written in every mode, also at flags 0
+        for flags in 0x00_u8..=0x03 {
             let json = if flags & 0x01 != 0 {
                 array_json
             } else {
@@ -535,11 +540,6 @@ mod tests {
                 "flags {flags:#04x}"
             );
         }
-        // flags 0: no tag, v0.4.0 bytes
-        assert_eq!(
-            ArrowDigester::hash_schema(&schema, cfg(0)),
-            versioned(&sha(&[object_json.as_bytes()]))
-        );
     }
 
     // ── include_metadata combination ────────────────────────────────────────
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_column_names_rejected_when_any_option_on() {
+    fn duplicate_column_names_rejected_in_every_mode() {
         let b = batch(
             vec![
                 Field::new("a", DataType::Int32, false),
@@ -604,10 +604,7 @@ mod tests {
                 Arc::new(Int32Array::from(vec![2])),
             ],
         );
-        assert!(!panics(|| {
-            ArrowDigester::hash_record_batch(&b, cfg(0));
-        }));
-        for flags in 0x01_u8..=0x03 {
+        for flags in 0x00_u8..=0x03 {
             assert!(
                 panics(|| {
                     ArrowDigester::hash_record_batch(&b, cfg(flags));
@@ -624,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_struct_field_names_rejected_when_any_option_on() {
+    fn duplicate_struct_field_names_rejected_in_every_mode() {
         let st = DataType::Struct(Fields::from(vec![
             Field::new("x", DataType::Int32, false),
             Field::new("x", DataType::Int32, false),
@@ -634,10 +631,7 @@ mod tests {
             DataType::List(Arc::new(Field::new("item", st, true))),
             true,
         )]);
-        assert!(!panics(|| {
-            ArrowDigester::hash_schema(&schema, cfg(0));
-        }));
-        for flags in 0x01_u8..=0x03 {
+        for flags in 0x00_u8..=0x03 {
             assert!(
                 panics(|| {
                     ArrowDigester::hash_schema(&schema, cfg(flags));
@@ -648,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn delimiter_path_aliasing_rejected_when_any_option_on() {
+    fn delimiter_path_aliasing_rejected_in_every_mode() {
         // column "a/b" next to struct column a { b }
         let st = DataType::Struct(Fields::from(vec![Field::new("b", DataType::Int32, false)]));
         let s1 = Schema::new(vec![
@@ -666,7 +660,7 @@ mod tests {
         ]);
         // a "/" in a name that collides with nothing is fine
         let s3 = Schema::new(vec![Field::new("km/h", DataType::Int32, false)]);
-        for flags in 0x01_u8..=0x03 {
+        for flags in 0x00_u8..=0x03 {
             assert!(panics(|| {
                 ArrowDigester::hash_schema(&s1, cfg(flags));
             }));
@@ -680,25 +674,34 @@ mod tests {
     }
 
     #[test]
-    fn metadata_path_aliasing_rejected_when_any_option_on() {
-        // struct column "" with child "a" (metadata path "/a") next to column "/a"
-        let st = DataType::Struct(Fields::from(vec![Field::new("a", DataType::Int32, false)]));
-        let schema = Schema::new(vec![
-            Field::new("", st, false),
-            Field::new("/a", DataType::Int32, false),
-        ]);
-        assert!(!panics(|| {
-            ArrowDigester::hash_schema(&schema, cfg(0));
-        }));
-        for flags in 0x01_u8..=0x03 {
-            assert!(panics(|| {
-                ArrowDigester::hash_schema(&schema, cfg(flags));
-            }));
+    fn metadata_is_keyed_by_node_path() {
+        // struct column "" with child "a" (node path "a") next to column "/a" (node path "/a"):
+        // distinct paths, so moving the metadata between them changes the hash
+        let mk = |on_child: bool| {
+            let m: HashMap<String, String> = [("u".to_owned(), "kg".to_owned())].into();
+            let mut child = Field::new("a", DataType::Int32, false);
+            let mut column = Field::new("/a", DataType::Int32, false);
+            if on_child {
+                child = child.with_metadata(m);
+            } else {
+                column = column.with_metadata(m);
+            }
+            Schema::new(vec![
+                Field::new("", DataType::Struct(Fields::from(vec![child])), false),
+                column,
+            ])
+        };
+        for flags in 0x00_u8..=0x03 {
+            let c = HasherConfig {
+                include_metadata: true,
+                ..cfg(flags)
+            };
+            assert_ne!(schema_hash(&mk(true), c), schema_hash(&mk(false), c));
         }
     }
 
     #[test]
-    fn non_portable_containers_rejected_when_any_option_on() {
+    fn non_portable_containers_rejected_in_every_mode() {
         let st = DataType::Struct(Fields::from(vec![
             Field::new("x", DataType::Int32, false),
             Field::new("y", DataType::Int32, false),
@@ -708,10 +711,7 @@ mod tests {
             DataType::ListView(Arc::new(Field::new("item", st, true))),
             true,
         )]);
-        assert!(!panics(|| {
-            ArrowDigester::hash_schema(&schema, cfg(0));
-        }));
-        for flags in 0x01_u8..=0x03 {
+        for flags in 0x00_u8..=0x03 {
             assert!(panics(|| {
                 ArrowDigester::hash_schema(&schema, cfg(flags));
             }));
@@ -736,7 +736,7 @@ mod tests {
                 Arc::new(Int32Array::from(vec![2])),
             ],
         );
-        for flags in 0x01_u8..=0x03 {
+        for flags in 0x00_u8..=0x03 {
             let mut d = ArrowDigester::new(&one.schema(), cfg(flags));
             assert!(
                 panics(|| d.update(&two)),
@@ -829,17 +829,19 @@ mod tests {
         // c: List<List<Int32?>?> non-null, one row [[1], [2]]
         let b = list_of_list(&[vec![vec![1], vec![2]]]);
         let json = r#"{"c":{"data_type":{"LargeList":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}},"nullable":false}}"#;
-        let schema_digest = sha(&[json.as_bytes()]);
+        let schema_digest = sha(&[&tag(0), json.as_bytes()]);
         let expected = versioned(&sha(&[
             &schema_digest,
-            // entry "c/": null_bits = inner-list validity [1, 1], structural = outer lengths [2]
-            &2_u64.to_le_bytes(),
-            &[0x03],
+            &1_u64.to_le_bytes(), // row count
+            // entry "c": list node, lengths [2]
             &sha(&[&2_u64.to_le_bytes()]),
-            // entry "c//": list-leaf, null_bits = item validity [1, 1], lengths [1, 1], data [1, 2]
+            // entry "c/": nullable inner lists: validity [1, 1], lengths [1, 1]
             &2_u64.to_le_bytes(),
             &[0x03],
             &sha(&[&1_u64.to_le_bytes(), &1_u64.to_le_bytes()]),
+            // entry "c//": nullable items: validity [1, 1], values [1, 2]
+            &2_u64.to_le_bytes(),
+            &[0x03],
             &sha(&[&1_i32.to_le_bytes(), &2_i32.to_le_bytes()]),
         ]));
         assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0)), expected);
@@ -855,9 +857,10 @@ mod tests {
             Some(NullBuffer::from(vec![false, true, true])),
         );
         let json = r#"{"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}}"#;
-        let schema_digest = sha(&[json.as_bytes()]);
+        let schema_digest = sha(&[&tag(0), json.as_bytes()]);
         let expected = versioned(&sha(&[
             &schema_digest,
+            &3_u64.to_le_bytes(), // row count
             // entry "s": validity-only, struct bits [0, 1, 1]
             &3_u64.to_le_bytes(),
             &[0b110],
@@ -964,7 +967,8 @@ mod tests {
         let b = bool_batch(true, vec![Some(true), None, Some(false)]);
         let json = r#"{"b":{"data_type":"Boolean","nullable":true}}"#;
         let expected = versioned(&sha(&[
-            &sha(&[json.as_bytes()]),
+            &sha(&[&tag(0), json.as_bytes()]),
+            &3_u64.to_le_bytes(), // row count
             &3_u64.to_le_bytes(),
             &[0b101],
             &sha(&[&[0x01, 0x00]]), // one byte per VALID value
@@ -973,7 +977,12 @@ mod tests {
 
         // hash_array, non-nullable [true, false, true]
         let a = BooleanArray::from(vec![true, false, true]);
-        let expected_array = versioned(&sha(&[br#""Boolean""#, &sha(&[&[0x01, 0x00, 0x01]])]));
+        let expected_array = versioned(&sha(&[
+            &tag(0),
+            br#""Boolean""#,
+            &3_u64.to_le_bytes(), // array length
+            &sha(&[&[0x01, 0x00, 0x01]]),
+        ]));
         assert_eq!(
             ArrowDigester::hash_array_with_config(&a, cfg(0)),
             expected_array
@@ -996,7 +1005,7 @@ mod tests {
         let json = "{\"a\\nb\\u001b\\b\\f\\r\\t\u{7f}\\\"\\\\/\":{\"data_type\":\"Int32\",\"nullable\":false},\"é\":{\"data_type\":\"Int32\",\"nullable\":false}}";
         assert_eq!(
             ArrowDigester::hash_schema(&schema, cfg(0)),
-            versioned(&sha(&[json.as_bytes()]))
+            versioned(&sha(&[&tag(0), json.as_bytes()]))
         );
     }
 
@@ -1018,15 +1027,16 @@ mod tests {
             DataType::Map(Arc::new(entries), false),
             true,
         )]);
-        let phase1 = r#"{"m":{"data_type":{"Map":[{"data_type":{"Struct":[{"data_type":"LargeUtf8","name":"key","nullable":false},{"data_type":"Int32","name":"value","nullable":true}]},"name":"entries","nullable":false},false]},"nullable":true}}"#;
-        let phase2 = r#"{"fields":{"m/":{"role":"pairs"},"m//value":{"unit":"kg"}}}"#;
+        let phase1 = r#"{"m":{"data_type":{"Map":{"key":{"data_type":"LargeUtf8","nullable":false},"keys_sorted":false,"value":{"data_type":"Int32","nullable":true}}},"nullable":true}}"#;
+        // format 2: the entries field's metadata is not hashed
+        let phase2 = r#"{"fields":{"m//value":{"unit":"kg"}}}"#;
         let config = HasherConfig {
             include_metadata: true,
             ..HasherConfig::default()
         };
         assert_eq!(
             ArrowDigester::hash_schema(&schema, config),
-            versioned(&sha(&[phase1.as_bytes(), phase2.as_bytes()]))
+            versioned(&sha(&[&tag(0), phase1.as_bytes(), phase2.as_bytes()]))
         );
     }
 

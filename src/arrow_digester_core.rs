@@ -459,11 +459,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
             // Map: key and value element forms by position; the entries/key/value field names
             // and the entries field's metadata are not hashed (byte-layout spec Section 2.1).
             DataType::Map(field, keys_sorted) => {
-                let DataType::Struct(kv) = field.data_type() else {
-                    unreachable!("Arrow map entries are a struct")
+                let kv = match field.data_type() {
+                    DataType::Struct(kv) => kv.clone(),
+                    _ => arrow_schema::Fields::empty(),
                 };
-                let key = kv.first().expect("map key field");
-                let value = kv.get(1).expect("map value field");
+                let key = kv
+                    .first()
+                    .expect("Arrow map entries are a struct with a key field");
+                let value = kv
+                    .get(1)
+                    .expect("Arrow map entries are a struct with a value field");
                 serde_json::json!({ "Map": {
                     "key": Self::element_type_to_value(key, ordered_struct_fields),
                     "keys_sorted": keys_sorted,
@@ -594,7 +599,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     Self::collect_field_metadata(child, &child_path, result);
                 }
             }
-            DataType::List(inner) | DataType::LargeList(inner) | DataType::FixedSizeList(inner, _) => {
+            DataType::List(inner)
+            | DataType::LargeList(inner)
+            | DataType::FixedSizeList(inner, _) => {
                 let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
                 Self::collect_field_metadata(inner, &element_path, result);
             }
@@ -1630,7 +1637,9 @@ mod tests {
         // Check the digest
         assert_eq!(
             encode(digester.finalize()),
-            "9b52ad7430dea81b35f14a04d828b2424080fbc210570081c6e6cb62b6566c42"
+            // format 2 (ITL-898); format 1 value was
+            // 9b52ad7430dea81b35f14a04d828b2424080fbc210570081c6e6cb62b6566c42
+            "8038c003912adbecc339cd6b1c1e9a62f59dc68a684c00cc1b29cff72d193361"
         );
     }
 
@@ -2707,14 +2716,17 @@ mod tests {
             .unwrap(),
         );
 
-        // Non-nullable column → no "col" entry; list_leaf entry at "col/"
+        // Format 2: list node "col" (non-nullable: lengths only); element node "col/"
+        // (nullable items: validity + values)
+        let list_buf = &digester.fields_digest_buffer["col"];
+        assert!(list_buf.null_bits.is_none() && list_buf.data.is_none());
         let buf = &digester.fields_digest_buffer["col/"];
         // Items are nullable → null_bits present (all valid in this case)
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable items");
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec.iter().all(|b| *b), "All items should be valid");
 
-        let structural_digest = buf
+        let structural_digest = list_buf
             .structural
             .as_ref()
             .expect("Expected structural digest for list");
@@ -2765,13 +2777,16 @@ mod tests {
             .unwrap(),
         );
 
-        // Non-nullable column → no "col" entry; list_leaf entry at "col/"
+        // Format 2: list node "col" (non-nullable: lengths only); element node "col/"
+        // (nullable items: validity + values)
+        let list_buf = &digester.fields_digest_buffer["col"];
+        assert!(list_buf.null_bits.is_none() && list_buf.data.is_none());
         let buf = &digester.fields_digest_buffer["col/"];
         let null_bit_vec = buf.null_bits.as_ref().expect("Expected nullable items");
         assert_eq!(null_bit_vec.len(), 3);
         assert!(null_bit_vec.iter().all(|b| *b), "All items should be valid");
 
-        let structural_digest = buf
+        let structural_digest = list_buf
             .structural
             .as_ref()
             .expect("Expected structural digest for list");
@@ -2794,8 +2809,8 @@ mod tests {
     }
 
     #[test]
-    fn digest_buffer_type_structural_only() {
-        let buf = super::DigestBufferType::<Sha256>::new_structural_only(true);
+    fn digest_buffer_type_list() {
+        let buf = super::DigestBufferType::<Sha256>::new_list(true);
         assert!(buf.null_bits.is_some());
         assert!(buf.structural.is_some());
         assert!(buf.data.is_none());
@@ -2806,14 +2821,6 @@ mod tests {
         let buf = super::DigestBufferType::<Sha256>::new_data_only(false);
         assert!(buf.null_bits.is_none());
         assert!(buf.structural.is_none());
-        assert!(buf.data.is_some());
-    }
-
-    #[test]
-    fn digest_buffer_type_list_leaf() {
-        let buf = super::DigestBufferType::<Sha256>::new_list_leaf(true);
-        assert!(buf.null_bits.is_some());
-        assert!(buf.structural.is_some());
         assert!(buf.data.is_some());
     }
 
@@ -2847,14 +2854,15 @@ mod tests {
         let digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
-        // Should have: "x" (validity-only), "x/" (structural), "x//a" (data), "x//b" (data)
+        // Format 2: "x" (list node: validity + lengths), "x//a", "x//b" (leaves); the
+        // non-nullable struct element "x/" has no entry
         assert_eq!(
             field_names.len(),
-            4,
-            "Expected 4 entries, got: {field_names:?}"
+            3,
+            "Expected 3 entries, got: {field_names:?}"
         );
         assert!(field_names.contains(&&"x".to_owned()));
-        assert!(field_names.contains(&&"x/".to_owned()));
+        assert!(!field_names.contains(&&"x/".to_owned()));
         assert!(field_names.contains(&&"x//a".to_owned()));
         assert!(field_names.contains(&&"x//b".to_owned()));
     }
@@ -2899,14 +2907,13 @@ mod tests {
         let digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
         let field_names: Vec<&String> = digester.fields_digest_buffer.keys().collect();
 
-        // Expected entries: "x", "x/", "x//a", "x//b/g", "x//b/g/", "x//b/h"
+        // Format 2: "x", "x//a", "x//b/g", "x//b/g/", "x//b/h" (non-nullable structs have no entry)
         assert_eq!(
             field_names.len(),
-            6,
-            "Expected 6 entries, got: {field_names:?}"
+            5,
+            "Expected 5 entries, got: {field_names:?}"
         );
         assert!(field_names.contains(&&"x".to_owned()));
-        assert!(field_names.contains(&&"x/".to_owned()));
         assert!(field_names.contains(&&"x//a".to_owned()));
         assert!(field_names.contains(&&"x//b/g".to_owned()));
         assert!(field_names.contains(&&"x//b/g/".to_owned()));
@@ -2914,6 +2921,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One byte-level expectation for a deep nested type"
+    )]
     fn recursive_list_struct_decomposition() {
         use crate::arrow_digester_core::normalize_schema;
 
@@ -2992,26 +3003,27 @@ mod tests {
         .unwrap();
 
         // ── Compute expected hash manually ──
-        // BTreeMap entries (in sorted order):
-        // "x"       → null_bits: V,I,V (3 bits)
-        // "x/"      → structural: [2, 3]
-        // "x//a"    → null_bits: V,I,V,V,V (5 bits), data: [1, 3, 4, 5] as i32 LE
-        // "x//b/g"  → null_bits: V,V,I,V,V (5 bits)
-        // "x//b/g/" → structural: [2, 1, 0, 1], data: [10, 20, 30, 50] as i32 LE
-        // "x//b/h"  → data: [100, 200, 300, 400, 500] as i32 LE
+        // Format 2 entries (in path order), after the row count 3:
+        // "x"       → validity V,I,V (3 bits), lengths [2, 3]
+        // "x//a"    → validity V,I,V,V,V (5 bits), values [1, 3, 4, 5] as i32 LE
+        // "x//b/g"  → validity V,V,I,V,V (5 bits), lengths [2, 1, 0, 1]
+        // "x//b/g/" → values [10, 20, 30, 50] as i32 LE
+        // "x//b/h"  → values [100, 200, 300, 400, 500] as i32 LE
 
-        let schema_digest = Sha256::digest(
+        let mut schema_hasher = Sha256::new();
+        schema_hasher.update(super::header(0));
+        schema_hasher.update(
             ArrowDigesterCore::<Sha256>::serialized_schema(&normalize_schema(&schema)).as_bytes(),
         );
+        let schema_digest = schema_hasher.finalize();
 
         let mut final_digest = Sha256::new();
         final_digest.update(schema_digest);
+        final_digest.update(3_u64.to_le_bytes()); // row count
 
-        // Entry "x": null_bits V,I,V → bit_count=3, validity=0b101=5
+        // Entry "x": validity V,I,V → bit_count=3, validity=0b101=5; lengths [2, 3]
         final_digest.update(3_u64.to_le_bytes());
         final_digest.update(5_u8.to_le_bytes());
-
-        // Entry "x/": structural only [2, 3]
         let mut x_structural = Sha256::new();
         x_structural.update(2_u64.to_le_bytes());
         x_structural.update(3_u64.to_le_bytes());
@@ -3028,17 +3040,16 @@ mod tests {
         xa_data.update(5_i32.to_le_bytes());
         final_digest.update(xa_data.finalize());
 
-        // Entry "x//b/g": null_bits V,V,I,V,V → bit_count=5, validity=0b11011=27
+        // Entry "x//b/g": validity V,V,I,V,V → bit_count=5, validity=0b11011=27; lengths
         final_digest.update(5_u64.to_le_bytes());
         final_digest.update(27_u8.to_le_bytes());
-
-        // Entry "x//b/g/": structural [2, 1, 0, 1], data [10, 20, 30, 50] as i32 LE
         let mut xbg_structural = Sha256::new();
         xbg_structural.update(2_u64.to_le_bytes());
         xbg_structural.update(1_u64.to_le_bytes());
         xbg_structural.update(0_u64.to_le_bytes());
         xbg_structural.update(1_u64.to_le_bytes());
         final_digest.update(xbg_structural.finalize());
+        // Entry "x//b/g/": values [10, 20, 30, 50] as i32 LE
         let mut xbg_data = Sha256::new();
         xbg_data.update(10_i32.to_le_bytes());
         xbg_data.update(20_i32.to_le_bytes());

@@ -12,7 +12,7 @@ mod tests {
 
     use arrow::array::{
         Array as _, ArrayRef, BooleanArray, Int32Array, Int32Builder, LargeStringArray, ListArray,
-        RecordBatch, RecordBatchOptions, StructArray,
+        ListBuilder, RecordBatch, RecordBatchOptions, StructArray,
     };
     use arrow::buffer::{NullBuffer, OffsetBuffer};
     use arrow_schema::{DataType, Field, Fields, Schema};
@@ -74,10 +74,10 @@ mod tests {
             ordered_columns: true,
             ..HasherConfig::default()
         };
-        let json = r#"[{"data_type":"Int32","name":"v","nullable":false}]"#;
+        let ordered_json = r#"[{"data_type":"Int32","name":"v","nullable":false}]"#;
         assert_eq!(
             ArrowDigester::hash_schema(&schema, ordered),
-            out(&sha(&[&header(1), json.as_bytes()]))
+            out(&sha(&[&header(1), ordered_json.as_bytes()]))
         );
     }
 
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn list_node_holds_lengths_element_node_holds_values() {
         // c: List<Int32 nullable> nullable, rows [[1, null], null, []]
-        let mut builder = arrow::array::ListBuilder::new(Int32Builder::new());
+        let mut builder = ListBuilder::new(Int32Builder::new());
         builder.values().append_value(1);
         builder.values().append_null();
         builder.append(true);
@@ -392,8 +392,7 @@ mod tests {
     fn nested_list_lengths_stay_with_their_list() {
         // c: List<List<Int32>> (default nullable items); rows [[1]],[[2],[3]] vs [[1],[2]],[[3]]
         let mk = |rows: &[Vec<Vec<i32>>]| {
-            let mut b =
-                arrow::array::ListBuilder::new(arrow::array::ListBuilder::new(Int32Builder::new()));
+            let mut b = ListBuilder::new(ListBuilder::new(Int32Builder::new()));
             for row in rows {
                 for inner in row {
                     for v in inner {
