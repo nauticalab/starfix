@@ -292,20 +292,19 @@ When a schema has no metadata anywhere, Phase 2 adds nothing. `include_metadata 
 
 When `include_metadata = true`, `update()` also enforces that incoming record batches have the same metadata as the schema used at construction. Batches with differing metadata are rejected.
 
-## Hashing Options (v0.5): Order Sensitivity and Lossless Layout
+## Hashing Options (v0.5): Order Sensitivity
 
 **Ordering principle.** By default starfix ignores exactly two orders: the order of the top-level
 columns and the order of struct fields (at every depth). It never sorts or reorders anything
 else: row order, list element order (also for `list<struct<key, value>>`) and the logical values
 of dictionary-encoded arrays are hashed as given.
 
-Three opt-in options (all default `false`; per call, never global) change this:
+Two opt-in options (default `false`; per call, never global) change this:
 
 | Option | Effect |
 |---|---|
 | `ordered_columns` | the order of the top-level columns is part of the hash |
 | `ordered_struct_fields` | the order of struct fields is part of the hash, at every depth (struct in struct, list, large list, fixed-size list, map, dictionary value type) |
-| `nested_validity` (name provisional) | lossless layout: a null struct differs from a struct whose fields are all null, null struct rows are counted, a list of nullable lists keeps its own lengths, and Boolean values are counted and batch-split independent |
 
 ```rust
 use starfix::{ArrowDigester, HasherConfig};
@@ -314,7 +313,6 @@ use starfix::{ArrowDigester, HasherConfig};
 let config = HasherConfig {
     ordered_columns: true,
     ordered_struct_fields: true,
-    nested_validity: true,
     ..HasherConfig::default()
 };
 let hash = ArrowDigester::hash_record_batch(&batch, config);
@@ -323,20 +321,41 @@ let array_hash = ArrowDigester::hash_array_with_config(&array, config);
 
 Guarantees:
 
-- With all three options off, every hash is byte-identical to v0.4.0.
-- Hashes taken with different option values never coincide: when any option is on, a 20-byte
+- With both options off, the default layout applies (including the v0.5 fixes below).
+- Hashes taken with different option values never coincide: when an option is on, a 20-byte
   options tag (`0x00 "starfix-options-v1" <flags>`) starts the schema digest (and the
   `hash_array` digest). A one-column table therefore hashes differently with and without
   `ordered_columns`, although its order cannot matter.
 - Physical-type equivalences (`Utf8`/`LargeUtf8`, `Binary`/`LargeBinary`, `List`/`LargeList`,
   dictionary/plain) and batch-split independence hold in every mode.
-- With any option on, a streaming digester rejects a batch whose column or struct-field order
+- With an option on, a streaming digester rejects a batch whose column or struct-field order
   differs where that order is part of the hash, and schemas with duplicate field names or
   `/`-aliased names (a column `"a/b"` next to a struct `a` with child `b`) are rejected.
 
 The exact bytes are specified in `docs/byte-layout-spec.md`, Section 9. Rust-generated golden
 vectors that other implementations (starfix-python) must match are in
 `tests/golden/ordered_v0.5.json` (`cargo run --bin emit_golden_ordered`, append-only).
+
+## Fixed in v0.5: information losses of the v0.4.0 layout
+
+**Hashes change for affected inputs.** v0.4.0 lost information for some types; v0.5 fixes the
+default layout (this is a fix, not an option):
+
+- **Booleans**: values were bit-packed per call without a count, so `[true]` and
+  `[true, false, false]` (one non-nullable column) collided and a Boolean column's hash depended
+  on how rows were split into batches. Now one byte per value.
+- **Nullable structs**: a null struct hashed like a struct whose fields are all null, and null
+  struct rows vanished when the fields were non-nullable. Now a nullable struct records its own
+  validity.
+- **Lists of nullable lists**: the outer per-row lengths were lost (rows `[[1]], [[2],[3]]`
+  collided with rows `[[1],[2]], [[3]]`). Now kept.
+- **Lists of nullable structs**: a null element hashed like an element with all-null fields.
+  Now distinguished.
+
+An input is affected iff its type contains a Boolean, a nullable struct, or a list whose element
+is a nullable list or struct (`hash_schema` is never affected). **Every other input keeps its
+v0.4.0 hash byte for byte.** The full record of changed values is in
+`tests/golden/fixed_in_v0.5.json`; details in `docs/byte-layout-spec.md`, Section 10.
 
 ## Collision Prevention
 
@@ -464,17 +483,6 @@ schemas can still be hashed):
 - `Union` - Union types
 - `Map` - Map types
 - `RunEndEncoded` - Run-end encoded types
-
-The default layout (all options off) is frozen and loses information in a few cases, which the
-`nested_validity` option (provisional name) removes:
-
-- a null struct hashes like a struct whose fields are all null; when the struct's fields are
-  non-nullable, null struct rows contribute nothing;
-- in `list<nullable list<..>>` the outer per-row lengths are lost, and in
-  `list<nullable struct<..>>` a null element hashes like an element with all-null fields;
-- non-nullable Boolean data is bit-packed without a count (`[true]` hashes like
-  `[true, false, false]` in a one-column table), and Boolean data is packed per batch, so a
-  Boolean column's hash depends on how rows are split into batches.
 
 The row count of a table with zero columns is not hashed (in every mode).
 

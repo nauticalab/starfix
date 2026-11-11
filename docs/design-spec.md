@@ -165,23 +165,23 @@ pub struct HasherConfig {
     pub include_metadata: bool,
     pub ordered_columns: bool,       // v0.5
     pub ordered_struct_fields: bool, // v0.5
-    pub nested_validity: bool,       // v0.5, provisional name
 }
 ```
 
 `HasherConfig::default()` sets every option to `false`, preserving backward-compatible behavior.
-The three v0.5 options are specified in `docs/byte-layout-spec.md` Section 9 (design rationale:
+The two v0.5 options are specified in `docs/byte-layout-spec.md` Section 9 (design rationale:
 `docs/metamorphic/specs/2026-11-11-ordered-hashing-design.md`): `ordered_columns` and
-`ordered_struct_fields` make column order and struct field order part of the hash;
-`nested_validity` selects a lossless layout (nested validity and counted Booleans). When any of
-them is on, an options tag domain-separates the hash.
+`ordered_struct_fields` make column order and struct field order part of the hash. When either
+is on, an options tag domain-separates the hash. v0.5 also fixes information losses of the
+v0.4.0 default layout (Booleans, nullable structs, lists of nullable lists/structs); see
+`docs/byte-layout-spec.md` Section 10.
 
 `HasherConfig` is passed as a parameter to the following public methods:
 - `ArrowDigester::new(schema: &Schema, config: HasherConfig)`
 - `ArrowDigester::hash_schema(schema: &Schema, config: HasherConfig) -> Vec<u8>`
 - `ArrowDigester::hash_record_batch(rb: &RecordBatch, config: HasherConfig) -> Vec<u8>`
 
-`hash_array()` is **not** affected — it operates on a single array without a schema context and never calls `hash_schema`. `hash_array_with_config(array, config)` (v0.5) applies the three v0.5 options; `include_metadata` has no effect there.
+`hash_array()` is **not** affected — it operates on a single array without a schema context and never calls `hash_schema`. `hash_array_with_config(array, config)` (v0.5) applies the order options; `include_metadata` has no effect there.
 
 Future options (e.g., per-key filters, separate schema-level vs. field-level toggles) will be added as new fields on `HasherConfig`. Because `HasherConfig` is a plain public struct, adding a new field is a source-breaking change for callers that construct it with an exhaustive literal (e.g., `HasherConfig { include_metadata: true }`). Callers should construct configs using the struct-update syntax to stay forward-compatible:
 

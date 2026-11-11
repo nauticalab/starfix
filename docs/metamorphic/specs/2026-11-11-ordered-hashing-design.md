@@ -2,12 +2,23 @@
 
 **Issue:** ITL-898
 **Date:** 2026-11-11
-**Status:** D1–D7 recommended by the coordinator and implemented provisionally; the third switch
-was widened twice during implementation (Sections 3.4, 3.5) and its final name is the
-developer's (`nested_validity` is a placeholder; the name is not hashed, only its flag bit).
-The authoritative byte layout is `docs/byte-layout-spec.md` Section 9.
-**Repos:** `nauticalab/starfix` (authoritative, this document), `nauticalab/starfix-python` (consumer)
+**Status:** D1 and D3–D7 implemented as recommended. **D2 superseded** by the developer's
+ruling of 2026-11-11 (below). The authoritative byte layout is `docs/byte-layout-spec.md`
+(Section 9: order options; Section 10: the v0.5 fix). Version prefix: open, variant (a) or (b).
 
+> **Developer ruling, 2026-11-11.** "Since this is a bug, the rule of golden value shouldn't
+> move gets superseded -- erroneous golden value is extremely wrong and we cannot tolerate it --
+> this fix should not be a switch but should be marked as explicit fix!"
+>
+> Consequences: there is no third switch. The lossless layout (nested validity, Section 3.4 of
+> this document; one byte per Boolean, Section 3.5) is the default and only layout, in every mode.
+> Existing golden values computed from the erroneous layout move, marked explicitly as a fix
+> (CHANGELOG, README, spec Section 10, `tests/golden/fixed_in_v0.5.json`). Flags bit `0x04` is
+> reserved and never reused. Inputs of unaffected types keep their v0.4.0 hash (variant (a)) or
+> their v0.4.0 digest under a bumped prefix (variant (b)); the developer chooses.
+>
+> Everything below that describes `nested_validity` (or `struct_validity`) as an option is
+> historical.
 ---
 
 ## 1. Motivation
