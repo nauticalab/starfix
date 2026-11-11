@@ -1,4 +1,5 @@
-//! Tests for the order-sensitive and nested-validity options of `HasherConfig` (ITL-898).
+//! Tests for the order-sensitive options of `HasherConfig` and the v0.5 lossless-layout fixes
+//! (ITL-898).
 //!
 //! The byte layout is specified in `docs/byte-layout-spec.md`, Section 9.
 
@@ -28,13 +29,12 @@ mod tests {
     // ── helpers ────────────────────────────────────────────────────────────
 
     /// Build a config from the option flags byte of the spec (bit0 columns, bit1 struct
-    /// fields, bit2 nested validity).
+    /// fields).
     fn cfg(flags: u8) -> HasherConfig {
         HasherConfig {
             include_metadata: false,
             ordered_columns: flags & 0x01 != 0,
             ordered_struct_fields: flags & 0x02 != 0,
-            nested_validity: flags & 0x04 != 0,
         }
     }
 
@@ -142,7 +142,7 @@ mod tests {
     fn default_config_has_all_options_off() {
         let c = HasherConfig::default();
         assert!(!c.include_metadata && !c.ordered_columns);
-        assert!(!c.ordered_struct_fields && !c.nested_validity);
+        assert!(!c.ordered_struct_fields);
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn column_order_ignored_when_off() {
-        for flags in [0x00, 0x02, 0x04, 0x06] {
+        for flags in [0x00, 0x02] {
             assert_eq!(
                 rb_hash(&two_col_batch(true), cfg(flags)),
                 rb_hash(&two_col_batch(false), cfg(flags)),
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn column_order_matters_when_on() {
-        for flags in [0x01, 0x03, 0x05, 0x07] {
+        for flags in [0x01, 0x03] {
             assert_ne!(
                 rb_hash(&two_col_batch(true), cfg(flags)),
                 rb_hash(&two_col_batch(false), cfg(flags)),
@@ -231,10 +231,10 @@ mod tests {
 
     #[test]
     fn streaming_accepts_reordered_batch_when_columns_unordered() {
-        let mut d1 = ArrowDigester::new(&two_col_batch(true).schema(), cfg(0x06));
+        let mut d1 = ArrowDigester::new(&two_col_batch(true).schema(), cfg(0x02));
         d1.update(&two_col_batch(true));
         d1.update(&two_col_batch(false));
-        let mut d2 = ArrowDigester::new(&two_col_batch(true).schema(), cfg(0x06));
+        let mut d2 = ArrowDigester::new(&two_col_batch(true).schema(), cfg(0x02));
         d2.update(&two_col_batch(true));
         d2.update(&two_col_batch(true));
         assert_eq!(d1.finalize(), d2.finalize());
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn struct_order_ignored_when_off() {
-        for flags in [0x00, 0x01, 0x04, 0x05] {
+        for flags in [0x00, 0x01] {
             assert_eq!(
                 rb_hash(&struct_col_batch(true), cfg(flags)),
                 rb_hash(&struct_col_batch(false), cfg(flags)),
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn struct_order_matters_when_on() {
-        for flags in [0x02, 0x03, 0x06, 0x07] {
+        for flags in [0x02, 0x03] {
             assert_ne!(
                 rb_hash(&struct_col_batch(true), cfg(flags)),
                 rb_hash(&struct_col_batch(false), cfg(flags)),
@@ -469,7 +469,7 @@ mod tests {
                 vec![col],
             )
         };
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let same =
                 rb_hash(&mk(true, false), cfg(flags)) == rb_hash(&mk(false, false), cfg(flags));
             assert_eq!(same, flags & 0x02 == 0, "flags {flags:#04x}");
@@ -506,13 +506,13 @@ mod tests {
             vec![Field::new("v", DataType::Int32, false)],
             vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
         );
-        let rbs: Vec<String> = (0x00_u8..=0x07).map(|f| rb_hash(&b, cfg(f))).collect();
+        let rbs: Vec<String> = (0x00_u8..=0x03).map(|f| rb_hash(&b, cfg(f))).collect();
         assert_all_distinct(&rbs, "one-column record batch");
-        let schemas: Vec<String> = (0x00_u8..=0x07)
+        let schemas: Vec<String> = (0x00_u8..=0x03)
             .map(|f| schema_hash(&b.schema(), cfg(f)))
             .collect();
         assert_all_distinct(&schemas, "one-column schema");
-        let arrays: Vec<String> = (0x00_u8..=0x07)
+        let arrays: Vec<String> = (0x00_u8..=0x03)
             .map(|f| array_hash(b.column(0).as_ref(), cfg(f)))
             .collect();
         assert_all_distinct(&arrays, "hash_array");
@@ -523,7 +523,7 @@ mod tests {
         let schema = Schema::new(vec![Field::new("v", DataType::Int32, false)]);
         let object_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
         let array_json = r#"[{"data_type":"Int32","name":"v","nullable":false}]"#;
-        for flags in 0x01_u8..=0x07 {
+        for flags in 0x01_u8..=0x03 {
             let json = if flags & 0x01 != 0 {
                 array_json
             } else {
@@ -555,7 +555,7 @@ mod tests {
             Field::new("b", DataType::Int32, false).with_metadata(meta),
             Field::new("a", DataType::Int32, false),
         ]);
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let off = cfg(flags);
             let on = HasherConfig {
                 include_metadata: true,
@@ -607,7 +607,7 @@ mod tests {
         assert!(!panics(|| {
             ArrowDigester::hash_record_batch(&b, cfg(0));
         }));
-        for flags in 0x01_u8..=0x07 {
+        for flags in 0x01_u8..=0x03 {
             assert!(
                 panics(|| {
                     ArrowDigester::hash_record_batch(&b, cfg(flags));
@@ -637,7 +637,7 @@ mod tests {
         assert!(!panics(|| {
             ArrowDigester::hash_schema(&schema, cfg(0));
         }));
-        for flags in 0x01_u8..=0x07 {
+        for flags in 0x01_u8..=0x03 {
             assert!(
                 panics(|| {
                     ArrowDigester::hash_schema(&schema, cfg(flags));
@@ -666,7 +666,7 @@ mod tests {
         ]);
         // a "/" in a name that collides with nothing is fine
         let s3 = Schema::new(vec![Field::new("km/h", DataType::Int32, false)]);
-        for flags in 0x01_u8..=0x07 {
+        for flags in 0x01_u8..=0x03 {
             assert!(panics(|| {
                 ArrowDigester::hash_schema(&s1, cfg(flags));
             }));
@@ -675,6 +675,45 @@ mod tests {
             }));
             assert!(!panics(|| {
                 ArrowDigester::hash_schema(&s3, cfg(flags));
+            }));
+        }
+    }
+
+    #[test]
+    fn metadata_path_aliasing_rejected_when_any_option_on() {
+        // struct column "" with child "a" (metadata path "/a") next to column "/a"
+        let st = DataType::Struct(Fields::from(vec![Field::new("a", DataType::Int32, false)]));
+        let schema = Schema::new(vec![
+            Field::new("", st, false),
+            Field::new("/a", DataType::Int32, false),
+        ]);
+        assert!(!panics(|| {
+            ArrowDigester::hash_schema(&schema, cfg(0));
+        }));
+        for flags in 0x01_u8..=0x03 {
+            assert!(panics(|| {
+                ArrowDigester::hash_schema(&schema, cfg(flags));
+            }));
+        }
+    }
+
+    #[test]
+    fn non_portable_containers_rejected_when_any_option_on() {
+        let st = DataType::Struct(Fields::from(vec![
+            Field::new("x", DataType::Int32, false),
+            Field::new("y", DataType::Int32, false),
+        ]));
+        let schema = Schema::new(vec![Field::new(
+            "v",
+            DataType::ListView(Arc::new(Field::new("item", st, true))),
+            true,
+        )]);
+        assert!(!panics(|| {
+            ArrowDigester::hash_schema(&schema, cfg(0));
+        }));
+        for flags in 0x01_u8..=0x03 {
+            assert!(panics(|| {
+                ArrowDigester::hash_schema(&schema, cfg(flags));
             }));
         }
     }
@@ -697,7 +736,7 @@ mod tests {
                 Arc::new(Int32Array::from(vec![2])),
             ],
         );
-        for flags in 0x01_u8..=0x07 {
+        for flags in 0x01_u8..=0x03 {
             let mut d = ArrowDigester::new(&one.schema(), cfg(flags));
             assert!(
                 panics(|| d.update(&two)),
@@ -706,7 +745,7 @@ mod tests {
         }
     }
 
-    // ── nested_validity ─────────────────────────────────────────────────────
+    // ── v0.5 fixes: lossless layout in every mode (byte-layout spec Section 10) ──
 
     fn struct_batch(fields: Fields, child: ArrayRef, nulls: Option<NullBuffer>) -> RecordBatch {
         let s = StructArray::new(fields, vec![child], nulls);
@@ -726,9 +765,12 @@ mod tests {
             Some(NullBuffer::from(vec![true, false])),
         );
         let null_fields = struct_batch(f, child, None);
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let same = rb_hash(&null_struct, cfg(flags)) == rb_hash(&null_fields, cfg(flags));
-            assert_eq!(same, flags & 0x04 == 0, "flags {flags:#04x}");
+            assert!(
+                !same,
+                "flags {flags:#04x}: v0.5 fix, must differ in every mode"
+            );
         }
     }
 
@@ -741,9 +783,12 @@ mod tests {
             Some(NullBuffer::from(vec![true, false, true])),
         );
         let two = struct_batch(f, Arc::new(Int32Array::from(vec![1, 3])), None);
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let same = rb_hash(&three, cfg(flags)) == rb_hash(&two, cfg(flags));
-            assert_eq!(same, flags & 0x04 == 0, "flags {flags:#04x}");
+            assert!(
+                !same,
+                "flags {flags:#04x}: v0.5 fix, must differ in every mode"
+            );
         }
     }
 
@@ -770,9 +815,12 @@ mod tests {
     fn list_of_nullable_list_keeps_outer_lengths() {
         let one_row = list_of_list(&[vec![vec![1], vec![2]]]);
         let two_rows = list_of_list(&[vec![vec![1]], vec![vec![2]]]);
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let same = rb_hash(&one_row, cfg(flags)) == rb_hash(&two_rows, cfg(flags));
-            assert_eq!(same, flags & 0x04 == 0, "flags {flags:#04x}");
+            assert!(
+                !same,
+                "flags {flags:#04x}: v0.5 fix, must differ in every mode"
+            );
         }
     }
 
@@ -781,7 +829,7 @@ mod tests {
         // c: List<List<Int32?>?> non-null, one row [[1], [2]]
         let b = list_of_list(&[vec![vec![1], vec![2]]]);
         let json = r#"{"c":{"data_type":{"LargeList":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}},"nullable":false}}"#;
-        let schema_digest = sha(&[&tag(0x04), json.as_bytes()]);
+        let schema_digest = sha(&[json.as_bytes()]);
         let expected = versioned(&sha(&[
             &schema_digest,
             // entry "c/": null_bits = inner-list validity [1, 1], structural = outer lengths [2]
@@ -794,11 +842,11 @@ mod tests {
             &sha(&[&1_u64.to_le_bytes(), &1_u64.to_le_bytes()]),
             &sha(&[&1_i32.to_le_bytes(), &2_i32.to_le_bytes()]),
         ]));
-        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0x04)), expected);
+        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0)), expected);
     }
 
     #[test]
-    fn nested_validity_struct_bytes() {
+    fn nullable_struct_validity_bytes() {
         // s: Struct<a: Int32?>? rows [null, {a: null}, {a: 1}]
         let f = Fields::from(vec![Field::new("a", DataType::Int32, true)]);
         let b = struct_batch(
@@ -807,7 +855,7 @@ mod tests {
             Some(NullBuffer::from(vec![false, true, true])),
         );
         let json = r#"{"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}}"#;
-        let schema_digest = sha(&[&tag(0x04), json.as_bytes()]);
+        let schema_digest = sha(&[json.as_bytes()]);
         let expected = versioned(&sha(&[
             &schema_digest,
             // entry "s": validity-only, struct bits [0, 1, 1]
@@ -818,7 +866,7 @@ mod tests {
             &[0b100],
             &sha(&[&1_i32.to_le_bytes()]),
         ]));
-        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0x04)), expected);
+        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0)), expected);
     }
 
     #[test]
@@ -843,14 +891,17 @@ mod tests {
                 vec![col],
             )
         };
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let same = rb_hash(&mk(true), cfg(flags)) == rb_hash(&mk(false), cfg(flags));
-            assert_eq!(same, flags & 0x04 == 0, "flags {flags:#04x}");
+            assert!(
+                !same,
+                "flags {flags:#04x}: v0.5 fix, must differ in every mode"
+            );
         }
     }
 
     #[test]
-    fn nested_validity_hash_array_of_struct() {
+    fn hash_array_of_nullable_struct_counts_null_rows() {
         let f = Fields::from(vec![Field::new("a", DataType::Int32, false)]);
         let three = StructArray::new(
             f.clone(),
@@ -858,11 +909,12 @@ mod tests {
             Some(NullBuffer::from(vec![true, false, true])),
         );
         let two = StructArray::new(f, vec![Arc::new(Int32Array::from(vec![1, 3]))], None);
-        assert_eq!(array_hash(&three, cfg(0)), array_hash(&two, cfg(0)));
-        assert_ne!(array_hash(&three, cfg(0x04)), array_hash(&two, cfg(0x04)));
+        for flags in 0x00_u8..=0x03 {
+            assert_ne!(array_hash(&three, cfg(flags)), array_hash(&two, cfg(flags)));
+        }
     }
 
-    // ── Boolean data under the third switch ────────────────────────────────
+    // ── v0.5 fix: Boolean data, one byte per value ─────────────────────────
 
     fn bool_batch(nullable: bool, values: Vec<Option<bool>>) -> RecordBatch {
         batch(
@@ -875,21 +927,25 @@ mod tests {
     fn boolean_trailing_false_rows_are_counted() {
         let one = bool_batch(false, vec![Some(true)]);
         let three = bool_batch(false, vec![Some(true), Some(false), Some(false)]);
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let same = rb_hash(&one, cfg(flags)) == rb_hash(&three, cfg(flags));
-            assert_eq!(same, flags & 0x04 == 0, "flags {flags:#04x}");
+            assert!(
+                !same,
+                "flags {flags:#04x}: v0.5 fix, must differ in every mode"
+            );
         }
         let a1 = BooleanArray::from(vec![true]);
         let a2 = BooleanArray::from(vec![true, false]);
-        assert_eq!(array_hash(&a1, cfg(0)), array_hash(&a2, cfg(0)));
-        assert_ne!(array_hash(&a1, cfg(0x04)), array_hash(&a2, cfg(0x04)));
+        for flags in 0x00_u8..=0x03 {
+            assert_ne!(array_hash(&a1, cfg(flags)), array_hash(&a2, cfg(flags)));
+        }
     }
 
     #[test]
-    fn boolean_batch_split_independence_with_third_switch() {
+    fn boolean_batch_split_independence_in_every_mode() {
         for nullable in [false, true] {
             let whole = bool_batch(nullable, vec![Some(true), Some(false), Some(true)]);
-            for flags in [0x04_u8, 0x07] {
+            for flags in 0x00_u8..=0x03 {
                 let mut d = ArrowDigester::new(&whole.schema(), cfg(flags));
                 d.update(&bool_batch(nullable, vec![Some(true)]));
                 d.update(&bool_batch(nullable, vec![Some(false), Some(true)]));
@@ -904,26 +960,22 @@ mod tests {
 
     #[test]
     fn boolean_one_byte_per_value_bytes() {
-        // b: Boolean nullable [true, null, false]; flags 0x04
+        // b: Boolean nullable [true, null, false]; default options
         let b = bool_batch(true, vec![Some(true), None, Some(false)]);
         let json = r#"{"b":{"data_type":"Boolean","nullable":true}}"#;
         let expected = versioned(&sha(&[
-            &sha(&[&tag(0x04), json.as_bytes()]),
+            &sha(&[json.as_bytes()]),
             &3_u64.to_le_bytes(),
             &[0b101],
             &sha(&[&[0x01, 0x00]]), // one byte per VALID value
         ]));
-        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0x04)), expected);
+        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0)), expected);
 
         // hash_array, non-nullable [true, false, true]
         let a = BooleanArray::from(vec![true, false, true]);
-        let expected_array = versioned(&sha(&[
-            &tag(0x04),
-            br#""Boolean""#,
-            &sha(&[&[0x01, 0x00, 0x01]]),
-        ]));
+        let expected_array = versioned(&sha(&[br#""Boolean""#, &sha(&[&[0x01, 0x00, 0x01]])]));
         assert_eq!(
-            ArrowDigester::hash_array_with_config(&a, cfg(0x04)),
+            ArrowDigester::hash_array_with_config(&a, cfg(0)),
             expected_array
         );
     }
@@ -996,7 +1048,7 @@ mod tests {
         );
         let p1 = mk(vec![Some(1)], vec![1], vec![true]);
         let p2 = mk(vec![None, Some(3)], vec![2, 3], vec![false, true]);
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let mut d = ArrowDigester::new(&whole.schema(), cfg(flags));
             d.update(&p1);
             d.update(&p2);
@@ -1048,7 +1100,7 @@ mod tests {
                 vec![Arc::new(Int32Array::from(vec![1, 2, 3])), a],
             )
         };
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let h_dict = rb_hash(&mk(Arc::new(dict.clone())), cfg(flags));
             let h_plain = rb_hash(&mk(Arc::new(plain.clone())), cfg(flags));
             let h_large = rb_hash(&mk(Arc::new(large.clone())), cfg(flags));
@@ -1065,7 +1117,7 @@ mod tests {
         mb.append(true).unwrap();
         let m = mb.finish();
         let schema = Schema::new(vec![Field::new("m", m.data_type().clone(), true)]);
-        let all: Vec<String> = (0x00_u8..=0x07)
+        let all: Vec<String> = (0x00_u8..=0x03)
             .map(|f| schema_hash(&schema, cfg(f)))
             .collect();
         assert_all_distinct(&all, "map schema");

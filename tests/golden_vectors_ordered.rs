@@ -32,10 +32,6 @@ mod tests {
     }
 
     #[derive(Deserialize)]
-    #[expect(
-        clippy::struct_excessive_bools,
-        reason = "fixture rows mirror the HasherConfig options one-to-one"
-    )]
     struct GoldenVector {
         id: String,
         description: String,
@@ -43,7 +39,6 @@ mod tests {
         include_metadata: bool,
         ordered_columns: bool,
         ordered_struct_fields: bool,
-        nested_validity: bool,
         ipc_b64: String,
         expected_hash: String,
     }
@@ -78,7 +73,6 @@ mod tests {
             include_metadata: v.include_metadata,
             ordered_columns: v.ordered_columns,
             ordered_struct_fields: v.ordered_struct_fields,
-            nested_validity: v.nested_validity,
         };
         let (schema, batches) = decode_ipc(&v.ipc_b64);
         let one_batch = || {

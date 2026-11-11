@@ -30,12 +30,11 @@ const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 /// Canonical JSON never starts with `0x00`, so tagged inputs never equal untagged ones.
 const OPTIONS_TAG_PREFIX: &[u8; 19] = b"\x00starfix-options-v1";
 
-/// The option flags byte: bit 0 `ordered_columns`, bit 1 `ordered_struct_fields`,
-/// bit 2 `nested_validity`. `include_metadata` is not a flag.
+/// The option flags byte: bit 0 `ordered_columns`, bit 1 `ordered_struct_fields`.
+/// Bits 2–7 are reserved and always 0 (bit 2 was briefly a provisional, never released switch;
+/// it must not be reused). `include_metadata` is not a flag.
 const fn option_flags(config: HasherConfig) -> u8 {
-    (config.ordered_columns as u8)
-        | ((config.ordered_struct_fields as u8) << 1_u8)
-        | ((config.nested_validity as u8) << 2_u8)
+    (config.ordered_columns as u8) | ((config.ordered_struct_fields as u8) << 1_u8)
 }
 
 /// `OPTIONS_TAG_PREFIX || flags` — written only when `flags != 0`.
@@ -43,6 +42,13 @@ fn options_tag(flags: u8) -> Vec<u8> {
     let mut tag = OPTIONS_TAG_PREFIX.to_vec();
     tag.push(flags);
     tag
+}
+
+/// Node paths and metadata paths claimed so far by the schema validator.
+#[derive(Default)]
+struct PathSets {
+    node: HashSet<String>,
+    metadata: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -190,7 +196,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Flatten all nested fields into a single map for per-field hashing
         let mut fields_digest_buffer = BTreeMap::new();
         for field in &normalized.fields {
-            Self::extract_fields_name(field, "", config.nested_validity, &mut fields_digest_buffer);
+            Self::extract_fields_name(field, "", &mut fields_digest_buffer);
         }
 
         Self {
@@ -248,7 +254,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 array.as_ref(),
                 &path,
                 None, // no ancestor struct nulls at top level
-                self.config.nested_validity,
                 &mut self.fields_digest_buffer,
             );
         }
@@ -315,7 +320,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             &effective_type,
             effective_array.is_nullable(),
             "",
-            config.nested_validity,
+            false,
             &mut fields,
         );
 
@@ -326,7 +331,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
             effective_array,
             "",
             None,
-            config.nested_validity,
             &mut fields,
         );
 
@@ -708,7 +712,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &dyn Array,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
-        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         // Normalize small variants
@@ -746,7 +749,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     nullable,
                     path,
                     ancestor_struct_nulls,
-                    nested_validity,
                     fields,
                 );
             }
@@ -757,7 +759,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     nullable,
                     path,
                     ancestor_struct_nulls,
-                    nested_validity,
                     fields,
                 );
             }
@@ -767,7 +768,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     effective_array,
                     path,
                     ancestor_struct_nulls,
-                    nested_validity,
                     fields,
                 );
             }
@@ -780,7 +780,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         nullable: bool,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
-        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let list_array = array
@@ -834,7 +833,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     sub_array.as_ref(),
                     &list_path,
                     None, // list elements don't have ancestor struct nulls
-                    nested_validity,
                     fields,
                 );
             }
@@ -847,7 +845,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         nullable: bool,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
-        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let struct_array = array
@@ -862,13 +859,14 @@ impl<D: Digest> ArrowDigesterCore<D> {
             ancestor_struct_nulls.cloned()
         };
 
-        // nested_validity: a nullable struct records its own (combined) validity at its path —
-        // in its validity-only entry, or, for a list element, in the list's element entry.
-        if nested_validity && nullable {
+        // A nullable struct records its own (combined) validity at its path — in its
+        // validity-only entry, or, for a list element, in the list's element entry
+        // (byte-layout spec Section 3.5; v0.4.0 recorded nothing, fixed in v0.5).
+        if nullable {
             let null_bits = fields
                 .get_mut(path)
                 .and_then(|entry| entry.null_bits.as_mut())
-                .expect("nested_validity: nullable struct must have a validity entry");
+                .expect("nullable struct must have a validity entry");
             match &combined_nulls {
                 Some(nb) => {
                     for i in 0..struct_array.len() {
@@ -900,7 +898,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 child_array.as_ref(),
                 &child_path,
                 combined_nulls.as_ref(),
-                nested_validity,
                 fields,
             );
         }
@@ -911,7 +908,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &dyn Array,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
-        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let entry = fields
@@ -951,20 +947,15 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 .build()
                 .expect("rebuild array with combined null buffer");
             let combined_array = make_array(new_data);
-            Self::hash_leaf_data(data_type, combined_array.as_ref(), nested_validity, entry);
+            Self::hash_leaf_data(data_type, combined_array.as_ref(), entry);
         } else {
-            Self::hash_leaf_data(data_type, array, nested_validity, entry);
+            Self::hash_leaf_data(data_type, array, entry);
         }
     }
 
     /// Hash leaf data into the entry's data digest, without modifying `null_bits`
     /// (which are already handled by `traverse_leaf`).
-    fn hash_leaf_data(
-        data_type: &DataType,
-        array: &dyn Array,
-        nested_validity: bool,
-        entry: &mut DigestBufferType<D>,
-    ) {
+    fn hash_leaf_data(data_type: &DataType, array: &dyn Array, entry: &mut DigestBufferType<D>) {
         // Save and restore null_bits so array_digest_update's handle_null_bits
         // pushes don't pollute the real null_bits (which traverse_leaf manages).
         // We keep null_bits in place during the call so hash functions use
@@ -975,7 +966,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if array.nulls().is_some() {
             entry.null_bits = Some(BitVec::<u8, Lsb0>::new());
         }
-        Self::array_digest_update(data_type, array, nested_validity, entry);
+        Self::array_digest_update(data_type, array, entry);
         // Restore the real null_bits
         entry.null_bits = saved;
     }
@@ -1003,7 +994,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
     fn array_digest_update(
         data_type: &DataType,
         array: &dyn Array,
-        nested_validity: bool,
         digest: &mut DigestBufferType<D>,
     ) {
         // Normalize small variants to their large equivalents so every code path
@@ -1043,38 +1033,18 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     .downcast_ref::<BooleanArray>()
                     .expect("Failed to downcast to BooleanArray");
 
-                if nested_validity {
-                    // Lossless layout (byte-layout spec Section 9.5.1): one byte (0x00 / 0x01)
-                    // per VALID value, so the value count is hashed and batches can be split
-                    // anywhere. Nulls are skipped, as in the default layout.
-                    if let Some(ref mut null_bits) = digest.null_bits {
-                        Self::handle_null_bits(bool_array, null_bits);
-                    }
-                    let bytes: Vec<u8> = (0..bool_array.len())
-                        .filter(|&i| bool_array.is_valid(i))
-                        .map(|i| u8::from(bool_array.value(i)))
-                        .collect();
-                    digest.data_mut().update(&bytes);
-                } else if let Some(ref mut null_bits) = digest.null_bits {
-                    // Handle null bits first
+                // One byte (0x00 / 0x01) per VALID value (byte-layout spec Section 3.2), so the
+                // value count is hashed and batches can be split anywhere. Nulls are skipped.
+                // (v0.4.0 bit-packed per call, which lost trailing false values and depended
+                // on batch boundaries; fixed in v0.5, Section 10.)
+                if let Some(ref mut null_bits) = digest.null_bits {
                     Self::handle_null_bits(bool_array, null_bits);
-
-                    // Handle the data — only valid bits
-                    let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
-                    for i in 0..bool_array.len() {
-                        if bool_array.is_valid(i) {
-                            bit_vec.push(bool_array.value(i));
-                        }
-                    }
-                    digest.data_mut().update(bit_vec.as_raw_slice());
-                } else {
-                    // Non-nullable: pack all boolean values
-                    let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(bool_array.len());
-                    for i in 0..bool_array.len() {
-                        bit_vec.push(bool_array.value(i));
-                    }
-                    digest.data_mut().update(bit_vec.as_raw_slice());
                 }
+                let bytes: Vec<u8> = (0..bool_array.len())
+                    .filter(|&i| bool_array.is_valid(i))
+                    .map(|i| u8::from(bool_array.value(i)))
+                    .collect();
+                digest.data_mut().update(&bytes);
             }
             DataType::Int8 | DataType::UInt8 => {
                 Self::hash_fixed_size_array(effective_array, digest, 1);
@@ -1146,12 +1116,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::Dictionary(_, value_type) => {
                 let resolved = cast(effective_array, value_type.as_ref())
                     .expect("Failed to cast dictionary to plain array");
-                Self::array_digest_update(
-                    value_type.as_ref(),
-                    resolved.as_ref(),
-                    nested_validity,
-                    digest,
-                );
+                Self::array_digest_update(value_type.as_ref(), resolved.as_ref(), digest);
             }
             DataType::Decimal128(_, _) => {
                 Self::hash_fixed_size_array(effective_array, digest, 16);
@@ -1277,7 +1242,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
     fn extract_fields_name(
         field: &Field,
         parent_field_name: &str,
-        nested_validity: bool,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let path = Self::construct_field_name_hierarchy(parent_field_name, field.name());
@@ -1285,7 +1249,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             field.data_type(),
             field.is_nullable(),
             &path,
-            nested_validity,
+            false,
             fields_digest_buffer,
         );
     }
@@ -1293,26 +1257,24 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Core recursive type walker — creates `BTreeMap` entries based on the type tree.
     ///
     /// `nullable` reflects whether the current position is nullable (from the `Field`).
+    ///
+    /// `list_element` is true when this node is the element of a list: its validity then goes
+    /// into the list's element entry at `path` (created by the caller, with `null_bits` when the
+    /// element is nullable), which keeps the list lengths.
     fn extract_type_entries(
         data_type: &DataType,
         nullable: bool,
         path: &str,
-        nested_validity: bool,
+        list_element: bool,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let canonical = normalize_data_type(data_type);
 
-        // nested_validity: a nullable container that is a list element (an entry already
-        // exists at its path: the list's element entry, which has null_bits because the element
-        // is nullable) records its validity in that entry instead of replacing it.
-        let reuse_list_element_entry =
-            nested_validity && nullable && fields_digest_buffer.contains_key(path);
-
         match &canonical {
             DataType::Struct(fields) => {
-                // Struct is transparent by default — no entry, just recurse into children.
-                // nested_validity: a nullable struct gets a validity-only entry at its path.
-                if nested_validity && nullable && !reuse_list_element_entry {
+                // Struct children become entries; a nullable struct also gets a validity-only
+                // entry at its path (unless it is a list element, see above).
+                if nullable && !list_element {
                     fields_digest_buffer
                         .insert(path.to_owned(), DigestBufferType::new_validity_only());
                 }
@@ -1322,7 +1284,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                         child_field.data_type(),
                         child_field.is_nullable(),
                         &child_path,
-                        nested_validity,
+                        false,
                         fields_digest_buffer,
                     );
                 }
@@ -1330,9 +1292,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::LargeList(value_field) | DataType::List(value_field) => {
                 // For a nullable field that is a list, create a validity-only entry
                 // at the field path (column-level or field-level null tracking).
-                // Default layout: for a list element this REPLACES the outer list's element
-                // entry (frozen v0.4.0 behaviour); nested_validity reuses it instead.
-                if nullable && !reuse_list_element_entry {
+                // A list element reuses the outer list's element entry instead (v0.4.0
+                // replaced it, losing the outer lengths; fixed in v0.5).
+                if nullable && !list_element {
                     fields_digest_buffer
                         .insert(path.to_owned(), DigestBufferType::new_validity_only());
                 }
@@ -1355,7 +1317,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                             inner_type,
                             value_field.is_nullable(),
                             &list_path,
-                            nested_validity,
+                            true,
                             fields_digest_buffer,
                         );
                     }
@@ -1370,7 +1332,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                             inner_type,
                             value_field.is_nullable(),
                             &list_path,
-                            nested_validity,
+                            true,
                             fields_digest_buffer,
                         );
                     }
@@ -1391,50 +1353,74 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Reject schemas whose node paths are ambiguous (byte-layout spec Section 9.6).
+    /// Reject schemas that the order options cannot hash unambiguously (byte-layout spec 9.6).
     ///
     /// # Panics
-    /// When two columns, two children of one struct, or two nodes of the type tree map to
-    /// the same path (e.g. duplicate names, or a column `"a/b"` next to struct `a { b }`).
+    /// When two nodes of the type tree share a node path (duplicate names, or a name containing
+    /// `/` that aliases a nested field), when two fields share a metadata path (Section 2.2.1;
+    /// differs from the node path only under a column named `""`), or when the schema contains a
+    /// `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type.
     fn validate_schema_paths(schema: &Schema) {
-        let mut seen = HashSet::new();
+        let mut seen = PathSets::default();
         for field in schema.fields() {
-            Self::claim_node_path(field.name(), &mut seen);
-            Self::collect_node_paths(field.data_type(), field.name(), &mut seen);
+            Self::claim_paths(field.name(), field.name(), &mut seen);
+            Self::collect_node_paths(field.data_type(), field.name(), field.name(), &mut seen);
         }
     }
 
     /// `hash_array` variant of `validate_schema_paths`: the array itself is the node at `""`.
     fn validate_type_paths(data_type: &DataType) {
-        let mut seen = HashSet::new();
-        Self::claim_node_path("", &mut seen);
-        Self::collect_node_paths(data_type, "", &mut seen);
+        let mut seen = PathSets::default();
+        Self::claim_paths("", "", &mut seen);
+        Self::collect_node_paths(data_type, "", "", &mut seen);
     }
 
-    fn claim_node_path(path: &str, seen: &mut HashSet<String>) {
+    fn claim_paths(node_path: &str, metadata_path: &str, seen: &mut PathSets) {
         assert!(
-            seen.insert(path.to_owned()),
-            "Ambiguous field path {path:?}: duplicate field names, or a field name containing \
+            seen.node.insert(node_path.to_owned()) && seen.metadata.insert(metadata_path.to_owned()),
+            "Ambiguous field path {node_path:?}: duplicate field names, or a field name containing \
              {DELIMITER_FOR_NESTED_FIELD:?} that collides with a nested field, are not supported \
-             when ordered_columns, ordered_struct_fields or nested_validity is enabled"
+             when ordered_columns or ordered_struct_fields is enabled"
         );
     }
 
-    fn collect_node_paths(data_type: &DataType, path: &str, seen: &mut HashSet<String>) {
-        match normalize_data_type(data_type) {
+    fn collect_node_paths(
+        data_type: &DataType,
+        node_path: &str,
+        metadata_path: &str,
+        seen: &mut PathSets,
+    ) {
+        let canonical = normalize_data_type(data_type);
+        assert!(
+            !matches!(
+                canonical,
+                DataType::ListView(_)
+                    | DataType::LargeListView(_)
+                    | DataType::Union(_, _)
+                    | DataType::RunEndEncoded(_, _)
+            ),
+            "ListView, LargeListView, Union and RunEndEncoded types are not supported when \
+             ordered_columns or ordered_struct_fields is enabled"
+        );
+        match canonical {
             DataType::Struct(children) => {
                 for child in &children {
-                    let child_path = Self::construct_field_name_hierarchy(path, child.name());
-                    Self::claim_node_path(&child_path, seen);
-                    Self::collect_node_paths(child.data_type(), &child_path, seen);
+                    let child_node = Self::construct_field_name_hierarchy(node_path, child.name());
+                    let child_meta = format!(
+                        "{metadata_path}{DELIMITER_FOR_NESTED_FIELD}{}",
+                        child.name()
+                    );
+                    Self::claim_paths(&child_node, &child_meta, seen);
+                    Self::collect_node_paths(child.data_type(), &child_node, &child_meta, seen);
                 }
             }
             DataType::LargeList(element)
             | DataType::FixedSizeList(element, _)
             | DataType::Map(element, _) => {
-                let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
-                Self::claim_node_path(&element_path, seen);
-                Self::collect_node_paths(element.data_type(), &element_path, seen);
+                let element_node = format!("{node_path}{DELIMITER_FOR_NESTED_FIELD}");
+                let element_meta = format!("{metadata_path}{DELIMITER_FOR_NESTED_FIELD}");
+                Self::claim_paths(&element_node, &element_meta, seen);
+                Self::collect_node_paths(element.data_type(), &element_node, &element_meta, seen);
             }
             _ => {}
         }
@@ -1698,7 +1684,8 @@ mod tests {
 
     #[test]
     fn digest_bool_nullable_bytes() {
-        // [true, None, false, true] — valid values bit-packed Lsb0, null skipped
+        // [true, None, false, true] — one byte per valid value, null skipped
+        // (v0.5 fix, ITL-898: v0.4.0 bit-packed the valid values into 0x05)
         let array = BooleanArray::from(vec![Some(true), None, Some(false), Some(true)]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, true)]);
         let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
@@ -1724,16 +1711,16 @@ mod tests {
         assert!(null_bit_vec[2], "index 2 (false) should be valid");
         assert!(null_bit_vec[3], "index 3 (true) should be valid");
 
-        // Valid values [true, false, true] packed Lsb0 into one byte:
-        // bit0=1, bit1=0, bit2=1 → 0000_0101 = 0x05
+        // Valid values [true, false, true] → bytes 01 00 01
         let mut manual = Sha256::new();
-        manual.update([0x05_u8]);
+        manual.update([0x01_u8, 0x00, 0x01]);
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 
     #[test]
     fn digest_bool_non_nullable_bytes() {
-        // [false, true, false] — all values bit-packed, no nulls
+        // [false, true, false] — one byte per value, no nulls
+        // (v0.5 fix, ITL-898: v0.4.0 bit-packed them into 0x02)
         let array = BooleanArray::from(vec![false, true, false]);
         let schema = Schema::new(vec![Field::new("col", DataType::Boolean, false)]);
         let mut digester = ArrowDigesterCore::<Sha256>::new(&schema, false);
@@ -1753,9 +1740,9 @@ mod tests {
         assert!(buf.null_bits.is_none(), "Expected non-nullable");
         let data_digest = buf.data.as_ref().expect("Expected data digest");
 
-        // [false, true, false] packed Lsb0: bit0=0, bit1=1, bit2=0 → 0000_0010 = 0x02
+        // [false, true, false] → bytes 00 01 00
         let mut manual = Sha256::new();
-        manual.update([0x02_u8]);
+        manual.update([0x00_u8, 0x01, 0x00]);
         assert_eq!(data_digest.clone().finalize(), manual.finalize());
     }
 

@@ -29,10 +29,6 @@
     clippy::shadow_unrelated,
     reason = "fixture blocks and descriptions with metadata/struct literal syntax"
 )]
-#![expect(
-    clippy::struct_excessive_bools,
-    reason = "fixture rows mirror the HasherConfig options one-to-one"
-)]
 
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
@@ -75,7 +71,6 @@ struct GoldenVector {
     include_metadata: bool,
     ordered_columns: bool,
     ordered_struct_fields: bool,
-    nested_validity: bool,
     ipc_b64: String,
     expected_hash: String,
 }
@@ -114,14 +109,12 @@ fn git_sha() -> String {
         )
 }
 
-/// Config from the flags byte of the spec (bit0 columns, bit1 struct fields, bit2 nested
-/// validity).
+/// Config from the flags byte of the spec (bit0 columns, bit1 struct fields).
 const fn cfg(flags: u8, include_metadata: bool) -> HasherConfig {
     HasherConfig {
         include_metadata,
         ordered_columns: flags & 0x01 != 0,
         ordered_struct_fields: flags & 0x02 != 0,
-        nested_validity: flags & 0x04 != 0,
     }
 }
 
@@ -207,7 +200,6 @@ impl Builder {
             include_metadata,
             ordered_columns: config.ordered_columns,
             ordered_struct_fields: config.ordered_struct_fields,
-            nested_validity: config.nested_validity,
             ipc_b64: ipc,
             expected_hash: hex::encode(hash),
         });
@@ -686,7 +678,7 @@ fn build() -> Builder {
         let mut rb_ids = Vec::new();
         let mut schema_ids = Vec::new();
         let mut array_ids = Vec::new();
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let (r, s, a) = (
                 format!("one_col_rb_f{flags}"),
                 format!("one_col_schema_f{flags}"),
@@ -740,7 +732,7 @@ fn build() -> Builder {
             ],
             meta(&[("source", "golden")]),
         ));
-        for flags in [0x01_u8, 0x07] {
+        for flags in [0x01_u8, 0x03] {
             gen.add(
                 &format!("plain_schema_f{flags}_im0"),
                 "Schema [b, a] without metadata, include_metadata=false",
@@ -898,7 +890,7 @@ fn build() -> Builder {
         );
     }
 
-    // 7. nested_validity.
+    // 7. v0.5 fixes: nested validity (byte-layout spec Section 10).
     {
         let f_nullable = Fields::from(vec![Field::new("a", DataType::Int32, true)]);
         let child: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), None]));
@@ -923,7 +915,7 @@ fn build() -> Builder {
         let ll2 = list_of_list(&[vec![vec![1]], vec![vec![2]]]);
         let ls_null = list_of_nullable_struct(true);
         let ls_fields = list_of_nullable_struct(false);
-        for flags in [0x00_u8, 0x04, 0x07] {
+        for flags in [0x00_u8, 0x03] {
             gen.add(
                 &format!("nv_null_struct_rb_f{flags}"),
                 "s: Struct<a: Int32?>? rows [{a:1}, null]",
@@ -988,19 +980,14 @@ fn build() -> Builder {
             ("nv_list_null_elem_rb", "nv_list_null_fields_elem_rb"),
         ] {
             gen.relate(
-                "equal",
+                "different",
                 &[&format!("{a}_f0"), &format!("{b}_f0")],
-                "default layout loses this distinction (frozen)",
+                "v0.5 fix: these collided in v0.4.0",
             );
             gen.relate(
                 "different",
-                &[&format!("{a}_f4"), &format!("{b}_f4")],
-                "nested_validity records it",
-            );
-            gen.relate(
-                "different",
-                &[&format!("{a}_f7"), &format!("{b}_f7")],
-                "nested_validity records it (all options on)",
+                &[&format!("{a}_f3"), &format!("{b}_f3")],
+                "v0.5 fix, also with both order options on",
             );
         }
         // nested nullable structs, two levels, plus a list of nullable lists of nullable structs
@@ -1030,7 +1017,7 @@ fn build() -> Builder {
             vec![Field::new("o", outer.data_type().clone(), true)],
             vec![Arc::new(outer)],
         );
-        for flags in [0x04_u8, 0x07] {
+        for flags in [0x00_u8, 0x03] {
             gen.add(
                 &format!("nv_nested_structs_rb_f{flags}"),
                 "o: Struct<w: Int32, i: Struct<v: Int32?>?>? with nulls at both levels",
@@ -1039,7 +1026,7 @@ fn build() -> Builder {
                 &Input::Batch(nested.clone()),
             );
         }
-        // stream split with nested_validity
+        // stream split of the nullable-struct rows
         let p1 = single_struct_col(
             f_non_null.clone(),
             Arc::new(Int32Array::from(vec![1])),
@@ -1051,16 +1038,16 @@ fn build() -> Builder {
             Some(NullBuffer::from(vec![false, true])),
         );
         gen.add(
-            "nv_rows3_stream_f4",
-            "nv_rows3 data split into two batches, nested_validity",
-            0x04,
+            "nv_rows3_stream_f0",
+            "nv_rows3 data split into two batches",
+            0x00,
             false,
             &Input::Stream(rows3.schema(), vec![p1, p2]),
         );
         gen.relate(
             "equal",
-            &["nv_rows3_stream_f4", "nv_rows3_rb_f4"],
-            "batch-split independence with nested_validity",
+            &["nv_rows3_stream_f0", "nv_rows3_rb_f0"],
+            "batch-split independence with nullable struct rows",
         );
         // hash_array of a nullable struct
         let arr3: ArrayRef = Arc::new(StructArray::new(
@@ -1073,7 +1060,7 @@ fn build() -> Builder {
             vec![Arc::new(Int32Array::from(vec![1, 3]))],
             None,
         ));
-        for flags in [0x00_u8, 0x04] {
+        for flags in [0x00_u8, 0x03] {
             gen.add(
                 &format!("nv_array_rows3_f{flags}"),
                 "hash_array of Struct<a: Int32> [{a:1}, null, {a:3}]",
@@ -1090,14 +1077,14 @@ fn build() -> Builder {
             );
         }
         gen.relate(
-            "equal",
+            "different",
             &["nv_array_rows3_f0", "nv_array_rows2_f0"],
-            "default hash_array drops null struct rows (frozen)",
+            "v0.5 fix: hash_array counts null struct rows (v0.4.0 dropped them)",
         );
         gen.relate(
             "different",
-            &["nv_array_rows3_f4", "nv_array_rows2_f4"],
-            "nested_validity counts them",
+            &["nv_array_rows3_f3", "nv_array_rows2_f3"],
+            "v0.5 fix, also with both order options on",
         );
     }
 
@@ -1113,7 +1100,7 @@ fn build() -> Builder {
                 vec![Arc::new(Int32Array::from(vec![1, 2, 3])), d],
             )
         };
-        for flags in [0x00_u8, 0x03, 0x07] {
+        for flags in [0x00_u8, 0x03] {
             gen.add(
                 &format!("phys_dict_rb_f{flags}"),
                 "[z: Int32, d: Dictionary<Int32, Utf8>]",
@@ -1149,7 +1136,7 @@ fn build() -> Builder {
 
     // 9. hash_array with struct order.
     {
-        for flags in [0x00_u8, 0x02, 0x06] {
+        for flags in [0x00_u8, 0x02, 0x03] {
             gen.add(
                 &format!("array_struct_xy_f{flags}"),
                 "hash_array of Struct<x: Int32, y: Boolean> [{1,true},{2,false}]",
@@ -1177,11 +1164,11 @@ fn build() -> Builder {
         );
         gen.relate(
             "different",
-            &["array_struct_xy_f6", "array_struct_yx_f6"],
-            "hash_array: ordered_struct_fields with nested_validity",
+            &["array_struct_xy_f3", "array_struct_yx_f3"],
+            "hash_array: ordered_struct_fields with ordered_columns",
         );
         let l = list_of_struct(false, false);
-        for flags in [0x02_u8, 0x07] {
+        for flags in [0x02_u8, 0x03] {
             gen.add(
                 &format!("array_list_struct_f{flags}"),
                 "hash_array of List<Struct<b, a>?> with a null row",
@@ -1204,23 +1191,23 @@ fn build() -> Builder {
         let p1 = cols_and_struct(false, false, vec![7], vec![1], vec![true]);
         let p2 = cols_and_struct(false, false, vec![8, 9], vec![2, 3], vec![false, true]);
         gen.add(
-            "combo_sn_yx_3rows_rb_f7",
-            "Columns s, n; struct y, x; 3 rows; all options on",
-            0x07,
+            "combo_sn_yx_3rows_rb_f3",
+            "Columns s, n; struct y, x; 3 rows (Boolean field y); both order options on",
+            0x03,
             false,
             &Input::Batch(whole.clone()),
         );
         gen.add(
-            "combo_sn_yx_3rows_stream_f7",
+            "combo_sn_yx_3rows_stream_f3",
             "Same data as two batches",
-            0x07,
+            0x03,
             false,
             &Input::Stream(whole.schema(), vec![p1, p2]),
         );
         gen.relate(
             "equal",
-            &["combo_sn_yx_3rows_rb_f7", "combo_sn_yx_3rows_stream_f7"],
-            "batch-split independence with all options on",
+            &["combo_sn_yx_3rows_rb_f3", "combo_sn_yx_3rows_stream_f3"],
+            "batch-split independence with both order options on (v0.5 Boolean fix)",
         );
     }
 
@@ -1231,7 +1218,7 @@ fn build() -> Builder {
 
 /// Vector groups 11–15 (split out of `build` to keep each function readable).
 fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
-    // 11. Boolean data under the third switch (one byte per valid value).
+    // 11. v0.5 fix: Boolean data, one byte per valid value.
     {
         let bools = |nullable: bool, values: Vec<Option<bool>>| {
             batch(
@@ -1241,7 +1228,7 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
         };
         let one = bools(false, vec![Some(true)]);
         let three = bools(false, vec![Some(true), Some(false), Some(false)]);
-        for flags in [0x00_u8, 0x04] {
+        for flags in [0x00_u8, 0x03] {
             gen.add(
                 &format!("bool_1row_rb_f{flags}"),
                 "b: Boolean non-null [true]",
@@ -1271,30 +1258,28 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
                 &Input::Array(Arc::new(BooleanArray::from(vec![true, false]))),
             );
         }
-        gen.relate(
-            "equal",
-            &["bool_1row_rb_f0", "bool_3rows_rb_f0"],
-            "default layout: trailing false Boolean rows are lost (frozen)",
-        );
-        gen.relate(
-            "different",
-            &["bool_1row_rb_f4", "bool_3rows_rb_f4"],
-            "third switch: one byte per Boolean value counts them",
-        );
-        gen.relate(
-            "equal",
-            &["bool_array_1_f0", "bool_array_2_f0"],
-            "default hash_array: trailing false lost (frozen)",
-        );
-        gen.relate(
-            "different",
-            &["bool_array_1_f4", "bool_array_2_f4"],
-            "third switch: counted",
-        );
+        for flags in [0x00_u8, 0x03] {
+            gen.relate(
+                "different",
+                &[
+                    &format!("bool_1row_rb_f{flags}"),
+                    &format!("bool_3rows_rb_f{flags}"),
+                ],
+                "v0.5 fix: trailing false Boolean rows are counted (v0.4.0 lost them)",
+            );
+            gen.relate(
+                "different",
+                &[
+                    &format!("bool_array_1_f{flags}"),
+                    &format!("bool_array_2_f{flags}"),
+                ],
+                "v0.5 fix: hash_array counts trailing false values",
+            );
+        }
         let whole = bools(true, vec![Some(true), None, Some(false), Some(true)]);
         let p1 = bools(true, vec![Some(true)]);
         let p2 = bools(true, vec![None, Some(false), Some(true)]);
-        for flags in [0x00_u8, 0x04] {
+        for flags in [0x00_u8, 0x03] {
             gen.add(
                 &format!("bool_nullable_rb_f{flags}"),
                 "b: Boolean nullable [true, null, false, true]",
@@ -1310,16 +1295,16 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
                 &Input::Stream(whole.schema(), vec![p1.clone(), p2.clone()]),
             );
         }
-        gen.relate(
-            "different",
-            &["bool_nullable_rb_f0", "bool_nullable_stream_f0"],
-            "default layout: Boolean data is packed per batch, so batch splits change the hash (frozen)",
-        );
-        gen.relate(
-            "equal",
-            &["bool_nullable_rb_f4", "bool_nullable_stream_f4"],
-            "third switch: Boolean is batch-split independent",
-        );
+        for flags in [0x00_u8, 0x03] {
+            gen.relate(
+                "equal",
+                &[
+                    &format!("bool_nullable_rb_f{flags}"),
+                    &format!("bool_nullable_stream_f{flags}"),
+                ],
+                "v0.5 fix: Boolean columns are batch-split independent (v0.4.0 was not)",
+            );
+        }
     }
 
     // 12. Names: non-ASCII, control characters, quotes, a non-colliding '/'; container schemas.
@@ -1330,7 +1315,7 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
             Field::new("a\nb\u{1b}\t\"q\"\\", DataType::Int32, false),
             Field::new("km/h", DataType::Float64, false),
         ]));
-        for flags in [0x00_u8, 0x01, 0x07] {
+        for flags in [0x00_u8, 0x01, 0x03] {
             gen.add(
                 &format!("names_schema_f{flags}"),
                 "Column names: non-ASCII, CJK, control characters and quotes, and 'km/h' (a '/' that aliases nothing)",
@@ -1408,7 +1393,7 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
                 vec![col],
             )
         };
-        for flags in 0x00_u8..=0x07 {
+        for flags in 0x00_u8..=0x03 {
             let a = format!("list_kv_ab_rb_f{flags}");
             let b = format!("list_kv_ba_rb_f{flags}");
             gen.add(
@@ -1636,6 +1621,446 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
     }
 }
 
+/// Reviewed exception list for the v0.5 fix (ITL-898, developer ruling 2026-11-11): the
+/// committed fixture at commit 666821f predates the fix. Each entry is (id, the pre-fix hash);
+/// the guard lets exactly that committed value change (or disappear, for ids of the removed
+/// provisional third switch, flags 4–7). Once the fixed fixture is committed, no entry
+/// matches any committed value, so every later change aborts again.
+const V0_5_FIX_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "combo_ns_xy_f0",
+        "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
+    ),
+    (
+        "combo_sn_xy_f0",
+        "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
+    ),
+    (
+        "combo_ns_yx_f0",
+        "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
+    ),
+    (
+        "combo_sn_yx_f0",
+        "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
+    ),
+    (
+        "combo_ns_xy_f1",
+        "000001a12d9d439905c16338fec9ab33c757d3c9c11ed4ed14e8d618a699fbf170e40d",
+    ),
+    (
+        "combo_sn_xy_f1",
+        "0000016d9c52cf9a055df5764d2b52e57929f650d6ac8b92206eb7f67adb9b679cfd41",
+    ),
+    (
+        "combo_ns_yx_f1",
+        "000001a12d9d439905c16338fec9ab33c757d3c9c11ed4ed14e8d618a699fbf170e40d",
+    ),
+    (
+        "combo_sn_yx_f1",
+        "0000016d9c52cf9a055df5764d2b52e57929f650d6ac8b92206eb7f67adb9b679cfd41",
+    ),
+    (
+        "combo_ns_xy_f2",
+        "000001f3338aeec6740e360c7919ed1527d3a180d721611dbe2573fdfdafb01c250b93",
+    ),
+    (
+        "combo_sn_xy_f2",
+        "000001f3338aeec6740e360c7919ed1527d3a180d721611dbe2573fdfdafb01c250b93",
+    ),
+    (
+        "combo_ns_yx_f2",
+        "000001ce00ff6234af4635713dbc8ef6ed4acc6f751e2153fca3fd292e9d7bf20a6a28",
+    ),
+    (
+        "combo_sn_yx_f2",
+        "000001ce00ff6234af4635713dbc8ef6ed4acc6f751e2153fca3fd292e9d7bf20a6a28",
+    ),
+    (
+        "combo_ns_xy_f3",
+        "00000157528aa46dc70002df3ac22328918d1128fdad6b3fb0f428b944214ff283ec1f",
+    ),
+    (
+        "combo_sn_xy_f3",
+        "000001bbbb6e0038be6938efa52f5b1cd8107f54d7db033790b27d5f9068b852efec9f",
+    ),
+    (
+        "combo_ns_yx_f3",
+        "0000018ad68d9e117c5551e8bddf182148c7f4873d14ea322df73dfe52ea6ef8be26da",
+    ),
+    (
+        "combo_sn_yx_f3",
+        "0000018484372d6f9b79b7e2dd09a4574784f5d16d8cd32c8e9f5d806d7961ba15e0f6",
+    ),
+    (
+        "list_struct_ab_rb_f0",
+        "000001ef7a82cdbf533f8f10c07b716c56be4aa9959fa0a3542ccd15baf974a04feafb",
+    ),
+    (
+        "list_struct_ba_rb_f0",
+        "000001ef7a82cdbf533f8f10c07b716c56be4aa9959fa0a3542ccd15baf974a04feafb",
+    ),
+    (
+        "large_list_struct_ab_rb_f0",
+        "000001ef7a82cdbf533f8f10c07b716c56be4aa9959fa0a3542ccd15baf974a04feafb",
+    ),
+    (
+        "list_struct_ab_rb_f2",
+        "00000174b0ee3721df257940875351a9d9a639b5422637c6e83725d0f346ae5cc38a37",
+    ),
+    (
+        "list_struct_ba_rb_f2",
+        "000001098bdb016a9ef1086c264d7d6dc16e42d30b82cb6b44a194545f2262dee91101",
+    ),
+    (
+        "large_list_struct_ab_rb_f2",
+        "00000174b0ee3721df257940875351a9d9a639b5422637c6e83725d0f346ae5cc38a37",
+    ),
+    (
+        "nv_null_struct_rb_f0",
+        "00000103d480f6459069c661bb0e93923fe8cfe505cf8d7daf363bef0d9cd7552295c9",
+    ),
+    (
+        "nv_null_fields_rb_f0",
+        "00000103d480f6459069c661bb0e93923fe8cfe505cf8d7daf363bef0d9cd7552295c9",
+    ),
+    (
+        "nv_rows3_rb_f0",
+        "000001480a4649266dce9eb73e48072e37598caafe7be4cd92549920cfbbe2a7f9dd0a",
+    ),
+    (
+        "nv_rows2_rb_f0",
+        "000001480a4649266dce9eb73e48072e37598caafe7be4cd92549920cfbbe2a7f9dd0a",
+    ),
+    (
+        "nv_list_list_1row_rb_f0",
+        "000001cdc413731107ace52443c76e11051f1ef8b1bd98b81bfafa1e4800917d813006",
+    ),
+    (
+        "nv_list_list_2rows_rb_f0",
+        "000001cdc413731107ace52443c76e11051f1ef8b1bd98b81bfafa1e4800917d813006",
+    ),
+    (
+        "nv_list_null_elem_rb_f0",
+        "0000017d4c97792f67c22b08676bd80a9ba94f5630905facc4455b7e90de966b5286d6",
+    ),
+    (
+        "nv_list_null_fields_elem_rb_f0",
+        "0000017d4c97792f67c22b08676bd80a9ba94f5630905facc4455b7e90de966b5286d6",
+    ),
+    (
+        "nv_array_rows3_f0",
+        "0000015797829374325d96463f52c24c6d2749c861585b7c77914b431971dead0d861a",
+    ),
+    (
+        "array_struct_xy_f0",
+        "0000014e329829b09545ca5b33545e37bb856b9e939568ed967b6dc7309674595ba0dd",
+    ),
+    (
+        "array_struct_yx_f0",
+        "0000014e329829b09545ca5b33545e37bb856b9e939568ed967b6dc7309674595ba0dd",
+    ),
+    (
+        "array_struct_xy_f2",
+        "000001e79c0ad382c937100b1dba1ae06a2c0b27be7f78cc72a4b37b9c3d0d87348098",
+    ),
+    (
+        "array_struct_yx_f2",
+        "0000015fe62c542a14a2b619eca6792dba8d93fa89a87176995a8b5ae6462a8da51788",
+    ),
+    (
+        "array_list_struct_f2",
+        "00000183624352b7ebacda7b8c3a3e8a2e51561b694c3835b8468e5a9fcfac3d488c5b",
+    ),
+    (
+        "bool_3rows_rb_f0",
+        "000001fdfad32e7d7dbc6dc064b22c955e4606083098ab660970559b57a58bab619a31",
+    ),
+    (
+        "bool_array_2_f0",
+        "000001bfbf7b19b3c1de85d67ca1a1544c15adaf58ab9fe554ca2ad83967be3a24e005",
+    ),
+    (
+        "bool_nullable_rb_f0",
+        "0000012374ef8a63a8cfe593283ae0336f8d9ea5a84c534655acd6eff15636812d388b",
+    ),
+    (
+        "bool_nullable_stream_f0",
+        "000001185dc35a80c8f2e12d34ceaa7062f09b6edbba7131bd7298752debea7e9c9d04",
+    ),
+    (
+        "list_kv_ab_rb_f0",
+        "000001622d311ff5b38c734946fffc9088f1dc99bfe8e0cb04ccfda0e420aa8914f4dd",
+    ),
+    (
+        "list_kv_ba_rb_f0",
+        "0000015dd41853de5c821a2f13436e7d1886bb606be477024b795d0993cf00f55df2b5",
+    ),
+    (
+        "list_kv_ab_rb_f1",
+        "0000013262951dd2bd0d5816a27db1b0dbe6baf6fd321960bdbca93eb77424120754d4",
+    ),
+    (
+        "list_kv_ba_rb_f1",
+        "000001b732bdeb1adbe10736db0d382ae346bff3579bcf0c0f726c36097c05621a21ef",
+    ),
+    (
+        "list_kv_ab_rb_f2",
+        "000001e3e2ab9ce5627462a6478b88358f11d9e830f9fe0a6e93caea1d99c074bd4ae1",
+    ),
+    (
+        "list_kv_ba_rb_f2",
+        "000001934aae7c67907dfb8d81e9065d5882577878dbd6fb9e45a16b70db7a572fe963",
+    ),
+    (
+        "list_kv_ab_rb_f3",
+        "000001cc01e2e14642c75fa87a20386fffbc6cbf768573f83746c77236dcfc59ecf72f",
+    ),
+    (
+        "list_kv_ba_rb_f3",
+        "000001888c32dcb51501e91305f2b10e384fb4b64f38051fde6ae198a2e354a075e649",
+    ),
+    (
+        "one_col_rb_f4",
+        "0000017b8433e7bd2c431a74138d9935ee6d619c001af4f2e4e128c35c60dbdb53c70b",
+    ),
+    (
+        "one_col_schema_f4",
+        "0000017022b81e60e4a1dba9ec4602a4976a0dea50f490c916d0ce01e697ebcf9069ee",
+    ),
+    (
+        "one_col_array_f4",
+        "0000019e3adff54fa94dec7e5d72a37b3d7b1f8153afedd28032b59997d2ba47c51db0",
+    ),
+    (
+        "one_col_rb_f5",
+        "000001c38897ca9f720d18fb37eba87e4b28765a1e664b92764a914590130131816bd2",
+    ),
+    (
+        "one_col_schema_f5",
+        "000001d90f32c33eaaa8b3c3c51f2cf33ff920ca09015eeb50d98727a556765a83bd3e",
+    ),
+    (
+        "one_col_array_f5",
+        "0000016add16fe46328698a1f252768018a01aa8eab9eacef5adaf602c67fa4196f869",
+    ),
+    (
+        "one_col_rb_f6",
+        "000001dbbf891eed1bf9ef6a93202984a39deb5c993b7481cd734eba54878bce23e6f1",
+    ),
+    (
+        "one_col_schema_f6",
+        "0000018996061e12067c82279f8c5f08d3defe8ad2f9509c6701416a7b75055dcf0d95",
+    ),
+    (
+        "one_col_array_f6",
+        "000001973166b6e70cba833de35adaed48af4416d986c5b411196e4b5a1951259119c7",
+    ),
+    (
+        "one_col_rb_f7",
+        "00000165a886e87aaa8efd06668bc6bb3f154d0aad098cc2f301eaf45150d1bacb15ca",
+    ),
+    (
+        "one_col_schema_f7",
+        "0000010da7daf6e5c269dcc172b9756942366d3ed59d809ed79f0a8c961c21a64ba581",
+    ),
+    (
+        "one_col_array_f7",
+        "0000016135b88789127c04f395b05ffd47ceac8ed34829f9bb952ad5e5f4e17c881394",
+    ),
+    (
+        "plain_schema_f7_im0",
+        "0000012e5ca80a107600a263f4ae5362e7be8f5531dc190fb745134eeb99b5dd29cf42",
+    ),
+    (
+        "plain_schema_f7_im1",
+        "0000012e5ca80a107600a263f4ae5362e7be8f5531dc190fb745134eeb99b5dd29cf42",
+    ),
+    (
+        "meta_schema_f7_im1",
+        "0000015a690f2487025a0de8162d8c5eaa4a7684991819b210b7726f83f3249a34b22f",
+    ),
+    (
+        "nv_null_struct_rb_f4",
+        "000001bac1fd3395c1558237b83d1058ddfe0ed147777235b268f915d0db961d5d5a92",
+    ),
+    (
+        "nv_null_fields_rb_f4",
+        "0000013c71bf0f16c580e51fecfe6a319bcabf8726c971c7dae68aadabfae3a2d463ba",
+    ),
+    (
+        "nv_rows3_rb_f4",
+        "000001ca0b11291a17b3a74df4d3e07e598df6254f18bea48d6de658bad6ce0764ed2c",
+    ),
+    (
+        "nv_rows2_rb_f4",
+        "0000014938f09116f0bd0ba424d14c2147fba37f50156ea6a8a16ad6491e7a19fd7b4e",
+    ),
+    (
+        "nv_list_list_1row_rb_f4",
+        "000001a12b9454ccc5aba3531a3402e2b245afa5c13aeb7e34760893614025460c3510",
+    ),
+    (
+        "nv_list_list_2rows_rb_f4",
+        "000001024d511e3ecf756438dae91a23fc5129a7f075aa30be86f6605370b076567c95",
+    ),
+    (
+        "nv_list_null_elem_rb_f4",
+        "0000014be0fee254d85051c22a6be84af446096947a5a04b993571fdbb6ff1967f3113",
+    ),
+    (
+        "nv_list_null_fields_elem_rb_f4",
+        "00000110b24fe51f19bcd11887cc0b00514da0939a1f4e6465852f5b67c2ba5ee8d4fe",
+    ),
+    (
+        "nv_null_struct_rb_f7",
+        "00000178a32a80015616d24eec5c25eca12bbea6685c04bde437c1f1575dfa1afafda3",
+    ),
+    (
+        "nv_null_fields_rb_f7",
+        "000001196f0d60192e3fd1b9cab06112c76238fdb91f17e489099e71551c29faeef270",
+    ),
+    (
+        "nv_rows3_rb_f7",
+        "00000198afb787b75ff51607154462604f6c5a87c59c8b3d559d40ea3633f750cb2794",
+    ),
+    (
+        "nv_rows2_rb_f7",
+        "000001323fc9c3c1bcd52c819613c152c5f57af4249574a11a1cec936827576f3e507a",
+    ),
+    (
+        "nv_list_list_1row_rb_f7",
+        "0000018c0df99d4e6f5a1e71c6dfcbe32a9812cd8c2027ec6d83d699e52aeff7c6b0bb",
+    ),
+    (
+        "nv_list_list_2rows_rb_f7",
+        "000001fbafc458f570526d42a9a81f3ecd8e5e15ca485efab0e1a96a4d84c3c2e2d1c7",
+    ),
+    (
+        "nv_list_null_elem_rb_f7",
+        "00000183c17f4fc47ee0bae5018422ed0d792ceeb5d1d8bedec85cc476996b96056a00",
+    ),
+    (
+        "nv_list_null_fields_elem_rb_f7",
+        "000001002591d3d2c26cc8b54288f76f17955ee1563be257ed6ff1671e6511c0481641",
+    ),
+    (
+        "nv_nested_structs_rb_f4",
+        "00000142749678d54b57f5edea35b4cdf05ee82198181e33812ce1b9dea23f3b0b5c71",
+    ),
+    (
+        "nv_nested_structs_rb_f7",
+        "00000137e9864f3f6ecc066f6e970390de95773bf728c664df3ce23b9f5093e038b2a8",
+    ),
+    (
+        "nv_rows3_stream_f4",
+        "000001ca0b11291a17b3a74df4d3e07e598df6254f18bea48d6de658bad6ce0764ed2c",
+    ),
+    (
+        "nv_array_rows3_f4",
+        "0000012fb1af7ca813fefcbd19e1f6d01edc842e1729b0531d2e1bee183692647d4173",
+    ),
+    (
+        "nv_array_rows2_f4",
+        "000001db8ad691e48339ba83ece8c4d4aa7a720788c0e415edbfba4d8ad51d2fc0a692",
+    ),
+    (
+        "phys_dict_rb_f7",
+        "000001abd90a756d2b9b699859c501edf37b6dcfc31e009c4e4191d4b0e087a65f7575",
+    ),
+    (
+        "phys_utf8_rb_f7",
+        "000001abd90a756d2b9b699859c501edf37b6dcfc31e009c4e4191d4b0e087a65f7575",
+    ),
+    (
+        "phys_large_utf8_rb_f7",
+        "000001abd90a756d2b9b699859c501edf37b6dcfc31e009c4e4191d4b0e087a65f7575",
+    ),
+    (
+        "array_struct_xy_f6",
+        "000001ec888add39caf7a9dedd6ec56bfa446143f3f2abf03848fbf82f61af9cda7215",
+    ),
+    (
+        "array_struct_yx_f6",
+        "0000015735e773b173cc5fe0e1e882674f130575b03e4133667062a777592ac31c5faf",
+    ),
+    (
+        "array_list_struct_f7",
+        "00000106b91fc017c699ca97737d4bc78d5f52525b6406dd3efecb46b902e928731e4e",
+    ),
+    (
+        "combo_sn_yx_3rows_rb_f7",
+        "000001d6b4594d17ae3482c202877531923bb9212bcf8389fb7597b173dc5796079929",
+    ),
+    (
+        "combo_sn_yx_3rows_stream_f7",
+        "000001d6b4594d17ae3482c202877531923bb9212bcf8389fb7597b173dc5796079929",
+    ),
+    (
+        "bool_1row_rb_f4",
+        "000001e392174345825efe12d76a8cf613d226902dcc594342c537f9d81c528b137531",
+    ),
+    (
+        "bool_3rows_rb_f4",
+        "000001b5597cc0ee4c9dc458c9e06baa947609cd923db09dacbe2378f33aaf6c690f14",
+    ),
+    (
+        "bool_array_1_f4",
+        "0000014e102943402882cc417bc1d710b20cae5f60c411ccea8c77bdc020a884ca1236",
+    ),
+    (
+        "bool_array_2_f4",
+        "0000019f574770ec94ceca20efe47c91263b67b642a106bc40d27345e22d1e72dd2423",
+    ),
+    (
+        "bool_nullable_rb_f4",
+        "000001f38e97f8e2fe332a95bf129fbc7bd02bf809c7ff2ad345cbed6045ec3085ddf4",
+    ),
+    (
+        "bool_nullable_stream_f4",
+        "000001f38e97f8e2fe332a95bf129fbc7bd02bf809c7ff2ad345cbed6045ec3085ddf4",
+    ),
+    (
+        "names_schema_f7",
+        "00000158f3d79b469fa3908f93bf0521948e82d2c742a631debb55abfe87d98aa75ae5",
+    ),
+    (
+        "names_array_struct_f7",
+        "0000011791c000afa0ce2c897e5e6635537d691efe7e7bc7ae6be6589005f8aa805034",
+    ),
+    (
+        "list_kv_ab_rb_f4",
+        "000001e7d3f89675621f5a4156f6f078abae23727db8fc317f1cac71e1984e21992ce6",
+    ),
+    (
+        "list_kv_ba_rb_f4",
+        "000001ed916278281456016a7a4464aa609718917bb3241fc3dfdab5aa9b195b2b59b6",
+    ),
+    (
+        "list_kv_ab_rb_f5",
+        "0000010aebc959d788c3dc406624ce5bc8e8fcd8075b1548cffc3591e1458ff810a49a",
+    ),
+    (
+        "list_kv_ba_rb_f5",
+        "00000149081383d6607d80608e51b8b98ef17851e7dd4812a7eef4338767a7f1dfc13a",
+    ),
+    (
+        "list_kv_ab_rb_f6",
+        "000001748fdb72d4caf3a1c6801f9e100aa1eec834ece90a80bf9c9ba22dce25c9d006",
+    ),
+    (
+        "list_kv_ba_rb_f6",
+        "000001756f035b80282125cf229c8aa85c8d3a57f86d03bde234f60d97c58fce63cab0",
+    ),
+    (
+        "list_kv_ab_rb_f7",
+        "00000168c7045a867d7ad44e355b2dd396eeb6a5eaa0755ab51b0e06be7a3fb9ba498f",
+    ),
+    (
+        "list_kv_ba_rb_f7",
+        "00000165094d74353dc990af3bf495d67dbef64b278e757fed267583a7ce44f7d6088d",
+    ),
+];
+
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
 fn check_append_only(vectors: &[GoldenVector]) {
     let Ok(raw) = fs::read_to_string(FIXTURE_PATH) else {
@@ -1643,6 +2068,9 @@ fn check_append_only(vectors: &[GoldenVector]) {
     };
     let existing: ExistingFixture = serde_json::from_str(&raw).unwrap();
     for old in &existing.vectors {
+        if V0_5_FIX_EXCEPTIONS.contains(&(old.id.as_str(), old.expected_hash.as_str())) {
+            continue;
+        }
         match vectors.iter().find(|v| v.id == old.id) {
             None => panic!(
                 "append-only guard: committed vector '{}' is no longer generated",

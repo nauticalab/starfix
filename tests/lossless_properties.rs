@@ -11,15 +11,13 @@
 //! 4. empty vs absent: a zero-row batch equals no batch, and (nullable) an empty / zero value
 //!    differs from a null.
 //!
-//! `third_switch_is_lossless` asserts all four for the third switch (flag `0x04`, and with all
-//! options on). `report_all_modes` (ignored; run with `--ignored --nocapture`) prints the table
-//! for the default mode too.
+//! `every_mode_is_lossless` asserts all four in the default mode and with every combination of
+//! the order options (v0.5 fixes, byte-layout spec Section 10; v0.4.0 failed 68 of these cases).
 
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
     #![expect(clippy::indexing_slicing, reason = "Okay in test")]
-    #![expect(clippy::print_stdout, reason = "Okay in test: report table")]
     #![expect(
         clippy::cast_sign_loss,
         clippy::cast_precision_loss,
@@ -51,7 +49,6 @@ mod tests {
             include_metadata: false,
             ordered_columns: flags & 0x01 != 0,
             ordered_struct_fields: flags & 0x02 != 0,
-            nested_validity: flags & 0x04 != 0,
         }
     }
 
@@ -380,8 +377,8 @@ mod tests {
     }
 
     #[test]
-    fn third_switch_is_lossless() {
-        for flags in [0x04_u8, 0x07] {
+    fn every_mode_is_lossless() {
+        for flags in 0x00_u8..=0x03 {
             let rows = sweep(flags);
             let failed = failures(&rows);
             assert!(
@@ -391,23 +388,6 @@ mod tests {
                 rows.len(),
                 failed.join("\n")
             );
-        }
-    }
-
-    #[test]
-    #[ignore = "report only: cargo test --test lossless_properties -- --ignored --nocapture"]
-    fn report_all_modes() {
-        for flags in [0x00_u8, 0x04, 0x07] {
-            let rows = sweep(flags);
-            let failed = failures(&rows);
-            println!(
-                "== flags {flags:#04x}: {} of {} cases fail",
-                failed.len(),
-                rows.len()
-            );
-            for f in failed {
-                println!("  {f}");
-            }
         }
     }
 }

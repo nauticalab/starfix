@@ -219,7 +219,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&bool_array));
         assert_eq!(
             hash,
-            "00000185a9c99eba7bcfd9b14fd529b9534f2289319779270aa4a072f117cf90a6ac8b"
+            // v0.5 fix (ITL-898, Boolean count): v0.4.0 value was
+            // 00000185a9c99eba7bcfd9b14fd529b9534f2289319779270aa4a072f117cf90a6ac8b
+            "00000157c1571d649fdd7832b77ae7418f301da4f45d962a0414765c0b98755249589e"
         );
     }
 
@@ -666,7 +668,9 @@ mod tests {
         digester.update(&batch2);
         assert_eq!(
             encode(digester.finalize()),
-            "0000019f5fa370d315a4b4f2314be7b7284a0549b70ad4e21e584fdebf441ad02f44f0"
+            // v0.5 fix (ITL-898, Boolean column "flags"): v0.4.0 value was
+            // 0000019f5fa370d315a4b4f2314be7b7284a0549b70ad4e21e584fdebf441ad02f44f0
+            "00000199749ab1f9e7c709c9526309a37c7b7a7373000c8d6883da5375cec84aebfa1b"
         );
     }
 

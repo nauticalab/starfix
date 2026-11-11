@@ -139,11 +139,11 @@ mod tests {
         let bit_count: u64 = 4;
         let validity_word: u8 = 0b1101; // = 13
 
-        // ── Data bits (Lsb0 packed, valid values only) ───────────────────
-        // Valid values: [true, false, true] → 3 bits
-        // Lsb0: bit0=1(true), bit1=0(false), bit2=1(true) → 0b101 = 0x05
+        // ── Data: one byte per valid value ───────────────────────────────
+        // Valid values: [true, false, true] → 01 00 01
+        // (v0.5 fix, ITL-898: v0.4.0 bit-packed them into 0x05, losing the count)
         let mut data_digest = Sha256::new();
-        data_digest.update([0x05_u8]);
+        data_digest.update([0x01_u8, 0x00, 0x01]);
         let data_finalized = data_digest.finalize();
 
         // ── Final combination ────────────────────────────────────────────
@@ -691,9 +691,10 @@ mod tests {
         data_a.update(2_i32.to_le_bytes());
 
         // ── Entry "b" (Boolean, non-nullable) ────────────────────────────
-        // Values: [true, false] → Lsb0: bit0=1(true), bit1=0(false) → 0x01
+        // Values: [true, false] → one byte per value: 01 00
+        // (v0.5 fix, ITL-898: v0.4.0 bit-packed them into 0x01)
         let mut data_b = Sha256::new();
-        data_b.update([0x01_u8]);
+        data_b.update([0x01_u8, 0x00]);
 
         // ── Final combination ────────────────────────────────────────────
         // type_json → finalize_digest("a") → finalize_digest("b")
@@ -747,13 +748,19 @@ mod tests {
         let type_json = r#"{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"LargeUtf8","name":"b","nullable":false}]}"#;
 
         // ── Decomposition ────────────────────────────────────────────────
-        // Struct is transparent: no BTreeMap entry. Struct-level nulls
-        // [1, 0, 1] are AND-propagated to children for data hashing.
+        // The nullable struct gets a validity-only entry at its path "" (v0.5 fix, ITL-898:
+        // v0.4.0 had no struct entry, so the null row vanished). Struct-level nulls
+        // [1, 0, 1] are also AND-propagated to children for data hashing.
         // Children "a" and "b" are non-nullable per their Field definitions,
         // so their entries have no null_bits — but null rows are skipped
         // in the data stream.
         //
-        // BTreeMap entries (sorted by key): "a", "b"
+        // BTreeMap entries (sorted by key): "", "a", "b"
+
+        // ── Entry "" (struct validity) ───────────────────────────────────
+        // [valid, null, valid] → 3 bits, Lsb0 word 0b101
+        let struct_bit_count: u64 = 3;
+        let struct_validity_word: u8 = 0b101;
 
         // ── Entry "a" (Int32, non-nullable) ──────────────────────────────
         // Struct nulls propagated: rows 0,2 valid → data = [10, 30]
@@ -776,6 +783,8 @@ mod tests {
         // Each entry: non-nullable → no null_bits, no structural, just data.finalize()
         let mut final_digest = Sha256::new();
         final_digest.update(type_json.as_bytes());
+        final_digest.update(struct_bit_count.to_le_bytes());
+        final_digest.update(struct_validity_word.to_le_bytes());
         final_digest.update(data_a.finalize());
         final_digest.update(data_b.finalize());
 

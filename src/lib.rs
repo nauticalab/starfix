@@ -8,7 +8,13 @@ use sha2::Sha256;
 
 use crate::arrow_digester_core::ArrowDigesterCore;
 
-const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Hash format version 0.0.1 — independent of crate version
+/// Hash format version prefix — independent of the crate version.
+///
+/// OPEN DECISION (ITL-898, the developer's): v0.5 fixes information losses of the v0.4.0 layout.
+/// Variant (a): keep `0.0.1`; hashes of unaffected types stay byte-identical to v0.4.0 and only
+/// affected inputs move. Variant (b): bump to `0.0.2` so every hash moves and old and new hashes
+/// can always be told apart. Switching is this one line: `[0_u8, 0_u8, 2_u8]`.
+pub(crate) const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8];
 
 /// Configuration for the Arrow hasher.
 ///
@@ -21,14 +27,9 @@ const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Hash format version 0.0.1 
 /// let config = HasherConfig { ordered_columns: true, ..HasherConfig::default() };
 /// ```
 ///
-/// When any of `ordered_columns`, `ordered_struct_fields` or `nested_validity` is `true`, the
-/// hash is domain separated from every other combination of those three options (see
-/// `docs/byte-layout-spec.md`, Section 9).
+/// When `ordered_columns` or `ordered_struct_fields` is `true`, the hash is domain separated from
+/// every other combination of those options (see `docs/byte-layout-spec.md`, Section 9).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "Independent on/off hashing options, mirrored one-to-one by Python keyword arguments"
-)]
 pub struct HasherConfig {
     /// When `true`, schema-level and per-field Arrow metadata are included in the hash.
     /// Default is `false`, preserving pre-v0.1.0 hash stability.
@@ -40,21 +41,13 @@ pub struct HasherConfig {
     /// (struct in struct, list, large list, fixed-size list, map, dictionary value type).
     /// Default is `false`: reordering struct fields does not change the hash.
     pub ordered_struct_fields: bool,
-    /// When `true`, the lossless layout is used (the name is provisional): nullable nested values
-    /// record their own validity (a null struct is distinguished from a struct whose fields are
-    /// all null, null struct rows are counted even when the struct's fields are non-nullable, a
-    /// list whose elements are nullable lists or structs keeps its own lengths and element
-    /// validity), and Boolean values are hashed one byte each (counted, batch-split
-    /// independent). Default is `false` (v0.4.0 layout).
-    pub nested_validity: bool,
 }
 
 /// Maps `ArrowDigesterCore` to a SHA-256 digester with version prefix.
 ///
 /// # Panics
 ///
-/// Besides unsupported data types, when any of `ordered_columns`, `ordered_struct_fields` or
-/// `nested_validity` is on, every entry point panics on a schema (or array type) with two fields
+/// Besides unsupported data types, when `ordered_columns` or `ordered_struct_fields` is on, every entry point panics on a schema (or array type) with two fields
 /// at the same path (duplicate names, or a name containing `/` that aliases a nested field), and
 /// `update` panics on a batch whose schema does not match the digester's under its options
 /// (e.g. a different column order with `ordered_columns`).
