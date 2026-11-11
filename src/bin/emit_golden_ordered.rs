@@ -213,6 +213,7 @@ impl Builder {
         });
     }
 
+    #[expect(clippy::panic, reason = "CLI tool — invalid fixture definitions abort")]
     fn relate(&mut self, kind: &str, ids: &[&str], why: &str) {
         let hashes: Vec<&str> = ids
             .iter()
@@ -220,7 +221,7 @@ impl Builder {
                 self.vectors
                     .iter()
                     .find(|v| v.id == *id)
-                    .unwrap_or_else(|| unreachable_id(id))
+                    .unwrap_or_else(|| panic!("relation refers to unknown vector id {id}"))
                     .expected_hash
                     .as_str()
             })
@@ -232,7 +233,7 @@ impl Builder {
                 distinct.len() == hashes.len(),
                 "relation different violated: {ids:?}"
             ),
-            other => unreachable_kind(other),
+            other => panic!("unknown relation kind {other}"),
         }
         self.relations.push(Relation {
             kind: kind.to_owned(),
@@ -240,16 +241,6 @@ impl Builder {
             why: why.to_owned(),
         });
     }
-}
-
-#[expect(clippy::panic, reason = "CLI tool — invalid fixture definitions abort")]
-fn unreachable_id(id: &str) -> ! {
-    panic!("relation refers to unknown vector id {id}")
-}
-
-#[expect(clippy::panic, reason = "CLI tool — invalid fixture definitions abort")]
-fn unreachable_kind(kind: &str) -> ! {
-    panic!("unknown relation kind {kind}")
 }
 
 // ── data builders ───────────────────────────────────────────────────────────
