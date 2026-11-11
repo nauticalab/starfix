@@ -106,6 +106,26 @@ List/LargeList, Struct, and Dictionary of any of these. Schemas of `Null`, `Fixe
 hash as their storage type; with `include_metadata`, their `ARROW:extension:*` metadata counts
 too (an absent `ARROW:extension:metadata` equals an empty one).
 
+## Legacy 0.4 mode (format 1)
+
+`starfix::legacy::v0_4` reproduces the output of starfix **0.4.0** (Rust) byte for byte, with
+the same API as 0.4.0 (`ArrowDigester`, `HasherConfig { include_metadata }`). It exists **only to
+read or match data hashed by starfix 0.4.x** — for example to find stored data under its old
+hash. **Never hash new data with it.** It is frozen: never fixed, never extended (no order
+options), and it keeps every format-1 defect listed below. Migrating code that must keep
+producing 0.4 hashes changes one import:
+
+```rust
+use starfix::legacy::v0_4::{ArrowDigester, HasherConfig}; // hash format 1, as starfix 0.4.0
+```
+
+Exactness is tested against the v0.4.0 test suite and golden files (restored as
+`tests/legacy_v0_4_*.rs`), the format-1 side of `tests/golden/format1_to_format2.json`, and a
+differential test against the published starfix 0.4.0 crate; its source files are pinned by
+`tests/legacy_v0_4_freeze.rs`. It reproduces **Rust** starfix 0.4.0; starfix-python's
+`starfix.legacy.v0_4` reproduces **starfix-python** 0.4.0, which differed from Rust 0.4.0 on a
+few inputs (see the divergence table in starfix-python's documentation).
+
 ## Hash format history
 
 - **Format 2** (`00 00 02`, starfix 0.5): the current format.
@@ -115,8 +135,8 @@ too (an absent `ARROW:extension:metadata` equals an empty one).
   depended on batch boundaries); a null struct equalled a struct with all-null fields and null
   struct rows vanished under non-nullable fields; a list whose element is a nullable list lost
   its own lengths; a list of nullable structs did not distinguish a null element; and the row
-  count of zero-column tables and empty structs was not hashed. Format-1 hashes can still be
-  computed with starfix 0.4. `tests/golden/format1_to_format2.json` maps every format-1 golden
+  count of zero-column tables and empty structs was not hashed. Format-1 hashes are computed by
+  the legacy 0.4 mode (`starfix::legacy::v0_4`, above). `tests/golden/format1_to_format2.json` maps every format-1 golden
   value of this repository to its format-2 value.
 
 See `docs/byte-layout-spec.md`, Section 10, and the [CHANGELOG](CHANGELOG.md).

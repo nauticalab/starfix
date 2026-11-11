@@ -431,7 +431,8 @@ affected):
 
 A search over 420 nested column types found 268 lossy in format 1; a 320-case leaf-type sweep
 found 68 failures. Both find none in format 2 (`tests/nested_family.rs`,
-`tests/lossless_properties.rs`). Format-1 hashes can be computed with starfix 0.4.
+`tests/lossless_properties.rs`). Format-1 hashes are computed by the frozen legacy module `starfix::legacy::v0_4` (Rust 0.4.0
+byte for byte) or by starfix 0.4.
 
 **Format 2** (`00 00 02`): this document.
 

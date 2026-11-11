@@ -214,4 +214,50 @@ mod tests {
             }
         }
     }
+
+    /// The format-1 side of the record, reproduced by the frozen legacy 0.4 mode from the same
+    /// inputs (every entry that has an input; the other entries are pinned by the restored
+    /// v0.4.0 test files `tests/legacy_v0_4_*.rs`).
+    #[test]
+    fn format1_side_reproduced_by_legacy_v0_4() {
+        use starfix::legacy::v0_4 as legacy;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/golden/format1_to_format2.json"
+        );
+        let map: FormatMap =
+            serde_json::from_str(&fs::read_to_string(path).expect("record")).expect("parse");
+        let fixture = load_fixture();
+        let by_id: HashMap<&str, &GoldenVector> =
+            fixture.vectors.iter().map(|v| (v.id.as_str(), v)).collect();
+        let mut checked = 0_usize;
+        for e in &map.entries {
+            let Some(vector) = &e.format2_vector else {
+                continue;
+            };
+            let v = by_id.get(vector.as_str()).expect("format-2 vector");
+            assert!(!v.ordered_columns && !v.ordered_struct_fields, "{}", e.id);
+            let config = legacy::HasherConfig {
+                include_metadata: v.include_metadata,
+            };
+            let (schema, batches) = decode_ipc(&v.ipc_b64);
+            let hash = match v.method.as_str() {
+                "hash_schema" => legacy::ArrowDigester::hash_schema(&schema, config),
+                "hash_record_batch" | "hash_stream" => {
+                    let mut d = legacy::ArrowDigester::new(&schema, config);
+                    for b in &batches {
+                        d.update(b);
+                    }
+                    d.finalize()
+                }
+                "hash_array" => legacy::ArrowDigester::hash_array(
+                    batches.first().expect("one batch").column(0).as_ref(),
+                ),
+                other => panic!("{}: unknown method {other}", e.id),
+            };
+            assert_eq!(encode(hash), e.format1_hash, "{}: format-1 value", e.id);
+            checked += 1;
+        }
+        assert!(checked >= 177, "only {checked} entries checked");
+    }
 }

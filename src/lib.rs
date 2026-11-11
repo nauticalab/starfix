@@ -112,6 +112,7 @@ impl ArrowDigester {
 }
 
 pub(crate) mod arrow_digester_core;
+pub mod legacy;
 pub mod pyarrow;
 
 // Write a test to check that int32 digest is consistent

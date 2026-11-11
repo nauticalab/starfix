@@ -2,6 +2,11 @@
 
 **Issue:** ITL-898
 **Date:** 2026-11-11
+> **Update (2026-11-11, developer decision):** S2 is superseded: the 0.4 behaviour is kept as a
+> clearly labelled, frozen legacy module `starfix::legacy::v0_4` (v0.4.0 source verbatim), with
+> the restored v0.4.0 tests, the format-1 side of `format1_to_format2.json` and a differential
+> test against the published 0.4.0 crate. Format 2 itself is unchanged.
+
 **Status:** Proposal for the developer's approval. Nothing below is implemented beyond what
 `2026-11-11-ordered-hashing-design.md` already describes; golden files are regenerated only
 after approval.

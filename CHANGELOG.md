@@ -5,8 +5,9 @@
 ### Changed — hash format 2 (every hash changes)
 
 The hash format version prefix is now `00 00 02` (format 2); format 1 (`00 00 01`) was produced
-by starfix 0.4 and earlier. **Every hash changes**, and a format-1 hash can always be told from
-a format-2 hash by its first three bytes. `tests/golden/format1_to_format2.json` maps every
+by starfix 0.4 and earlier. **Every hash changes** with the default (main) API, and a format-1
+hash can always be told from a format-2 hash by its first three bytes. The 0.4 behaviour stays
+available as `starfix::legacy::v0_4`. `tests/golden/format1_to_format2.json` maps every
 format-1 golden value of this repository to its format-2 value. Specification:
 `docs/byte-layout-spec.md` (format history in Section 10).
 
@@ -25,6 +26,11 @@ These inputs collided, or hashed differently depending on batch boundaries, in f
   hashed.
 
 ### Added
+
+- `starfix::legacy::v0_4`: the frozen **0.4 legacy mode**, reproducing starfix 0.4.0 (hash
+  format 1) byte for byte with the 0.4.0 API, only to read or match data hashed by 0.4.x. Never
+  use it for new data. Tested against the restored v0.4.0 tests, the format-1 golden values and
+  the published 0.4.0 crate.
 
 - `HasherConfig::ordered_columns` and `HasherConfig::ordered_struct_fields`: make column order
   and struct field order (at every depth) part of the hash. Default off.

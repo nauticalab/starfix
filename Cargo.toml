@@ -32,6 +32,9 @@ uniffi = { version = "0.30.0", features = ["cli", "tokio"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+# The released starfix 0.4.0, for the differential test of the legacy 0.4 mode
+# (tests/legacy_v0_4_differential.rs). Never used by the library.
+starfix_v0_4_release = { package = "starfix", version = "=0.4.0" }
 
 
 [[bin]]
