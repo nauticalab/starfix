@@ -62,10 +62,17 @@ mod tests {
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("failed to parse fixture: {e}"))
     }
 
-    /// Vectors holding nulls under null list values of a non-nullable element: valid for pyarrow,
-    /// but arrow-rs's IPC validation rejects them, so they are decoded without it.
-    const UNVALIDATED_VECTORS: [&str; 2] =
-        ["hidden_null_list_rb_f0", "hidden_null_large_list_rb_f0"];
+    /// Vectors holding nulls of a non-nullable field hidden under null list or fixed-size-list
+    /// values or null structs: valid for pyarrow, but arrow-rs's IPC validation rejects them, so
+    /// they are decoded without it.
+    const UNVALIDATED_VECTORS: [&str; 6] = [
+        "hidden_null_list_rb_f0",
+        "hidden_null_large_list_rb_f0",
+        "fsl_fsl_hidden_nulls_rb_f0",
+        "fsl_fsl_hidden_nulls_array_f0",
+        "fsl_struct_masked_nulls_rb_f0",
+        "fsl_struct2_masked_nulls_rb_f0",
+    ];
 
     fn decode_ipc(v: &GoldenVector) -> (SchemaRef, Vec<RecordBatch>) {
         let bytes = STANDARD.decode(&v.ipc_b64).unwrap();
@@ -280,12 +287,12 @@ mod tests {
     fn golden_fixture_count_floor() {
         let fixture = load_fixture();
         assert!(
-            fixture.vectors.len() >= 423,
+            fixture.vectors.len() >= 496,
             "{} vectors",
             fixture.vectors.len()
         );
         assert!(
-            fixture.relations.len() >= 114,
+            fixture.relations.len() >= 148,
             "{} relations",
             fixture.relations.len()
         );

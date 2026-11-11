@@ -8,6 +8,7 @@
 //! dictionaries a different key mapping with an unused entry. The two must always hash alike.
 
 #![expect(clippy::unwrap_used, reason = "Okay in test")]
+#![expect(clippy::indexing_slicing, reason = "Okay in test")]
 #![expect(
     clippy::arithmetic_side_effects,
     clippy::integer_division_remainder_used,
@@ -15,6 +16,7 @@
 )]
 
 use std::collections::BTreeSet;
+use std::iter::{repeat_n, repeat_with};
 use std::sync::Arc;
 
 use arrow::array::{
@@ -32,9 +34,9 @@ pub enum Kind {
     Dict,
     List,
     Struct,
-    /// `FixedSizeList<_, 2>`
+    /// `FixedSizeList<_, 2>`.
     Fsl2,
-    /// `FixedSizeList<_, 0>`
+    /// `FixedSizeList<_, 0>`.
     Fsl0,
     /// Dictionary-encoded values of the (non-nullable) child; nulls come from the keys.
     DictOf,
@@ -225,11 +227,11 @@ fn filler(node: &Node, alt: bool) -> Val {
     if node.nullable && !alt {
         return Val::Null;
     }
-    let non_null = vals(node).into_iter().filter(|v| !matches!(v, Val::Null));
+    let mut non_null = vals(node).into_iter().filter(|v| !matches!(v, Val::Null));
     if alt {
-        non_null.last().unwrap()
+        non_null.next_back().unwrap()
     } else {
-        non_null.into_iter().next().unwrap()
+        non_null.next().unwrap()
     }
 }
 
@@ -242,6 +244,7 @@ fn validity(rows: &[Val]) -> NullBuffer {
 }
 
 /// Build `rows` as an array of `node`; `alt` selects the second physical layout.
+#[expect(clippy::too_many_lines, reason = "one flat match arm per kind")]
 pub fn build(node: &Node, rows: &[Val], alt: bool) -> ArrayRef {
     let nulls = node.nullable.then(|| validity(rows));
     match node.kind {
@@ -293,18 +296,18 @@ pub fn build(node: &Node, rows: &[Val], alt: bool) -> ArrayRef {
         }
         Kind::Fsl2 | Kind::Fsl0 => {
             let c = child(node);
-            let size = if node.kind == Kind::Fsl2 { 2 } else { 0 };
+            let size: i32 = if node.kind == Kind::Fsl2 { 2 } else { 0 };
             let mut flat = Vec::new();
             for v in rows {
                 match v {
                     Val::L(items) => flat.extend(items.iter().cloned()),
-                    _ => flat.extend((0..size).map(|_| filler(c, alt))),
+                    _ => flat.extend(repeat_n(filler(c, alt), usize::try_from(size).unwrap())),
                 }
             }
             Arc::new(
                 FixedSizeListArray::try_new_with_length(
                     Arc::new(item_field(c)),
-                    i32::try_from(size).unwrap(),
+                    size,
                     build(c, &flat, alt),
                     nulls,
                     rows.len(),
@@ -374,7 +377,7 @@ pub fn row_sets(vs: &[Val]) -> Vec<Vec<Val>> {
         usize::try_from(state >> 33).unwrap() % vs.len()
     };
     for _ in 0..25 {
-        let row: Vec<Val> = (0..3).map(|_| vs.get(next()).unwrap().clone()).collect();
+        let row: Vec<Val> = repeat_with(|| vs[next()].clone()).take(3).collect();
         sets.push(row);
     }
     sets

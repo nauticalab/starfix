@@ -49,7 +49,10 @@ mod tests {
         v
     }
 
-    fn panics<F: FnOnce()>(f: F) -> bool {
+    fn panics<F>(f: F) -> bool
+    where
+        F: FnOnce(),
+    {
         catch_unwind(AssertUnwindSafe(f)).is_err()
     }
 
