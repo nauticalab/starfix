@@ -115,6 +115,9 @@ recursively; `FixedSizeBinary(0)` is supported). Schemas of `Null`, `FixedSizeLi
 hash as their storage type; with `include_metadata`, their `ARROW:extension:*` metadata counts
 too (an absent `ARROW:extension:metadata` equals an empty one).
 
+Performance: dictionary-encoded columns whose values are nested (struct or list) are hashed per
+row; plain nested columns and dictionaries of scalars and strings are unaffected.
+
 ## Legacy 0.4 mode (format 1)
 
 `starfix::legacy::v0_4` reproduces the output of starfix **0.4.0** (Rust) byte for byte, with

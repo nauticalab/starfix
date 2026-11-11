@@ -64,3 +64,8 @@ These inputs collided, or hashed differently depending on batch boundaries, in f
 
 - A panic when hashing a Boolean under a nullable struct at a byte-aligned array offset ≥ 8
   (present since 0.4).
+
+### Known limitations
+
+- Performance: dictionary-encoded columns whose values are nested (struct or list) are hashed
+  per row; plain nested columns and dictionaries of scalars and strings are unaffected.
