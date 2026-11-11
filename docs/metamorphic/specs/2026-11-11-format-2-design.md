@@ -127,7 +127,20 @@ No other gap found. pyarrow 14 cannot decode Decimal32/64 IPC (Python documents 
 
 ---
 
-## 5. Open questions for the developer
+## 5. Names not hashed, and extension types (added on request)
+
+Not hashed, each with an `equal` golden relation: the list / fixed-size-list element field
+name; the map entries, key and value field names (pyarrow renames them); the map entries
+field's metadata (pyarrow drops it); the dictionary index type and `ordered` flag.
+
+Extension types: Phase 1 hashes the storage type. With `include_metadata`, the field's metadata
+is hashed **including** `ARROW:extension:name` and `ARROW:extension:metadata` exactly as stored in
+the Arrow field metadata. pyarrow hides these two keys for registered extension types (e.g.
+`arrow.uuid`), so a pyarrow implementation re-adds them from `type.extension_name` and
+`type.__arrow_ext_serialize__()`. Golden vectors cover a registered (`arrow.uuid`) and an
+unregistered extension type, with and without `include_metadata`.
+
+## 6. Open questions for the developer
 
 1. Approve S1–S6 and A1–A4.
 2. Format-1 compatibility: no legacy mode in the crate (recommended), or keep one?
