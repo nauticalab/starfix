@@ -119,3 +119,33 @@ pub fn nested(shape: &str, large: bool, hidden: bool) -> ArrayRef {
         outer
     }
 }
+
+/// A null root struct masks a non-nullable leaf through valid, non-nullable structs.
+pub fn masked_struct(depth: usize, hidden: bool) -> ArrayRef {
+    let mut values: ArrayRef = Arc::new(Int32Array::from(if hidden {
+        vec![None, Some(7), None]
+    } else {
+        vec![Some(0), Some(7), Some(0)]
+    }));
+    for _ in 1..depth {
+        let field = Arc::new(Field::new("i", values.data_type().clone(), false));
+        let builder = ArrayData::builder(DataType::Struct(vec![field].into()))
+            .len(3)
+            .add_child_data(values.to_data());
+        #[expect(unsafe_code, reason = "Nulls are masked by the root struct below")]
+        // SAFETY: child and parent lengths agree; only the nullability rule is relaxed.
+        // The invalid leaf slots are masked by the outer struct before they are visited.
+        let data = unsafe { builder.build_unchecked() };
+        values = make_array(data);
+    }
+    Arc::new(StructArray::new(
+        vec![Arc::new(Field::new(
+            "child",
+            values.data_type().clone(),
+            false,
+        ))]
+        .into(),
+        vec![values],
+        Some(NullBuffer::from(vec![false, true, false])),
+    ))
+}

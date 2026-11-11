@@ -221,4 +221,21 @@ mod tests {
             check(nested, cast(expected.as_ref(), &value_type).unwrap());
         }
     }
+    #[test]
+    fn dictionary_grandparent_struct_masks_hidden_nulls() {
+        use arrow::array::Int8Array;
+        use arrow::datatypes::Int8Type;
+        for depth in 2..=4 {
+            let hidden = hidden_nulls::masked_struct(depth, true);
+            let clean = hidden_nulls::masked_struct(depth, false);
+            let keys = Int8Array::from(vec![0, 1, 2]);
+            let dictionary: ArrayRef =
+                Arc::new(DictionaryArray::<Int8Type>::try_new(keys, Arc::clone(&hidden)).unwrap());
+            check(Arc::clone(&dictionary), Arc::clone(&hidden));
+            check(Arc::clone(&dictionary), Arc::clone(&clean));
+            // The exact one-row repro, and a nonzero-offset slice of the same shape.
+            check(dictionary.slice(0, 1), hidden.slice(0, 1));
+            check(dictionary.slice(1, 2), clean.slice(1, 2));
+        }
+    }
 }

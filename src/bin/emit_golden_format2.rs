@@ -2814,6 +2814,102 @@ fn nested_hidden_null_vectors(gen: &mut Builder) {
     }
 }
 
+/// Dictionary-encoded hidden lists equal the existing plain list vectors.
+fn dictionary_hidden_list_vectors(gen: &mut Builder) {
+    for shape in ["list_list", "depth3", "depth4"] {
+        let mut records = vec![format!("nested_clean_{shape}_small_rb_f0")];
+        let mut arrays = vec![format!("nested_clean_{shape}_small_array_f0")];
+        for large in [false, true] {
+            let width = if large { "large" } else { "small" };
+            let values = hidden_nulls::nested(shape, large, true);
+            let array: ArrayRef = Arc::new(
+                DictionaryArray::<Int8Type>::try_new(Int8Array::from(vec![0, 1, 2]), values)
+                    .unwrap(),
+            );
+            let batch = batch(
+                vec![Field::new("x", array.data_type().clone(), true)],
+                vec![Arc::clone(&array)],
+            );
+            let prefix = format!("nested_hidden_{shape}_{width}_dict");
+            let id = format!("{prefix}_rb_f0");
+            gen.add(
+                &id,
+                &format!("Dictionary of {shape} ({width}) with hidden null descendants"),
+                0,
+                false,
+                &Input::Batch(batch.clone()),
+            );
+            records.push(id);
+            let id = format!("{prefix}_array_f0");
+            gen.add(
+                &id,
+                &format!(
+                    "hash_array: dictionary of {shape} ({width}) with hidden null descendants"
+                ),
+                0,
+                false,
+                &Input::Array(array),
+            );
+            arrays.push(id);
+            let id = format!("{prefix}_split_f0");
+            gen.add(&id, &format!("Dictionary of {shape} ({width}) with hidden null descendants in singleton batches"), 0, false, &Input::Stream(batch.schema(), (0..3).map(|row| batch.slice(row, 1)).collect()));
+            records.push(id);
+        }
+        gen.relate("equal", &records.iter().map(String::as_str).collect::<Vec<_>>(), "dictionary encoding, list widths and batch splits preserve hashes when null descendants are hidden");
+        gen.relate("equal", &arrays.iter().map(String::as_str).collect::<Vec<_>>(), "dictionary encoding and list widths preserve array hashes when null descendants are hidden");
+    }
+}
+
+/// Dictionary decoding must not validate descendants before ancestor struct masking.
+fn dictionary_masked_struct_vectors(gen: &mut Builder) {
+    for depth in 2..=4 {
+        let mut records = Vec::new();
+        let mut arrays = Vec::new();
+        for hidden in [true, false] {
+            let form = if hidden { "hidden" } else { "clean" };
+            for encoded in [false, true] {
+                let encoding = if encoded { "dict" } else { "plain" };
+                let values = hidden_nulls::masked_struct(depth, hidden);
+                let array: ArrayRef = if encoded {
+                    Arc::new(
+                        DictionaryArray::<Int8Type>::try_new(
+                            Int8Array::from(vec![0, 1, 2]),
+                            values,
+                        )
+                        .unwrap(),
+                    )
+                } else {
+                    values
+                };
+                let batch = batch(
+                    vec![Field::new("x", array.data_type().clone(), true)],
+                    vec![Arc::clone(&array)],
+                );
+                let prefix = format!("nested_{form}_struct_depth{depth}_{encoding}");
+                let id = format!("{prefix}_rb_f0");
+                gen.add(&id, &format!("Depth {depth} {encoding} structs: {form} non-nullable leaf masked by root null"), 0, false, &Input::Batch(batch.clone()));
+                records.push(id);
+                let id = format!("{prefix}_array_f0");
+                gen.add(
+                    &id,
+                    &format!(
+                        "hash_array: depth {depth} {encoding} structs with {form} masked leaf"
+                    ),
+                    0,
+                    false,
+                    &Input::Array(array),
+                );
+                arrays.push(id);
+                let id = format!("{prefix}_split_f0");
+                gen.add(&id, &format!("Depth {depth} {encoding} structs with {form} masked leaf in singleton batches"), 0, false, &Input::Stream(batch.schema(), (0..3).map(|row| batch.slice(row, 1)).collect()));
+                records.push(id);
+            }
+        }
+        gen.relate("equal", &records.iter().map(String::as_str).collect::<Vec<_>>(), "ancestor struct nulls mask descendant nulls before dictionary decoding; encoding and splits preserve record hashes");
+        gen.relate("equal", &arrays.iter().map(String::as_str).collect::<Vec<_>>(), "ancestor struct nulls mask descendant nulls before dictionary decoding; encoding preserves array hashes");
+    }
+}
+
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
 fn check_append_only(vectors: &[GoldenVector], relations: &[Relation]) {
     let raw = match fs::read_to_string(FIXTURE_PATH) {
@@ -2848,6 +2944,8 @@ fn check_append_only(vectors: &[GoldenVector], relations: &[Relation]) {
 fn main() {
     let mut g = build();
     nested_hidden_null_vectors(&mut g);
+    dictionary_masked_struct_vectors(&mut g);
+    dictionary_hidden_list_vectors(&mut g);
     check_append_only(&g.vectors, &g.relations);
     let fixture = GoldenFixture {
         version: "0.5".to_owned(),

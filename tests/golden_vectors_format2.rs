@@ -72,7 +72,7 @@ mod tests {
         let skip =
             UNVALIDATED_VECTORS.contains(&v.id.as_str()) || v.id.starts_with("nested_hidden_");
         #[expect(unsafe_code, reason = "Decoding vectors arrow-rs would not validate")]
-        // SAFETY: only the nullability rule for hidden list items is relaxed; offsets and buffer
+        // SAFETY: only the nullability rule for masked descendants is relaxed; offsets and buffer
         // lengths were written by arrow-rs from consistent arrays.
         let reader = unsafe {
             StreamReader::try_new(Cursor::new(bytes), None)
