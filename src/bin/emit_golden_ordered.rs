@@ -40,9 +40,9 @@ use std::sync::Arc;
 use std::{fs, slice};
 
 use arrow::array::{
-    Array as _, ArrayRef, BooleanArray, DictionaryArray, Int32Array, Int32Builder, LargeListArray,
-    LargeStringArray, ListArray, ListBuilder, RecordBatch, RecordBatchOptions, StringArray,
-    StructArray,
+    Array as _, ArrayRef, BooleanArray, DictionaryArray, Int32Array, Int32Builder, Int8Array,
+    LargeListArray, LargeStringArray, ListArray, ListBuilder, RecordBatch, RecordBatchOptions,
+    StringArray, StructArray,
 };
 use arrow::buffer::{NullBuffer, OffsetBuffer};
 use arrow::datatypes::Int32Type;
@@ -1352,6 +1352,17 @@ fn build() -> Builder {
                 &Input::Array(Arc::new(s)),
             );
         }
+        let s8 = StructArray::from(vec![(
+            Arc::new(Field::new("é", DataType::Int8, false)),
+            Arc::new(Int8Array::from(vec![1_i8])) as ArrayRef,
+        )]);
+        gen.add(
+            "names_array_struct_int8_f0",
+            "hash_array of Struct<é: Int8 non-null> [{é: 1}], default options",
+            0x00,
+            false,
+            &Input::Array(Arc::new(s8)),
+        );
         let fsl_int = Arc::new(Schema::new(vec![Field::new(
             "f",
             DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Int32, true)), 2),

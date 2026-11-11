@@ -270,6 +270,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         Self::hash_array_with_config(array, HasherConfig::default())
     }
 
+    /// `hash_array` with options (byte-layout spec Sections 6 and 9). `include_metadata` has
+    /// no effect; with any other option on, the options tag is the first input.
     pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
         let flags = option_flags(config);
         // Resolve dictionary arrays to their plain value type
@@ -400,7 +402,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         serde_json::to_string(&fields_digest).expect("Failed to serialize field_digest to bytes")
     }
 
-    /// Phase 1 canonical schema JSON under `config` (byte-layout spec Sections 2.1 and 9.2).
+    /// Phase 1 canonical schema JSON under `config` (byte-layout spec Sections 2.1 and 9.3).
     ///
     /// With both order options off this is exactly `serialized_schema` (v0.4.0). With
     /// `ordered_columns` the top level is a JSON array of `{data_type, name, nullable}` in schema
@@ -1042,7 +1044,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     .expect("Failed to downcast to BooleanArray");
 
                 if nested_validity {
-                    // Lossless layout (byte-layout spec Section 9.5): one byte (0x00 / 0x01)
+                    // Lossless layout (byte-layout spec Section 9.5.1): one byte (0x00 / 0x01)
                     // per VALID value, so the value count is hashed and batches can be split
                     // anywhere. Nulls are skipped, as in the default layout.
                     if let Some(ref mut null_bits) = digest.null_bits {

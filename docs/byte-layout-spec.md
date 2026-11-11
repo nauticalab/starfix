@@ -1530,6 +1530,8 @@ top-level columns, struct children, list elements, and `hash_array`.
 
 
 
+### 9.6 Rejected schemas (any option on)
+
 When `flags != 0`, a schema (or, for `hash_array`, the array's type) is **rejected** when two of
 its nodes have the same **node path**. Rust panics (`# Panics` in the API docs); Python raises
 `ValueError`. With `flags == 0` nothing is checked (default behaviour unchanged).

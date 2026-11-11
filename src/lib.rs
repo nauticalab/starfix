@@ -40,14 +40,24 @@ pub struct HasherConfig {
     /// (struct in struct, list, large list, fixed-size list, map, dictionary value type).
     /// Default is `false`: reordering struct fields does not change the hash.
     pub ordered_struct_fields: bool,
-    /// When `true`, nullable nested values record their own validity: a null struct is
-    /// distinguished from a struct whose fields are all null, null struct rows are counted even
-    /// when the struct's fields are non-nullable, and a list whose elements are nullable lists
-    /// keeps its own lengths. Default is `false` (v0.4.0 layout).
+    /// When `true`, the lossless layout is used (the name is provisional): nullable nested values
+    /// record their own validity (a null struct is distinguished from a struct whose fields are
+    /// all null, null struct rows are counted even when the struct's fields are non-nullable, a
+    /// list whose elements are nullable lists or structs keeps its own lengths and element
+    /// validity), and Boolean values are hashed one byte each (counted, batch-split
+    /// independent). Default is `false` (v0.4.0 layout).
     pub nested_validity: bool,
 }
 
 /// Maps `ArrowDigesterCore` to a SHA-256 digester with version prefix.
+///
+/// # Panics
+///
+/// Besides unsupported data types, when any of `ordered_columns`, `ordered_struct_fields` or
+/// `nested_validity` is on, every entry point panics on a schema (or array type) with two fields
+/// at the same path (duplicate names, or a name containing `/` that aliases a nested field), and
+/// `update` panics on a batch whose schema does not match the digester's under its options
+/// (e.g. a different column order with `ordered_columns`).
 #[derive(Clone)]
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
