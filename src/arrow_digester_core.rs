@@ -11,11 +11,11 @@ use std::{
 
 use arrow::{
     array::{
-        Array, ArrayRef, BooleanArray, GenericListArray, LargeBinaryArray, LargeListArray,
-        LargeStringArray, ListArray, OffsetSizeTrait, RecordBatch, StructArray,
+        new_null_array, Array, AsArray as _, BooleanArray, GenericListArray, LargeBinaryArray,
+        LargeListArray, LargeStringArray, ListArray, OffsetSizeTrait, RecordBatch, StructArray,
     },
     buffer::NullBuffer,
-    compute::{cast, concat},
+    compute::cast,
     datatypes::{DataType, Schema},
 };
 use arrow_schema::Field;
@@ -763,6 +763,18 @@ impl<D: Digest> ArrowDigesterCore<D> {
             }
             // A dictionary is its decoded values, resolved recursively (nested dictionaries)
             DataType::Dictionary(_, value_type) => {
+                if matches!(
+                    normalize_data_type(value_type),
+                    DataType::LargeList(_) | DataType::Struct(_)
+                ) {
+                    return Self::traverse_nested_dictionary(
+                        array,
+                        nullable,
+                        path,
+                        ancestor_struct_nulls,
+                        fields,
+                    );
+                }
                 let decoded = cast(array, value_type.as_ref()).expect("decode dictionary");
                 return Self::traverse_and_update(
                     value_type,
@@ -811,8 +823,44 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
+    /// Resolve nested dictionary values without `cast`/`take`: rebuilding their children
+    /// can validate nulls that a null list ancestor makes invisible (Section 7.4).
+    fn traverse_nested_dictionary(
+        array: &dyn Array,
+        nullable: bool,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let dictionary = array.as_any_dictionary();
+        let values = dictionary.values();
+        // An empty dictionary can only have null keys; normalized_keys requires values.
+        let keys = if values.is_empty() {
+            vec![0; array.len()]
+        } else {
+            dictionary.normalized_keys()
+        };
+        let mut null_value = None;
+        for (row, key) in keys.into_iter().enumerate() {
+            let value = if dictionary.keys().is_null(row) {
+                Arc::clone(null_value.get_or_insert_with(|| new_null_array(values.data_type(), 1)))
+            } else {
+                values.slice(key, 1)
+            };
+            let ancestor = ancestor_struct_nulls.map(|nulls| nulls.slice(row, 1));
+            Self::traverse_and_update(
+                value.data_type(),
+                nullable,
+                value.as_ref(),
+                path,
+                ancestor.as_ref(),
+                fields,
+            );
+        }
+    }
+
     /// A list node: [validity] and the lengths of its valid elements go into its own entry; the
-    /// items of all valid elements are then traversed once, as the element node at `path/`.
+    /// items of all valid elements are then traversed in order, as the element node at `path/`.
     /// `List` and `LargeList` are traversed alike, without casting (byte-layout spec Section 3.2):
     /// only the items of valid list values are visited, so nulls hidden under null list values
     /// (or outside the offsets) are never seen.
@@ -896,27 +944,26 @@ impl<D: Digest> ArrowDigesterCore<D> {
             .update(&lengths);
 
         let values = list_array.values();
-        let items: ArrayRef = match ranges.as_slice() {
-            [] => values.slice(0, 0),
-            [(start, len)] => values.slice(*start, *len),
-            many => {
-                let parts: Vec<ArrayRef> = many
-                    .iter()
-                    .map(|(start, len)| values.slice(*start, *len))
-                    .collect();
-                let refs: Vec<&dyn Array> = parts.iter().map(AsRef::as_ref).collect();
-                concat(&refs).expect("concatenate list items")
-            }
-        };
         let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
-        Self::traverse_and_update(
-            items.data_type(),
-            value_field.is_nullable(),
-            items.as_ref(),
-            &element_path,
-            None, // list elements don't have ancestor struct nulls
-            fields,
-        );
+        // Traverse slices in order instead of concatenating them. Concatenation rebuilds
+        // nested arrays and can reject non-nullable nulls hidden under a null descendant
+        // before traversal has a chance to exclude them (Section 7.4). Each entry appends
+        // bytes independently, so visiting contiguous ranges preserves the byte streams.
+        // Keep the empty traversal: it visits the same node tree without any elements.
+        if ranges.is_empty() {
+            ranges.push((0, 0));
+        }
+        for (start, len) in ranges {
+            let items = values.slice(start, len);
+            Self::traverse_and_update(
+                items.data_type(),
+                value_field.is_nullable(),
+                items.as_ref(),
+                &element_path,
+                None, // list elements don't have ancestor struct nulls
+                fields,
+            );
+        }
     }
 
     fn offset_at<O>(offsets: &[O], i: usize) -> usize

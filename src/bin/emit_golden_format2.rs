@@ -51,6 +51,9 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use starfix::{ArrowDigester, HasherConfig};
 
+#[path = "../../tests/common/hidden_nulls.rs"]
+mod hidden_nulls;
+
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/golden/format2_v0.5.json"
@@ -2756,6 +2759,61 @@ fn hidden_null_list(large: bool, hidden: bool) -> ArrayRef {
     make_array(data)
 }
 
+/// Nested hidden nulls preserve hashes across list widths and stream boundaries.
+fn nested_hidden_null_vectors(gen: &mut Builder) {
+    for shape in ["list_list", "depth3", "depth4"] {
+        let mut records = Vec::new();
+        let mut arrays = Vec::new();
+        for large in [false, true] {
+            let width = if large { "large" } else { "small" };
+            for hidden in [true, false] {
+                let form = if hidden { "hidden" } else { "clean" };
+                let array = hidden_nulls::nested(shape, large, hidden);
+                let batch = batch(
+                    vec![Field::new("x", array.data_type().clone(), true)],
+                    vec![Arc::clone(&array)],
+                );
+                let id = format!("nested_{form}_{shape}_{width}_rb_f0");
+                gen.add(
+                    &id,
+                    &format!("{shape} ({width}): {form} null descendants"),
+                    0,
+                    false,
+                    &Input::Batch(batch.clone()),
+                );
+                records.push(id);
+                let id = format!("nested_{form}_{shape}_{width}_array_f0");
+                gen.add(
+                    &id,
+                    &format!("hash_array: {shape} ({width}) with {form} null descendants"),
+                    0,
+                    false,
+                    &Input::Array(array),
+                );
+                arrays.push(id);
+                if hidden {
+                    let id = format!("nested_{form}_{shape}_{width}_split_f0");
+                    let batches = (0..3).map(|row| batch.slice(row, 1)).collect();
+                    gen.add(
+                        &id,
+                        &format!("{shape} ({width}): hidden null descendants in singleton batches"),
+                        0,
+                        false,
+                        &Input::Stream(batch.schema(), batches),
+                    );
+                    records.push(id);
+                }
+            }
+        }
+        gen.relate("equal", &records.iter().map(String::as_str).collect::<Vec<_>>(), "hidden descendants are not elements; List/LargeList and batch splits preserve the record hash");
+        gen.relate(
+            "equal",
+            &arrays.iter().map(String::as_str).collect::<Vec<_>>(),
+            "hidden descendants are not elements; List/LargeList preserve the array hash",
+        );
+    }
+}
+
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
 fn check_append_only(vectors: &[GoldenVector], relations: &[Relation]) {
     let raw = match fs::read_to_string(FIXTURE_PATH) {
@@ -2788,7 +2846,8 @@ fn check_append_only(vectors: &[GoldenVector], relations: &[Relation]) {
 }
 
 fn main() {
-    let g = build();
+    let mut g = build();
+    nested_hidden_null_vectors(&mut g);
     check_append_only(&g.vectors, &g.relations);
     let fixture = GoldenFixture {
         version: "0.5".to_owned(),

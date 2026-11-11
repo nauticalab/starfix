@@ -543,8 +543,9 @@ were kept). From the release on it is append-only:
 | `hash_stream` | `new(schema)`, `update` with each batch in order (possibly none), `finalize` |
 | `hash_array` | column 0 of the single batch, as an array |
 
-The vectors `hidden_null_list_rb_f0` and `hidden_null_large_list_rb_f0` hold nulls under null list
-values of a non-nullable element (Section 7, item 4): decode them without full validation
+The vectors `hidden_null_list_rb_f0`, `hidden_null_large_list_rb_f0` and `nested_hidden_*`
+hold nulls under null list values of a non-nullable element (Section 7, item 4), including
+nested descendants: decode them without full validation
 (arrow-rs's validating IPC reader rejects them; pyarrow reads them).
 
 A relation `equal` requires all listed vectors to have the same `expected_hash`; `different`

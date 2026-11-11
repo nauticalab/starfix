@@ -69,7 +69,8 @@ mod tests {
 
     fn decode_ipc(v: &GoldenVector) -> (SchemaRef, Vec<RecordBatch>) {
         let bytes = STANDARD.decode(&v.ipc_b64).unwrap();
-        let skip = UNVALIDATED_VECTORS.contains(&v.id.as_str());
+        let skip =
+            UNVALIDATED_VECTORS.contains(&v.id.as_str()) || v.id.starts_with("nested_hidden_");
         #[expect(unsafe_code, reason = "Decoding vectors arrow-rs would not validate")]
         // SAFETY: only the nullability rule for hidden list items is relaxed; offsets and buffer
         // lengths were written by arrow-rs from consistent arrays.
