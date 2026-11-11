@@ -38,8 +38,11 @@ jobs:
         with:
           toolchain: 1.91.1
 
+      # Pinned: cargo-release >= 1.1.3 raised its MSRV to rustc 1.92 (1.1.7 needs
+      # 1.97), so an unpinned install fails on the toolchain pinned above.
+      # 1.1.2 is the newest release supporting rustc 1.91. Bump both together.
       - name: Install cargo-release
-        run: cargo install cargo-release
+        run: cargo install cargo-release --version 1.1.2 --locked
 
       - name: Configure git
         run: |
