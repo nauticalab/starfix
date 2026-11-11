@@ -101,6 +101,10 @@ In every mode, the following panic (starfix-python raises `ValueError`):
 These checks run before any data is hashed, except the null check, which runs while a batch is
 traversed; after a panic, discard the digester.
 
+Metadata that repeats a key (possible in stored Arrow metadata) is not portable: arrow-rs keeps
+the last value when it reads IPC or imports over the C data interface, before starfix sees it,
+while starfix-python rejects such inputs with `include_metadata` (spec Section 7).
+
 ## Supported data types
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,

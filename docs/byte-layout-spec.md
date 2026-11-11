@@ -81,14 +81,14 @@ Example, `m: Map<Utf8, Struct<z: Int32, a: Int32> nullable>` nullable, `keys_sor
 
 ```
 {"m":{"data_type":{"Map":{"key":{"data_type":"LargeUtf8","nullable":false},"keys_sorted":false,"value":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Int32","name":"z","nullable":false}]},"nullable":true}}},"nullable":true}}
-hash_schema = 0000021c34e18fc2130624f527774ee7992b42234963037109d81715bbacd180adcf1f
+hash_schema = 000002f772b5bc6bb814d98a3bb68a6148dde15eaa590ad54b289c51f9cc4636a52ba7
 ```
 
 `f: FixedSizeList<Int32 nullable, 2>` non-nullable:
 
 ```
 {"f":{"data_type":{"FixedSizeList":[{"data_type":"Int32","nullable":true},2]},"nullable":false}}
-hash_schema = 000002e04a62c05b99b0fce4b391ba58561f4a9df1e92319baaf3644496ad6e4209dcc
+hash_schema = 0000022fe3f8d8fcba7e393f3c5808894db2f930a8bd8388e9d04b3763d369cc6eae88
 ```
 
 **Primitive types** use these exact forms (they are arrow-rs serde's, listed here so that no
@@ -132,7 +132,7 @@ produced by `serde_json::to_string`:
 For example a column named `é` serializes its key as the two bytes `c3 a9`, and a column named
 `a<LF>b<U+001B>` as `"a\nb\u001b"`. The same rules apply to `hash_array`: `hash_array` of
 `StructArray [{é: 1}]` (child `é: Int32` non-nullable) feeds `{"Struct":[{"data_type":"Int32","name":"é","nullable":false}]}`
-with `é` raw, giving `000002cf1133b1070ab1b15f56e2013e4c4fe7a560d94d359c07868c42e4cfadfbe728`.
+with `é` raw, giving `00000219e467d0280ccc83ad4c67e063997344cedd781f6cb4e449d03d713c989aa12b`.
 
 ### 2.2 Phase 1: canonical schema JSON
 
@@ -187,14 +187,19 @@ For pyarrow's natively registered canonical extension types, which have no
 `__arrow_ext_serialize__` in Python (pyarrow 23: `UuidType`, `FixedShapeTensorType`, ...), read
 both keys from the field exported through the **Arrow C data interface**
 (`field.__arrow_c_schema__()`): the exported `ArrowSchema` metadata carries them as serialized
-by the extension type. These types (`arrow.uuid`, `arrow.json`,
-`arrow.bool8`, `arrow.fixed_shape_tensor`, `arrow.variable_shape_tensor`, `arrow.opaque`,
-depending on the pyarrow version) expose only their canonical serialization and rebuild their
-storage type from their own definition; their hash is **defined only when both the stored
-metadata and the stored storage type are already in the canonical form that the reader
-reconstructs** (as every Arrow implementation writes them) — for the tensor types this includes
-the element nullability (`arrow.fixed_shape_tensor` storage is `FixedSizeList<item: T nullable,
-n>`). Unregistered extension types keep both keys in `field.metadata`.
+by the extension type. These types
+(`arrow.uuid`, `arrow.json`, `arrow.bool8`, `arrow.fixed_shape_tensor`,
+`arrow.variable_shape_tensor`, `arrow.opaque`, depending on the pyarrow version) expose only the
+serialization that the reader reconstructs from its own definition, and rebuild their storage
+type the same way. Their hash is therefore **defined only when the stored
+`ARROW:extension:metadata` is byte-identical to that reconstructed serialization and the stored
+storage type is the one the reader reconstructs**; otherwise a pyarrow implementation and
+arrow-rs (which hashes the stored bytes verbatim) disagree. Known stored forms that do not
+match: `arrow.json` stored with `{}` (the canonical extension specification allows `""` or
+`{}`; Arrow C++/pyarrow reconstructs `""`); `arrow.fixed_shape_tensor`,
+`arrow.variable_shape_tensor` and `arrow.opaque` metadata written with another JSON key order or
+with whitespace; tensor storage whose element is non-nullable (`arrow.fixed_shape_tensor`
+storage is reconstructed as `FixedSizeList<item: T nullable, n>`). Unregistered extension types keep both keys in `field.metadata`.
 Without `include_metadata`, an extension type hashes exactly like its storage type.
 
 ### 2.4 Names that are not hashed
@@ -353,6 +358,17 @@ Rust panics (documented under `# Panics`); Python raises `ValueError`:
    list value's offset range — is ignored, for `List` and `LargeList` alike;
 5. a streamed batch whose schema does not match (Section 5).
 
+**Duplicate metadata keys are not portable.** Metadata is a map (Section 2.3); stored Arrow
+metadata (IPC, C data interface) can nevertheless repeat a key, and readers disagree on which
+value survives (arrow-rs keeps the last, pyarrow's `to_dict()` the first). arrow-rs collapses
+such metadata into a map when it reads IPC or imports over the C data interface, before
+starfix sees the schema, so the Rust crate cannot observe the duplicate and hashes the surviving
+value. Implementations that can observe duplicates reject them with `include_metadata`:
+starfix-python raises `ValueError` for any repeated key (even with equal values) in the metadata
+of a field at any depth or of the schema, and for a field of a registered extension type whose
+stored `ARROW:extension:*` keys conflict with the type's own (equal ones are accepted). Hashes of
+inputs with duplicate metadata keys are therefore defined only where they are rejected.
+
 **When the checks run.** 1–3 run before any data is hashed: in `hash_schema` (1, 2), when a
 digester is created (1–3), in `hash_array` (1–3), and on each streamed batch before it changes
 the digester (1, 2, 5). Check 4 runs while a batch is traversed; after any panic a digester must
@@ -371,7 +387,8 @@ Rust panics with `not yet implemented`; Python raises).
 
 ## 9. Worked examples
 
-All values below are pinned by `tests/format2_bytes.rs`.
+Every hash printed in this document is pinned by `tests/format2_bytes.rs`
+(`printed_spec_hashes` and the byte-level tests).
 
 **Example 1 — record batch.** `a: Int32 non-null [1, 2]`, `b: LargeUtf8 nullable ["x", null]`.
 

@@ -68,6 +68,55 @@ mod tests {
         }
     }
 
+    /// The hashes printed in the spec outside Section 9 (Section 2.1 and the JSON text rules);
+    /// Examples 1 and 5 are pinned by the byte-level tests below.
+    #[test]
+    fn printed_spec_hashes() {
+        let value = Field::new(
+            "value",
+            DataType::Struct(Fields::from(vec![
+                Field::new("z", DataType::Int32, false),
+                Field::new("a", DataType::Int32, false),
+            ])),
+            true,
+        );
+        let entries = Field::new(
+            "entries",
+            DataType::Struct(Fields::from(vec![
+                Field::new("key", DataType::Utf8, false),
+                value,
+            ])),
+            false,
+        );
+        let map = Schema::new(vec![Field::new(
+            "m",
+            DataType::Map(Arc::new(entries), false),
+            true,
+        )]);
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_schema(&map, HasherConfig::default())),
+            "000002f772b5bc6bb814d98a3bb68a6148dde15eaa590ad54b289c51f9cc4636a52ba7"
+        );
+        let fsl = Schema::new(vec![Field::new(
+            "f",
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Int32, true)), 2),
+            false,
+        )]);
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_schema(&fsl, HasherConfig::default())),
+            "0000022fe3f8d8fcba7e393f3c5808894db2f930a8bd8388e9d04b3763d369cc6eae88"
+        );
+        let non_ascii = StructArray::new(
+            Fields::from(vec![Field::new("\u{e9}", DataType::Int32, false)]),
+            vec![Arc::new(Int32Array::from(vec![1])) as ArrayRef],
+            None,
+        );
+        assert_eq!(
+            hex::encode(ArrowDigester::hash_array(&non_ascii)),
+            "00000219e467d0280ccc83ad4c67e063997344cedd781f6cb4e449d03d713c989aa12b"
+        );
+    }
+
     #[test]
     fn header_is_written_at_flags_zero() {
         let schema = Schema::new(vec![Field::new("v", DataType::Int32, false)]);
