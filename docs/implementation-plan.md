@@ -86,6 +86,10 @@ DataType::Interval(unit) => {
 
 ### 1.4 Implement `FixedSizeList` data hashing
 
+> **Superseded (ITL-927):** `FixedSizeList` is not canonicalized to `LargeList` and is not cast;
+> a fixed-size-list node has no lengths item. See
+> `docs/metamorphic/specs/2026-11-11-fixed-size-list-design.md` and byte-layout spec Section 3.2.
+
 **Current state:** `todo!()` in `array_digest_update` for `DataType::FixedSizeList`. Schema normalization and serialization already work correctly (`{"FixedSizeList":[<element>, size]}`). Normalization recurses into the inner field but does **not** collapse `FixedSizeList` → `LargeList`.
 
 **Design decision — Should `FixedSizeList(Int32, 3)` be equivalent to `LargeList(Int32)`?**

@@ -7,6 +7,11 @@
 > the restored v0.4.0 tests, the format-1 side of `format1_to_format2.json` and a differential
 > test against the published 0.4.0 crate. Format 2 itself is unchanged.
 
+> **Update (2026-11-11, ITL-927):** `FixedSizeList` data is supported in format 2 and released in
+> 0.5.0 (design: `2026-11-11-fixed-size-list-design.md`; spec Section 3.2). It no longer belongs
+> in the "Unsupported data" row below; `Null`, `Map`, `Interval`, `Utf8View` and `BinaryView`
+> remain unsupported, also inside a `FixedSizeList`.
+
 **Status:** Proposal for the developer's approval. Nothing below is implemented beyond what
 `2026-11-11-ordered-hashing-design.md` already describes; golden files are regenerated only
 after approval.

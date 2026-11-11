@@ -11,8 +11,9 @@ use std::{
 
 use arrow::{
     array::{
-        new_null_array, Array, AsArray as _, BooleanArray, GenericListArray, LargeBinaryArray,
-        LargeListArray, LargeStringArray, ListArray, OffsetSizeTrait, RecordBatch, StructArray,
+        new_null_array, Array, AsArray as _, BooleanArray, FixedSizeListArray, GenericListArray,
+        LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, OffsetSizeTrait,
+        RecordBatch, StructArray,
     },
     buffer::NullBuffer,
     compute::cast,
@@ -765,7 +766,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::Dictionary(_, value_type) => {
                 if matches!(
                     normalize_data_type(value_type),
-                    DataType::LargeList(_) | DataType::Struct(_)
+                    DataType::LargeList(_) | DataType::FixedSizeList(_, _) | DataType::Struct(_)
                 ) {
                     return Self::traverse_nested_dictionary(
                         array,
@@ -793,6 +794,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
         match &canonical {
             DataType::LargeList(value_field) => {
                 Self::traverse_list(
+                    effective_array,
+                    value_field,
+                    nullable,
+                    path,
+                    ancestor_struct_nulls,
+                    fields,
+                );
+            }
+            DataType::FixedSizeList(value_field, _) => {
+                Self::traverse_fixed_size_list(
                     effective_array,
                     value_field,
                     nullable,
@@ -961,6 +972,72 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 items.as_ref(),
                 &element_path,
                 None, // list elements don't have ancestor struct nulls
+                fields,
+            );
+        }
+    }
+
+    /// A fixed-size-list node (byte-layout spec Section 3.2): its entry is its validity if
+    /// nullable and nothing else (no lengths: every valid slot has `n` items, and `n` is in the
+    /// schema). The element node at `path/` then receives the `n` items of every effectively
+    /// valid slot, in order; items of null slots are never visited, whatever they hold.
+    fn traverse_fixed_size_list(
+        array: &dyn Array,
+        value_field: &Field,
+        nullable: bool,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) {
+        let list_array = array
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .expect("downcast to FixedSizeListArray");
+        Self::assert_nulls_allowed(nullable, list_array.nulls(), ancestor_struct_nulls);
+
+        let effective_nulls = Self::combine_nulls(list_array.nulls(), ancestor_struct_nulls);
+        if nullable {
+            let null_bits = fields
+                .get_mut(path)
+                .and_then(|entry| entry.null_bits.as_mut())
+                .expect("nullable fixed-size list must have a validity entry");
+            Self::push_validity(null_bits, effective_nulls.as_ref(), list_array.len());
+        }
+
+        // Item ranges (start, length) of the valid slots, adjacent ones merged. `values()` is
+        // already offset-adjusted: slot i covers [i * n, (i + 1) * n), and child positions past
+        // len * n are never visited.
+        let size = usize::try_from(list_array.value_length()).expect("non-negative list size");
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        if size > 0 {
+            for i in 0..list_array.len() {
+                if effective_nulls.as_ref().is_none_or(|nb| nb.is_valid(i)) {
+                    let start = i.checked_mul(size).expect("item index overflow");
+                    match ranges.last_mut() {
+                        Some(last) if last.0.checked_add(last.1) == Some(start) => {
+                            last.1 = last.1.checked_add(size).expect("range length overflow");
+                        }
+                        _ => ranges.push((start, size)),
+                    }
+                }
+            }
+        }
+
+        // As for lists: traverse the ranges in order without concatenating them, and keep one
+        // empty traversal so that the node tree is visited even without elements.
+        if ranges.is_empty() {
+            ranges.push((0, 0));
+        }
+        let values = list_array.values();
+        let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+        for (start, len) in ranges {
+            let items = values.slice(start, len);
+            Self::traverse_and_update(
+                items.data_type(),
+                value_field.is_nullable(),
+                items.as_ref(),
+                &element_path,
+                None, // a fixed-size list starts a new list level: no ancestor struct nulls
                 fields,
             );
         }
@@ -1234,8 +1311,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Core recursive type walker — one entry per node of the type tree (byte-layout spec
     /// Section 3): a leaf gets [validity] + values, a list gets [validity] + lengths and its
-    /// element is the node at `path/`, a nullable struct gets validity, and its children are
-    /// the nodes at `join(path, name)`. `nullable` comes from the node's `Field`.
+    /// element is the node at `path/`, a nullable fixed-size list gets validity and its element
+    /// is the node at `path/`, a nullable struct gets validity, and its children are the nodes
+    /// at `join(path, name)`. `nullable` comes from the node's `Field`.
     fn extract_type_entries(
         data_type: &DataType,
         nullable: bool,
@@ -1268,6 +1346,21 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     fields_digest_buffer,
                 );
             }
+            // A fixed-size list has no lengths: like a struct, it has a validity entry only when
+            // nullable; its element is the node at `path/`.
+            DataType::FixedSizeList(value_field, _) => {
+                if nullable {
+                    fields_digest_buffer
+                        .insert(path.to_owned(), DigestBufferType::new_validity_only());
+                }
+                let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                Self::extract_type_entries(
+                    value_field.data_type(),
+                    value_field.is_nullable(),
+                    &element_path,
+                    fields_digest_buffer,
+                );
+            }
             _ => {
                 fields_digest_buffer
                     .insert(path.to_owned(), DigestBufferType::new_data_only(nullable));
@@ -1279,8 +1372,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// hashed, whatever the number of rows.
     ///
     /// # Panics
-    /// On `Null`, `FixedSizeList`, `Map`, `Interval`, view and other unsupported types anywhere in
-    /// the type tree.
+    /// On `Null`, `Map`, `Interval`, view and other unsupported types anywhere in the type tree.
     fn validate_data_type(data_type: &DataType) {
         match normalize_data_type(data_type) {
             DataType::Struct(children) => {
@@ -1288,7 +1380,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     Self::validate_data_type(child.data_type());
                 }
             }
-            DataType::LargeList(element) => Self::validate_data_type(element.data_type()),
+            DataType::LargeList(element) | DataType::FixedSizeList(element, _) => {
+                Self::validate_data_type(element.data_type());
+            }
             DataType::Boolean
             | DataType::Int8
             | DataType::Int16

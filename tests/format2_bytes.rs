@@ -98,7 +98,7 @@ mod tests {
                 i = start.checked_add(1).unwrap();
             }
         }
-        assert_eq!(printed, 5, "printed format-2 hashes in the spec");
+        assert_eq!(printed, 6, "printed format-2 hashes in the spec");
     }
 
     /// The hashes printed in the spec outside Section 9 (Section 2.1 and the JSON text rules);
@@ -575,6 +575,47 @@ mod tests {
         assert_eq!(
             ArrowDigester::hash_record_batch(&b, HasherConfig::default()),
             expected
+        );
+    }
+    /// Example 3b of the spec (ITL-927): a nullable fixed-size list with a null value whose child
+    /// positions hold `[7, 8]`. Its entry is the validity only; the element node gets the items
+    /// of the valid values.
+    #[test]
+    fn example_3b_fixed_size_list() {
+        use arrow::array::{make_array, ArrayData};
+
+        let field = Arc::new(Field::new("item", DataType::Int32, true));
+        let values = Int32Array::from(vec![Some(1), None, Some(7), Some(8), Some(3), Some(4)]);
+        let data = ArrayData::builder(DataType::FixedSizeList(field, 2))
+            .len(3)
+            .add_child_data(values.to_data())
+            .nulls(Some(NullBuffer::from(vec![true, false, true])))
+            .build()
+            .unwrap();
+        let column = make_array(data);
+        let b = batch(
+            vec![Field::new("f", column.data_type().clone(), true)],
+            vec![column],
+        );
+        let schema_digest = sha(&[
+            &header(SCHEMA, 0x00),
+            br#"{"f":{"data_type":{"FixedSizeList":[{"data_type":"Int32","nullable":true},2]},"nullable":true}}"#,
+        ]);
+        let expected = out(&sha(&[
+            &header(BATCH, 0x00),
+            &schema_digest,
+            &3_u64.to_le_bytes(),
+            &3_u64.to_le_bytes(),
+            &[0x05],
+            &4_u64.to_le_bytes(),
+            &[0x0d],
+            &sha(&[&[1, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0]]),
+        ]));
+        let hash = ArrowDigester::hash_record_batch(&b, HasherConfig::default());
+        assert_eq!(hash, expected);
+        assert_eq!(
+            hex::encode(hash),
+            "000002e0b5ce37cf5204e24c40101db9cfae979021334d99aea08e0408f8174f841f3b"
         );
     }
 }

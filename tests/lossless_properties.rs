@@ -1,7 +1,7 @@
 //! Property sweep over every supported leaf type (ITL-898).
 //!
 //! For each leaf type x nullable/non-nullable x position (top-level column, inside a struct,
-//! inside a list) it checks:
+//! inside a list, inside a fixed-size list; each container also nullable) it checks:
 //!
 //! 1. row-count sensitivity: `n` rows vs `n + k` rows of zero / false / empty values (and, when
 //!    nullable, of nulls) all hash differently;
@@ -33,12 +33,13 @@ mod tests {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::Arc;
 
-    use arrow::array::{Array as _, RecordBatch};
+    use arrow::array::{Array as _, ArrayRef, FixedSizeListArray, RecordBatch};
+    use arrow::buffer::NullBuffer;
     use arrow::compute::concat;
-    use arrow_schema::{DataType, Schema};
+    use arrow_schema::{DataType, Field, Schema};
     use starfix::{ArrowDigester, HasherConfig};
 
-    use crate::leaf_types::{leaf_types, make, wrap, Position};
+    use crate::leaf_types::{self, leaf_types, make, Position};
 
     fn cfg(flags: u8) -> HasherConfig {
         HasherConfig {
@@ -64,7 +65,39 @@ mod tests {
         empty_vs_absent: bool,
     }
 
-    fn check(dt: &DataType, nullable: bool, position: Position, flags: u8) -> Option<Outcome> {
+    /// A position of the sweep: the shared leaf positions, or inside a `FixedSizeList<_, 1>`
+    /// (nullable: the slot is null where the seed is 3; ITL-927).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Pos {
+        Leaf(Position),
+        InFixedSizeList,
+        InNullableFixedSizeList,
+    }
+
+    const TOP: Pos = Pos::Leaf(Position::Top);
+
+    fn wrap(position: Pos, leaf: &ArrayRef, nullable: bool, seeds: &[Option<i64>]) -> RecordBatch {
+        let container_nullable = match position {
+            Pos::Leaf(p) => return leaf_types::wrap(p, leaf, nullable, seeds),
+            Pos::InFixedSizeList => false,
+            Pos::InNullableFixedSizeList => true,
+        };
+        let nulls = container_nullable
+            .then(|| NullBuffer::from(seeds.iter().map(|s| *s != Some(3)).collect::<Vec<_>>()));
+        let column: ArrayRef = Arc::new(
+            FixedSizeListArray::try_new(
+                Arc::new(Field::new("item", leaf.data_type().clone(), nullable)),
+                1,
+                Arc::clone(leaf),
+                nulls,
+            )
+            .unwrap(),
+        );
+        let field = Field::new("c", column.data_type().clone(), container_nullable);
+        RecordBatch::try_new(Arc::new(Schema::new(vec![field])), vec![column]).unwrap()
+    }
+
+    fn check(dt: &DataType, nullable: bool, position: Pos, flags: u8) -> Option<Outcome> {
         let run = || {
             let mut out = Outcome::default();
             let base: Vec<Option<i64>> = if nullable {
@@ -80,7 +113,7 @@ mod tests {
                 seeds.extend(repeat_n(Some(0), k));
                 let b = wrap(position, &make(dt, &seeds), nullable, &seeds);
                 hashes.push(ArrowDigester::hash_record_batch(&b, cfg(flags)));
-                if position == Position::Top {
+                if position == TOP {
                     hashes.push(ArrowDigester::hash_array_with_config(
                         b.column(0).as_ref(),
                         cfg(flags),
@@ -88,7 +121,8 @@ mod tests {
                 }
                 if matches!(
                     position,
-                    Position::InNullableStruct | Position::InNullableList
+                    Pos::Leaf(Position::InNullableStruct | Position::InNullableList)
+                        | Pos::InNullableFixedSizeList
                 ) && k > 0
                 {
                     let mut seeds = base.clone();
@@ -162,7 +196,7 @@ mod tests {
                 let padded_batch = wrap(position, &make(dt, &padded), nullable, &padded);
                 let sliced_batch = padded_batch.slice(offset, seeds.len());
                 slice_ok &= ArrowDigester::hash_record_batch(&sliced_batch, cfg(flags)) == expected;
-                if position == Position::Top {
+                if position == TOP {
                     slice_ok &=
                         ArrowDigester::hash_array_with_config(sliced_leaf.as_ref(), cfg(flags))
                             == ArrowDigester::hash_array_with_config(
@@ -194,11 +228,13 @@ mod tests {
         for dt in leaf_types() {
             for nullable in [false, true] {
                 for position in [
-                    Position::Top,
-                    Position::InStruct,
-                    Position::InList,
-                    Position::InNullableStruct,
-                    Position::InNullableList,
+                    TOP,
+                    Pos::Leaf(Position::InStruct),
+                    Pos::Leaf(Position::InList),
+                    Pos::Leaf(Position::InNullableStruct),
+                    Pos::Leaf(Position::InNullableList),
+                    Pos::InFixedSizeList,
+                    Pos::InNullableFixedSizeList,
                 ] {
                     let label = format!("{dt:?}{} {position:?}", if nullable { "?" } else { "" });
                     rows.push((label, check(&dt, nullable, position, flags)));

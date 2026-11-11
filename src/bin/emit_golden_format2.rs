@@ -37,8 +37,9 @@ use std::{fs, io, slice};
 
 use arrow::array::{
     make_array, Array as _, ArrayData, ArrayRef, BooleanArray, DictionaryArray,
-    FixedSizeBinaryArray, Int32Array, Int32Builder, Int8Array, LargeListArray, LargeStringArray,
-    ListArray, ListBuilder, RecordBatch, RecordBatchOptions, StringArray, StructArray,
+    FixedSizeBinaryArray, Float32Array, Int32Array, Int32Builder, Int8Array, LargeListArray,
+    LargeStringArray, ListArray, ListBuilder, RecordBatch, RecordBatchOptions, StringArray,
+    StructArray, UInt8Array,
 };
 use arrow::buffer::{Buffer, NullBuffer, OffsetBuffer};
 use arrow::compute::cast;
@@ -2910,6 +2911,996 @@ fn dictionary_masked_struct_vectors(gen: &mut Builder) {
     }
 }
 
+// ── ITL-927: FixedSizeList data ──────────────────────────────────────────────
+
+/// `FixedSizeList<item, size>` with `len` slots over `values`, built without validation so that
+/// nulls hidden under null slots of a non-nullable item (pyarrow can produce them) and child
+/// arrays longer than `len * size` can be expressed.
+fn fsl(
+    values: &ArrayRef,
+    size: i32,
+    item_nullable: bool,
+    valid: Option<Vec<bool>>,
+    len: usize,
+) -> ArrayRef {
+    let field = Arc::new(Field::new(
+        "item",
+        values.data_type().clone(),
+        item_nullable,
+    ));
+    let builder = ArrayData::builder(DataType::FixedSizeList(field, size))
+        .len(len)
+        .add_child_data(values.to_data())
+        .nulls(valid.map(NullBuffer::from));
+    #[expect(unsafe_code, reason = "Building arrays arrow-rs would not validate")]
+    // SAFETY: the child holds at least `len * size` positions; only the nullability rule for
+    // hidden items (and the exact child length) is relaxed, which the hasher does not rely on.
+    let data = unsafe { builder.build_unchecked() };
+    make_array(data)
+}
+
+fn i32s(values: &[Option<i32>]) -> ArrayRef {
+    Arc::new(Int32Array::from(values.to_vec()))
+}
+
+fn one_col(name: &str, array: &ArrayRef, nullable: bool) -> RecordBatch {
+    batch(
+        vec![Field::new(name, array.data_type().clone(), nullable)],
+        vec![Arc::clone(array)],
+    )
+}
+
+fn struct_x(child: ArrayRef, child_nullable: bool, valid: Option<Vec<bool>>) -> ArrayRef {
+    Arc::new(StructArray::new(
+        Fields::from(vec![Field::new(
+            "x",
+            child.data_type().clone(),
+            child_nullable,
+        )]),
+        vec![child],
+        valid.map(NullBuffer::from),
+    ))
+}
+
+/// The spec's worked example `f: FixedSizeList<Int32 nullable, 2>` nullable, rows
+/// `[[1, null], null, [3, 4]]`, with the given content under the null slot.
+fn fsl_spec_example(hidden: [Option<i32>; 2]) -> ArrayRef {
+    let [h0, h1] = hidden;
+    fsl(
+        &i32s(&[Some(1), None, h0, h1, Some(3), Some(4)]),
+        2,
+        true,
+        Some(vec![true, false, true]),
+        3,
+    )
+}
+
+/// Group 28 (ITL-927): `FixedSizeList` data. A fixed-size list node's entry is its validity (if
+/// nullable) and nothing else; its element node's elements are the `n` items of every effectively
+/// valid slot; items under null slots are never visited.
+#[expect(
+    clippy::too_many_lines,
+    reason = "fixture definitions are long but linear"
+)]
+fn add_fixed_size_list_vectors(gen: &mut Builder) {
+    let list_item = || Arc::new(Field::new("item", DataType::Int32, true));
+
+    // 28a. The spec's worked example; content under the null slot does not matter, visible
+    // content does; List / LargeList with the same values are different types.
+    {
+        let rows = |id: &str, desc: &str, array: ArrayRef| {
+            (id.to_owned(), desc.to_owned(), one_col("f", &array, true))
+        };
+        let cases = [
+            rows("fsl_spec_example_rb_f0", "f: FixedSizeList<Int32?, 2>? rows [[1, null], null, [3, 4]]; child [1, null, 7, 8, 3, 4] (spec worked example)", fsl_spec_example([Some(7), Some(8)])),
+            rows("fsl_spec_example_hidden_null_rb_f0", "same rows; the null slot covers child [null, null]", fsl_spec_example([None, None])),
+            rows("fsl_spec_example_hidden_zero_rb_f0", "same rows; the null slot covers child [0, 0]", fsl_spec_example([Some(0), Some(0)])),
+            rows("fsl_spec_example_visible_rb_f0", "f: FixedSizeList<Int32?, 2>? rows [[1, null], null, [3, 5]] (one visible item differs)", fsl(&i32s(&[Some(1), None, Some(7), Some(8), Some(3), Some(5)]), 2, true, Some(vec![true, false, true]), 3)),
+            rows("fsl_spec_example_as_list_rb_f0", "f: List<Int32?>? rows [[1, null], null, [3, 4]] (same values as a variable-size list)", Arc::new(ListArray::new(list_item(), OffsetBuffer::from_lengths(vec![2, 0, 2]), i32s(&[Some(1), None, Some(3), Some(4)]), Some(NullBuffer::from(vec![true, false, true]))))),
+            rows("fsl_spec_example_as_large_list_rb_f0", "f: LargeList<Int32?>? rows [[1, null], null, [3, 4]]", Arc::new(LargeListArray::new(list_item(), OffsetBuffer::from_lengths(vec![2, 0, 2]), i32s(&[Some(1), None, Some(3), Some(4)]), Some(NullBuffer::from(vec![true, false, true]))))),
+        ];
+        for (id, desc, b) in &cases {
+            gen.add(id, desc, 0x00, false, &Input::Batch(b.clone()));
+        }
+        let (_, _, example) = &cases[0];
+        gen.add(
+            "fsl_spec_example_rb_f3",
+            "spec worked example, ordered_columns + ordered_struct_fields",
+            0x03,
+            false,
+            &Input::Batch(example.clone()),
+        );
+        let (_, _, as_list) = &cases[4];
+        gen.add(
+            "fsl_spec_example_schema_f0",
+            "schema f: FixedSizeList<Int32?, 2>?",
+            0x00,
+            false,
+            &Input::Schema(example.schema()),
+        );
+        gen.add(
+            "fsl_spec_example_as_list_schema_f0",
+            "schema f: List<Int32?>?",
+            0x00,
+            false,
+            &Input::Schema(as_list.schema()),
+        );
+        gen.add("fsl_spec_example_array_f0", "hash_array FixedSizeList<Int32?, 2> [[1, null], null, [3, 4]], child [1, null, 7, 8, 3, 4]", 0x00, false, &Input::Array(fsl_spec_example([Some(7), Some(8)])));
+        gen.add(
+            "fsl_spec_example_hidden_null_array_f0",
+            "hash_array, the null slot covers child [null, null]",
+            0x00,
+            false,
+            &Input::Array(fsl_spec_example([None, None])),
+        );
+        gen.add(
+            "fsl_spec_example_as_list_array_f0",
+            "hash_array List<Int32?> [[1, null], null, [3, 4]]",
+            0x00,
+            false,
+            &Input::Array(Arc::clone(as_list.column(0))),
+        );
+    }
+    gen.relate(
+        "equal",
+        &[
+            "fsl_spec_example_rb_f0",
+            "fsl_spec_example_hidden_null_rb_f0",
+            "fsl_spec_example_hidden_zero_rb_f0",
+        ],
+        "child positions under a null fixed-size-list slot are not elements",
+    );
+    gen.relate(
+        "equal",
+        &[
+            "fsl_spec_example_array_f0",
+            "fsl_spec_example_hidden_null_array_f0",
+        ],
+        "child positions under a null fixed-size-list slot are not elements (hash_array)",
+    );
+    gen.relate(
+        "different",
+        &["fsl_spec_example_rb_f0", "fsl_spec_example_visible_rb_f0"],
+        "visible fixed-size-list items are hashed",
+    );
+    gen.relate(
+        "equal",
+        &[
+            "fsl_spec_example_as_list_rb_f0",
+            "fsl_spec_example_as_large_list_rb_f0",
+        ],
+        "List and LargeList are the same type",
+    );
+    gen.relate(
+        "different",
+        &["fsl_spec_example_rb_f0", "fsl_spec_example_as_list_rb_f0"],
+        "FixedSizeList and List are different types, also for equal values (record batch)",
+    );
+    gen.relate(
+        "different",
+        &[
+            "fsl_spec_example_schema_f0",
+            "fsl_spec_example_as_list_schema_f0",
+        ],
+        "FixedSizeList and List are different types (schema)",
+    );
+    gen.relate(
+        "different",
+        &[
+            "fsl_spec_example_array_f0",
+            "fsl_spec_example_as_list_array_f0",
+        ],
+        "FixedSizeList and List are different types, also for equal values (hash_array)",
+    );
+    gen.relate(
+        "different",
+        &["fsl_spec_example_rb_f0", "fsl_spec_example_rb_f3"],
+        "order options change the header",
+    );
+
+    // 28b. hash_array root without nulls, and the list size.
+    {
+        let values = i32s(&[Some(1), Some(2), Some(3), Some(4)]);
+        gen.add("fsl_root_array_f0", "hash_array FixedSizeList<Int32 non-null, 2> [[1, 2], [3, 4]] (root is always nullable)", 0x00, false, &Input::Array(fsl(&values, 2, false, None, 2)));
+        let list: ArrayRef = Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, false)),
+            OffsetBuffer::from_lengths(vec![2, 2]),
+            Arc::clone(&values),
+            None,
+        ));
+        gen.add(
+            "fsl_root_as_list_array_f0",
+            "hash_array List<Int32 non-null> [[1, 2], [3, 4]]",
+            0x00,
+            false,
+            &Input::Array(list),
+        );
+        for (size, len, rows) in [
+            (1, 4, "[[1], [2], [3], [4]]"),
+            (2, 2, "[[1, 2], [3, 4]]"),
+            (4, 1, "[[1, 2, 3, 4]]"),
+        ] {
+            gen.add(&format!("fsl_size{size}_rb_f0"), &format!("f: FixedSizeList<Int32 non-null, {size}> non-null rows {rows} (same child values)"), 0x00, false, &Input::Batch(one_col("f", &fsl(&values, size, false, None, len), false)));
+        }
+        for size in [2, 3] {
+            let empty = one_col("f", &fsl(&i32s(&[]), size, false, None, 0), false);
+            gen.add(
+                &format!("fsl_size{size}_empty_stream_f0"),
+                &format!(
+                    "stream with no batches, f: FixedSizeList<Int32 non-null, {size}> non-null"
+                ),
+                0x00,
+                false,
+                &Input::Stream(empty.schema(), vec![]),
+            );
+            gen.add(
+                &format!("fsl_size{size}_empty_array_f0"),
+                &format!("hash_array of an empty FixedSizeList<Int32 non-null, {size}>"),
+                0x00,
+                false,
+                &Input::Array(Arc::clone(empty.column(0))),
+            );
+        }
+    }
+    gen.relate(
+        "different",
+        &["fsl_root_array_f0", "fsl_root_as_list_array_f0"],
+        "FixedSizeList and List are different types (hash_array root)",
+    );
+    gen.relate(
+        "different",
+        &["fsl_size1_rb_f0", "fsl_size2_rb_f0", "fsl_size4_rb_f0"],
+        "FixedSizeList sizes are different types",
+    );
+    gen.relate(
+        "different",
+        &["fsl_size2_empty_stream_f0", "fsl_size3_empty_stream_f0"],
+        "FixedSizeList<_, 2> and FixedSizeList<_, 3> are different types (no data)",
+    );
+    gen.relate(
+        "different",
+        &["fsl_size2_empty_array_f0", "fsl_size3_empty_array_f0"],
+        "FixedSizeList sizes are different types (hash_array)",
+    );
+
+    // 28c. FixedSizeBinary(2) vs FixedSizeList<UInt8, 2>.
+    {
+        let binary: ArrayRef = Arc::new(
+            FixedSizeBinaryArray::try_from_iter(vec![vec![1_u8, 2], vec![3, 4]].into_iter())
+                .unwrap(),
+        );
+        let bytes: ArrayRef = Arc::new(UInt8Array::from(vec![1_u8, 2, 3, 4]));
+        let list = fsl(&bytes, 2, false, None, 2);
+        gen.add(
+            "fsl_fsb2_rb_f0",
+            "f: FixedSizeBinary(2) non-null rows [0x0102, 0x0304]",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &binary, false)),
+        );
+        gen.add(
+            "fsl_uint8x2_rb_f0",
+            "f: FixedSizeList<UInt8 non-null, 2> non-null rows [[1, 2], [3, 4]]",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &list, false)),
+        );
+        gen.add(
+            "fsl_fsb2_array_f0",
+            "hash_array FixedSizeBinary(2) [0x0102, 0x0304]",
+            0x00,
+            false,
+            &Input::Array(binary),
+        );
+        gen.add(
+            "fsl_uint8x2_array_f0",
+            "hash_array FixedSizeList<UInt8 non-null, 2> [[1, 2], [3, 4]]",
+            0x00,
+            false,
+            &Input::Array(list),
+        );
+    }
+    gen.relate(
+        "different",
+        &["fsl_fsb2_rb_f0", "fsl_uint8x2_rb_f0"],
+        "FixedSizeBinary(n) and FixedSizeList<UInt8, n> are different types",
+    );
+    gen.relate(
+        "different",
+        &["fsl_fsb2_array_f0", "fsl_uint8x2_array_f0"],
+        "FixedSizeBinary(n) and FixedSizeList<UInt8, n> are different types (hash_array)",
+    );
+
+    // 28d. Hidden children at depth two: a null outer slot hides inner slots (with nulls of a
+    // non-nullable item); struct-masked slots at depths one and two.
+    {
+        let nested = |hidden: [Option<i32>; 4], inner_valid: [bool; 2]| {
+            let [a, b, c, d] = hidden;
+            let [v0, v1] = inner_valid;
+            let inner = fsl(
+                &i32s(&[
+                    Some(1),
+                    Some(2),
+                    Some(3),
+                    Some(4),
+                    a,
+                    b,
+                    c,
+                    d,
+                    Some(5),
+                    Some(6),
+                    Some(7),
+                    Some(8),
+                ]),
+                2,
+                false,
+                Some(vec![true, true, v0, v1, true, true]),
+                6,
+            );
+            one_col(
+                "f",
+                &fsl(&inner, 2, false, Some(vec![true, false, true]), 3),
+                true,
+            )
+        };
+        gen.add("fsl_fsl_hidden_values_rb_f0", "f: FixedSizeList<FixedSizeList<Int32 non-null, 2>? non-null, 2>? rows [[[1, 2], [3, 4]], null, [[5, 6], [7, 8]]]; the null slot covers [[9, 9], [9, 9]]", 0x00, false, &Input::Batch(nested([Some(9); 4], [true, true])));
+        gen.add("fsl_fsl_hidden_nulls_rb_f0", "same rows; the null slot covers [null, [null, null]] (nulls of non-nullable fields, hidden)", 0x00, false, &Input::Batch(nested([None; 4], [false, true])));
+        gen.add(
+            "fsl_fsl_hidden_values_array_f0",
+            "hash_array of the fsl_fsl_hidden_values column",
+            0x00,
+            false,
+            &Input::Array(Arc::clone(nested([Some(9); 4], [true, true]).column(0))),
+        );
+        gen.add(
+            "fsl_fsl_hidden_nulls_array_f0",
+            "hash_array of the fsl_fsl_hidden_nulls column",
+            0x00,
+            false,
+            &Input::Array(Arc::clone(nested([None; 4], [false, true]).column(0))),
+        );
+
+        let masked1 = |hidden: [Option<i32>; 2]| {
+            let [h0, h1] = hidden;
+            struct_x(
+                fsl(&i32s(&[Some(1), Some(2), h0, h1]), 2, false, None, 2),
+                false,
+                Some(vec![true, false]),
+            )
+        };
+        gen.add("fsl_struct_masked_values_rb_f0", "s: Struct<x: FixedSizeList<Int32 non-null, 2> non-null>? rows [{x: [1, 2]}, null]; the null row's x is [7, 8]", 0x00, false, &Input::Batch(one_col("s", &masked1([Some(7), Some(8)]), true)));
+        gen.add(
+            "fsl_struct_masked_nulls_rb_f0",
+            "same rows; the null row's x is [null, null] (non-nullable item, masked)",
+            0x00,
+            false,
+            &Input::Batch(one_col("s", &masked1([None, None]), true)),
+        );
+        let masked2 = |hidden: [Option<i32>; 2]| {
+            let [h0, h1] = hidden;
+            let inner = struct_x(
+                fsl(&i32s(&[h0, h1, Some(3), Some(4)]), 2, false, None, 2),
+                false,
+                None,
+            );
+            struct_x(inner, false, Some(vec![false, true]))
+        };
+        gen.add("fsl_struct2_masked_values_rb_f0", "s: Struct<x: Struct<x: FixedSizeList<Int32 non-null, 2> non-null> non-null>? rows [null, {x: {x: [3, 4]}}]; the null row's list is [7, 8]", 0x00, false, &Input::Batch(one_col("s", &masked2([Some(7), Some(8)]), true)));
+        gen.add(
+            "fsl_struct2_masked_nulls_rb_f0",
+            "same rows; the null row's list is [null, null]",
+            0x00,
+            false,
+            &Input::Batch(one_col("s", &masked2([None, None]), true)),
+        );
+    }
+    gen.relate(
+        "equal",
+        &["fsl_fsl_hidden_values_rb_f0", "fsl_fsl_hidden_nulls_rb_f0"],
+        "inner slots under a null outer slot are not elements, whatever they hold",
+    );
+    gen.relate(
+        "equal",
+        &[
+            "fsl_fsl_hidden_values_array_f0",
+            "fsl_fsl_hidden_nulls_array_f0",
+        ],
+        "inner slots under a null outer slot are not elements (hash_array)",
+    );
+    gen.relate(
+        "equal",
+        &[
+            "fsl_struct_masked_values_rb_f0",
+            "fsl_struct_masked_nulls_rb_f0",
+        ],
+        "a fixed-size-list slot under a null struct is effectively null: its items are hidden",
+    );
+    gen.relate(
+        "equal",
+        &[
+            "fsl_struct2_masked_values_rb_f0",
+            "fsl_struct2_masked_nulls_rb_f0",
+        ],
+        "struct masking two levels up hides the fixed-size-list items",
+    );
+
+    // 28e. n = 0: only the row count and the validity carry information.
+    {
+        let zero = |valid: Option<Vec<bool>>, len: usize| fsl(&i32s(&[]), 0, true, valid, len);
+        let cases: [(&str, &str, ArrayRef, bool); 5] = [
+            (
+                "fsl_zero_rb_f0",
+                "f: FixedSizeList<Int32?, 0>? rows [[], [], []] (no validity buffer)",
+                zero(None, 3),
+                true,
+            ),
+            (
+                "fsl_zero_two_rows_rb_f0",
+                "f: FixedSizeList<Int32?, 0>? rows [[], []]",
+                zero(None, 2),
+                true,
+            ),
+            (
+                "fsl_zero_null_middle_rb_f0",
+                "f: FixedSizeList<Int32?, 0>? rows [[], null, []]",
+                zero(Some(vec![true, false, true]), 3),
+                true,
+            ),
+            (
+                "fsl_zero_null_first_rb_f0",
+                "f: FixedSizeList<Int32?, 0>? rows [null, [], []]",
+                zero(Some(vec![false, true, true]), 3),
+                true,
+            ),
+            (
+                "fsl_zero_non_null_rb_f0",
+                "f: FixedSizeList<Int32?, 0> non-null rows [[], [], []]",
+                zero(None, 3),
+                false,
+            ),
+        ];
+        for (id, desc, array, nullable) in &cases {
+            gen.add(
+                id,
+                desc,
+                0x00,
+                false,
+                &Input::Batch(one_col("f", array, *nullable)),
+            );
+        }
+        gen.add(
+            "fsl_zero_all_valid_rb_f0",
+            "f: FixedSizeList<Int32?, 0>? rows [[], [], []] with an all-valid validity buffer",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &zero(Some(vec![true; 3]), 3), true)),
+        );
+        gen.add(
+            "fsl_zero_null_middle_array_f0",
+            "hash_array FixedSizeList<Int32?, 0> [[], null, []]",
+            0x00,
+            false,
+            &Input::Array(zero(Some(vec![true, false, true]), 3)),
+        );
+        gen.add(
+            "fsl_zero_null_first_array_f0",
+            "hash_array FixedSizeList<Int32?, 0> [null, [], []]",
+            0x00,
+            false,
+            &Input::Array(zero(Some(vec![false, true, true]), 3)),
+        );
+        gen.add(
+            "fsl_zero_array_f0",
+            "hash_array FixedSizeList<Int32?, 0> [[], [], []]",
+            0x00,
+            false,
+            &Input::Array(zero(None, 3)),
+        );
+    }
+    gen.relate(
+        "different",
+        &[
+            "fsl_zero_rb_f0",
+            "fsl_zero_two_rows_rb_f0",
+            "fsl_zero_null_middle_rb_f0",
+            "fsl_zero_null_first_rb_f0",
+            "fsl_zero_non_null_rb_f0",
+        ],
+        "zero-size lists: row count, validity and nullability are the information",
+    );
+    gen.relate(
+        "equal",
+        &["fsl_zero_rb_f0", "fsl_zero_all_valid_rb_f0"],
+        "an all-valid validity buffer equals none",
+    );
+    gen.relate(
+        "different",
+        &[
+            "fsl_zero_null_middle_array_f0",
+            "fsl_zero_null_first_array_f0",
+            "fsl_zero_array_f0",
+        ],
+        "zero-size lists that differ only in validity are different (hash_array)",
+    );
+
+    // 28f. A fixed-size list under a null List value.
+    {
+        let in_list = |hidden: [Option<i32>; 2], hidden_slot_valid: bool, lengths: Vec<usize>| {
+            let mut leaf = vec![Some(1), Some(2)];
+            let mut valid = vec![true];
+            if lengths.get(1) == Some(&1) {
+                leaf.extend_from_slice(&hidden);
+                valid.push(hidden_slot_valid);
+            }
+            leaf.extend_from_slice(&[Some(3), Some(4)]);
+            valid.push(true);
+            let len = valid.len();
+            let inner = fsl(&i32s(&leaf), 2, false, Some(valid), len);
+            let list: ArrayRef = Arc::new(ListArray::new(
+                Arc::new(Field::new("item", inner.data_type().clone(), true)),
+                OffsetBuffer::from_lengths(lengths),
+                inner,
+                Some(NullBuffer::from(vec![true, false, true])),
+            ));
+            one_col("l", &list, true)
+        };
+        gen.add("fsl_in_null_list_hidden_rb_f0", "l: List<FixedSizeList<Int32 non-null, 2>?>? rows [[[1, 2]], null, [[3, 4]]]; the null list value covers a null slot over [null, null]", 0x00, false, &Input::Batch(in_list([None, None], false, vec![1, 1, 1])));
+        gen.add(
+            "fsl_in_null_list_values_rb_f0",
+            "same rows; the null list value covers a valid slot [9, 9]",
+            0x00,
+            false,
+            &Input::Batch(in_list([Some(9), Some(9)], true, vec![1, 1, 1])),
+        );
+        gen.add(
+            "fsl_in_null_list_clean_rb_f0",
+            "same rows; the null list value is empty",
+            0x00,
+            false,
+            &Input::Batch(in_list([None, None], true, vec![1, 0, 1])),
+        );
+    }
+    gen.relate(
+        "equal",
+        &[
+            "fsl_in_null_list_hidden_rb_f0",
+            "fsl_in_null_list_values_rb_f0",
+            "fsl_in_null_list_clean_rb_f0",
+        ],
+        "fixed-size lists under a null List value are not elements",
+    );
+
+    // 28g. Slices, batch splits, trailing child positions, dictionary encoding.
+    let fresh = || {
+        fsl(
+            &i32s(&[
+                Some(1),
+                Some(2),
+                None,
+                None,
+                Some(3),
+                None,
+                Some(5),
+                Some(6),
+            ]),
+            2,
+            true,
+            Some(vec![true, false, true, true]),
+            4,
+        )
+    };
+    {
+        // rows [0,0] [1,2] null [3,null] [5,6] [9,9], sliced to the middle four
+        let padded = fsl(
+            &i32s(&[
+                Some(0),
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(7),
+                None,
+                Some(3),
+                None,
+                Some(5),
+                Some(6),
+                Some(9),
+                Some(9),
+            ]),
+            2,
+            true,
+            Some(vec![true, true, false, true, true, true]),
+            6,
+        );
+        let whole = one_col("f", &fresh(), true);
+        gen.add(
+            "fsl_fresh_rb_f0",
+            "f: FixedSizeList<Int32?, 2>? rows [[1, 2], null, [3, null], [5, 6]]",
+            0x00,
+            false,
+            &Input::Batch(whole.clone()),
+        );
+        gen.add("fsl_sliced_rb_f0", "the same rows as a slice (offset 1) of [[0, 0], [1, 2], null, [3, null], [5, 6], [9, 9]] (in memory; the IPC encoding has offset 0)", 0x00, false, &Input::Batch(one_col("f", &padded.slice(1, 4), true)));
+        gen.add(
+            "fsl_split_stream_f0",
+            "the same rows in batches of 1, 0, 2 and 1 rows",
+            0x00,
+            false,
+            &Input::Stream(
+                whole.schema(),
+                vec![
+                    whole.slice(0, 1),
+                    whole.slice(1, 0),
+                    whole.slice(1, 2),
+                    whole.slice(3, 1),
+                ],
+            ),
+        );
+        gen.add(
+            "fsl_trailing_child_rb_f0",
+            "the same rows over a child with two extra trailing positions [8, null] (in memory; the IPC encoding drops them)",
+            0x00,
+            false,
+            &Input::Batch(one_col(
+                "f",
+                &fsl(
+                    &i32s(&[
+                        Some(1),
+                        Some(2),
+                        None,
+                        None,
+                        Some(3),
+                        None,
+                        Some(5),
+                        Some(6),
+                        Some(8),
+                        None,
+                    ]),
+                    2,
+                    true,
+                    Some(vec![true, false, true, true]),
+                    4,
+                ),
+                true,
+            )),
+        );
+        gen.add(
+            "fsl_fresh_array_f0",
+            "hash_array FixedSizeList<Int32?, 2> [[1, 2], null, [3, null], [5, 6]]",
+            0x00,
+            false,
+            &Input::Array(fresh()),
+        );
+        gen.add(
+            "fsl_sliced_array_f0",
+            "hash_array of the same values as a slice (offset 1; in memory, the IPC encoding has offset 0)",
+            0x00,
+            false,
+            &Input::Array(padded.slice(1, 4)),
+        );
+        let sliced_struct = struct_x(
+            padded,
+            true,
+            Some(vec![true, true, true, true, false, true]),
+        );
+        let fresh_struct = struct_x(
+            fsl(
+                &i32s(&[
+                    Some(1),
+                    Some(2),
+                    None,
+                    None,
+                    Some(3),
+                    None,
+                    Some(0),
+                    Some(0),
+                ]),
+                2,
+                true,
+                Some(vec![true, false, true, true]),
+                4,
+            ),
+            true,
+            Some(vec![true, true, true, false]),
+        );
+        gen.add("fsl_struct_fresh_rb_f0", "s: Struct<x: FixedSizeList<Int32?, 2>?>? rows [{x: [1, 2]}, {x: null}, {x: [3, null]}, null]", 0x00, false, &Input::Batch(one_col("s", &fresh_struct, true)));
+        gen.add(
+            "fsl_struct_sliced_rb_f0",
+            "the same rows as a slice (offset 1) of a struct whose masked row holds [5, 6] (in memory; the IPC encoding has offset 0)",
+            0x00,
+            false,
+            &Input::Batch(one_col("s", &sliced_struct.slice(1, 4), true)),
+        );
+    }
+    gen.relate(
+        "equal",
+        &[
+            "fsl_fresh_rb_f0",
+            "fsl_sliced_rb_f0",
+            "fsl_split_stream_f0",
+            "fsl_trailing_child_rb_f0",
+        ],
+        "slices, batch splits and trailing child positions do not change the hash",
+    );
+    gen.relate(
+        "equal",
+        &["fsl_fresh_array_f0", "fsl_sliced_array_f0"],
+        "a slice hashes like the logical value (hash_array)",
+    );
+    gen.relate(
+        "equal",
+        &["fsl_struct_fresh_rb_f0", "fsl_struct_sliced_rb_f0"],
+        "a sliced struct of fixed-size lists hashes like the logical value",
+    );
+    {
+        // values [[1, 2], null (over [null, 7]), [3, 4]] with a non-nullable item
+        let values = fsl(
+            &i32s(&[Some(1), Some(2), None, Some(7), Some(3), Some(4)]),
+            2,
+            false,
+            Some(vec![true, false, true]),
+            3,
+        );
+        let dict: ArrayRef = Arc::new(
+            DictionaryArray::<Int8Type>::try_new(
+                Int8Array::from(vec![Some(2), None, Some(1), Some(0), Some(2)]),
+                values,
+            )
+            .unwrap(),
+        );
+        let plain = fsl(
+            &i32s(&[
+                Some(3),
+                Some(4),
+                None,
+                None,
+                None,
+                None,
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+            ]),
+            2,
+            false,
+            Some(vec![true, false, false, true, true]),
+            5,
+        );
+        let dict_batch = one_col("f", &dict, true);
+        gen.add("fsl_dict_rb_f0", "f: Dictionary<Int8, FixedSizeList<Int32 non-null, 2>>? keys [2, null, 1, 0, 2] over [[1, 2], null, [3, 4]] (the null value hides [null, 7])", 0x00, false, &Input::Batch(dict_batch.clone()));
+        gen.add(
+            "fsl_dict_plain_rb_f0",
+            "f: FixedSizeList<Int32 non-null, 2>? rows [[3, 4], null, null, [1, 2], [3, 4]]",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &plain, true)),
+        );
+        gen.add(
+            "fsl_dict_split_stream_f0",
+            "the dictionary column in single-row batches",
+            0x00,
+            false,
+            &Input::Stream(
+                dict_batch.schema(),
+                (0..5).map(|row| dict_batch.slice(row, 1)).collect(),
+            ),
+        );
+        gen.add(
+            "fsl_dict_array_f0",
+            "hash_array of the dictionary of fixed-size lists",
+            0x00,
+            false,
+            &Input::Array(dict),
+        );
+        gen.add(
+            "fsl_dict_plain_array_f0",
+            "hash_array of the plain fixed-size lists",
+            0x00,
+            false,
+            &Input::Array(plain),
+        );
+    }
+    gen.relate(
+        "equal",
+        &[
+            "fsl_dict_rb_f0",
+            "fsl_dict_plain_rb_f0",
+            "fsl_dict_split_stream_f0",
+        ],
+        "a dictionary of fixed-size lists is its decoded values",
+    );
+    gen.relate(
+        "equal",
+        &["fsl_dict_array_f0", "fsl_dict_plain_array_f0"],
+        "a dictionary of fixed-size lists is its decoded values (hash_array)",
+    );
+
+    // 28h. Fixed-size lists of lists, structs and dictionaries, and inside lists and structs.
+    {
+        let list = Arc::new(ListArray::new(
+            list_item(),
+            OffsetBuffer::from_lengths(vec![2, 0, 1, 0]),
+            i32s(&[Some(1), Some(2), Some(3)]),
+            Some(NullBuffer::from(vec![true, true, true, false])),
+        )) as ArrayRef;
+        gen.add(
+            "fsl_of_list_rb_f0",
+            "f: FixedSizeList<List<Int32?>?, 2> non-null rows [[[1, 2], []], [[3], null]]",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &fsl(&list, 2, true, None, 2), false)),
+        );
+        let ab = |ab_order: bool, flags: u8| {
+            let a: (Arc<Field>, ArrayRef) = (
+                Arc::new(Field::new("a", DataType::Int32, true)),
+                i32s(&[Some(1), None, Some(3), Some(4)]),
+            );
+            let b: (Arc<Field>, ArrayRef) = (
+                Arc::new(Field::new("b", DataType::Boolean, false)),
+                Arc::new(BooleanArray::from(vec![true, false, true, false])),
+            );
+            let children = if ab_order { vec![a, b] } else { vec![b, a] };
+            let s: ArrayRef = Arc::new(
+                StructArray::try_new(
+                    children.iter().map(|(f, _)| Arc::clone(f)).collect(),
+                    children.into_iter().map(|(_, c)| c).collect(),
+                    Some(NullBuffer::from(vec![true, true, false, true])),
+                )
+                .unwrap(),
+            );
+            let order = if ab_order { "ab" } else { "ba" };
+            (
+                format!("fsl_of_struct_{order}_rb_f{flags}"),
+                one_col("f", &fsl(&s, 2, true, Some(vec![true, true]), 2), true),
+            )
+        };
+        for flags in [0x00_u8, 0x02] {
+            for order in [true, false] {
+                let (id, b) = ab(order, flags);
+                gen.add(&id, "f: FixedSizeList<Struct<a: Int32?, b: Boolean>?, 2>? rows [[{a: 1, b: true}, {a: null, b: false}], [null, {a: 4, b: false}]] (struct children in the order of the id)", flags, false, &Input::Batch(b));
+            }
+        }
+        let dict: ArrayRef = Arc::new(
+            DictionaryArray::<Int8Type>::try_new(
+                Int8Array::from(vec![Some(0), None, Some(1), Some(0)]),
+                Arc::new(StringArray::from(vec!["a", "b"])),
+            )
+            .unwrap(),
+        );
+        let strings: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("a"),
+            None,
+            Some("b"),
+            Some("a"),
+        ]));
+        gen.add("fsl_of_dict_rb_f0", "f: FixedSizeList<Dictionary<Int8, Utf8>?, 2> non-null rows [[\"a\", null], [\"b\", \"a\"]]", 0x00, false, &Input::Batch(one_col("f", &fsl(&dict, 2, true, None, 2), false)));
+        gen.add(
+            "fsl_of_dict_plain_rb_f0",
+            "f: FixedSizeList<Utf8?, 2> non-null rows [[\"a\", null], [\"b\", \"a\"]]",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &fsl(&strings, 2, true, None, 2), false)),
+        );
+        let inner = fsl(
+            &i32s(&[Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)]),
+            2,
+            false,
+            Some(vec![true, false, true]),
+            3,
+        );
+        let in_list: ArrayRef = Arc::new(ListArray::new(
+            Arc::new(Field::new("item", inner.data_type().clone(), true)),
+            OffsetBuffer::from_lengths(vec![2, 0, 1]),
+            Arc::clone(&inner),
+            None,
+        ));
+        gen.add("fsl_in_list_rb_f0", "l: List<FixedSizeList<Int32 non-null, 2>?> non-null rows [[[1, 2], null], [], [[5, 6]]]", 0x00, false, &Input::Batch(one_col("l", &in_list, false)));
+        gen.add(
+            "fsl_in_struct_rb_f0",
+            "s: Struct<x: FixedSizeList<Int32 non-null, 2>?>? rows [{x: [1, 2]}, {x: null}, null]",
+            0x00,
+            false,
+            &Input::Batch(one_col(
+                "s",
+                &struct_x(inner, true, Some(vec![true, true, false])),
+                true,
+            )),
+        );
+    }
+    gen.relate(
+        "equal",
+        &["fsl_of_struct_ab_rb_f0", "fsl_of_struct_ba_rb_f0"],
+        "struct field order inside a fixed-size list is ignored by default",
+    );
+    gen.relate(
+        "different",
+        &["fsl_of_struct_ab_rb_f2", "fsl_of_struct_ba_rb_f2"],
+        "ordered_struct_fields applies inside a fixed-size list",
+    );
+    gen.relate(
+        "equal",
+        &["fsl_of_dict_rb_f0", "fsl_of_dict_plain_rb_f0"],
+        "a dictionary item is its decoded values",
+    );
+
+    // 28i. Metadata and extension types over fixed-size-list storage.
+    {
+        let values = i32s(&[Some(1), Some(2)]);
+        let item = Field::new("item", DataType::Int32, true).with_metadata(meta(&[("unit", "s")]));
+        let with_meta = fsl(&values, 2, true, None, 1);
+        let dt = DataType::FixedSizeList(Arc::new(item), 2);
+        let data = with_meta
+            .to_data()
+            .into_builder()
+            .data_type(dt.clone())
+            .build()
+            .unwrap();
+        let col_meta = batch(vec![Field::new("f", dt, false)], vec![make_array(data)]);
+        gen.add("fsl_meta_element_rb_f0_im1", "f: FixedSizeList<Int32{unit:s}?, 2> non-null rows [[1, 2]], include_metadata (path f/)", 0x00, true, &Input::Batch(col_meta.clone()));
+        gen.add(
+            "fsl_meta_element_rb_f0",
+            "the same batch without include_metadata",
+            0x00,
+            false,
+            &Input::Batch(col_meta),
+        );
+        gen.add(
+            "fsl_no_meta_rb_f0",
+            "f: FixedSizeList<Int32?, 2> non-null rows [[1, 2]] (no metadata)",
+            0x00,
+            false,
+            &Input::Batch(one_col("f", &fsl(&values, 2, true, None, 1), false)),
+        );
+
+        let floats: ArrayRef = Arc::new(Float32Array::from(vec![
+            Some(1.0_f32),
+            Some(2.0),
+            None,
+            Some(4.0),
+        ]));
+        let storage = fsl(&floats, 4, true, None, 1);
+        let ext_field = Field::new("t", storage.data_type().clone(), true).with_metadata(meta(&[
+            ("ARROW:extension:name", "arrow.fixed_shape_tensor"),
+            ("ARROW:extension:metadata", "{\"shape\":[2,2]}"),
+        ]));
+        let tensor = batch(vec![ext_field], vec![Arc::clone(&storage)]);
+        gen.add("fsl_ext_tensor_rb_f0_im1", "t: arrow.fixed_shape_tensor {\"shape\":[2,2]} over FixedSizeList<Float32?, 4>? rows [[1, 2, null, 4]], include_metadata", 0x00, true, &Input::Batch(tensor.clone()));
+        gen.add(
+            "fsl_ext_tensor_rb_f0",
+            "the same tensor batch without include_metadata",
+            0x00,
+            false,
+            &Input::Batch(tensor),
+        );
+        gen.add(
+            "fsl_tensor_storage_rb_f0",
+            "t: FixedSizeList<Float32?, 4>? rows [[1, 2, null, 4]] (the storage alone)",
+            0x00,
+            false,
+            &Input::Batch(one_col("t", &storage, true)),
+        );
+    }
+    gen.relate(
+        "equal",
+        &["fsl_meta_element_rb_f0", "fsl_no_meta_rb_f0"],
+        "without include_metadata element metadata is not hashed",
+    );
+    gen.relate(
+        "different",
+        &["fsl_meta_element_rb_f0_im1", "fsl_no_meta_rb_f0"],
+        "with include_metadata element metadata (path f/) is hashed",
+    );
+    gen.relate(
+        "equal",
+        &["fsl_ext_tensor_rb_f0", "fsl_tensor_storage_rb_f0"],
+        "an extension type hashes as its storage without include_metadata",
+    );
+    gen.relate(
+        "different",
+        &["fsl_ext_tensor_rb_f0_im1", "fsl_tensor_storage_rb_f0"],
+        "with include_metadata the extension keys are hashed",
+    );
+}
+
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
 fn check_append_only(vectors: &[GoldenVector], relations: &[Relation]) {
     let raw = match fs::read_to_string(FIXTURE_PATH) {
@@ -2946,6 +3937,7 @@ fn main() {
     nested_hidden_null_vectors(&mut g);
     dictionary_masked_struct_vectors(&mut g);
     dictionary_hidden_list_vectors(&mut g);
+    add_fixed_size_list_vectors(&mut g);
     check_append_only(&g.vectors, &g.relations);
     let fixture = GoldenFixture {
         version: "0.5".to_owned(),
