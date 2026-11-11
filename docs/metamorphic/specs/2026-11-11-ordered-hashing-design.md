@@ -2,7 +2,10 @@
 
 **Issue:** ITL-898
 **Date:** 2026-11-11
-**Status:** Draft, awaiting approval
+**Status:** D1–D7 recommended by the coordinator and implemented provisionally; the third switch
+was widened twice during implementation (Sections 3.4, 3.5) and its final name is the
+developer's (`nested_validity` is a placeholder; the name is not hashed, only its flag bit).
+The authoritative byte layout is `docs/byte-layout-spec.md` Section 9.
 **Repos:** `nauticalab/starfix` (authoritative, this document), `nauticalab/starfix-python` (consumer)
 
 ---
@@ -28,12 +31,12 @@ with `include_metadata` (see `2026-06-18-golden-vector-parity-design.md`).
 | # | Question | Recommendation | Main alternative |
 |---|---|---|---|
 | D1 | One switch or two for order? | **Two independent switches**: `ordered_columns`, `ordered_struct_fields` | One switch `ordered` covering both |
-| D2 | Null struct vs all-null-fields struct (ITL-848) | **Separate third switch** `struct_validity` | Bundle into the ordered switches; or leave unfixed |
+| D2 | Null struct vs all-null-fields struct (ITL-848), and the rest of that loss family | **Separate third switch** (placeholder name `nested_validity`) that makes the layout lossless: nested validity (3.4) and Booleans (3.5) | Bundle into the ordered switches; separate switches; or leave unfixed |
 | D3 | How is position hashed? | **Through the canonical schema / type JSON only** (ordered JSON arrays). Data entries and their layout are unchanged. | Positional entry paths in the data digests |
 | D4 | Domain separation | **An options tag** (`0x00 "starfix-options-v1" flags`) is the first input of the schema digest (and of the `hash_array` digest) whenever any new switch is on. Version prefix stays `00 00 01`. | Different version prefix per mode; or no separation |
 | D5 | One-column table, same hash in both modes? | **No.** Any new switch on gives a hash that can never equal a hash taken with a different switch set, even when order is meaningless. | Hash equal when order cannot matter (like the empty-metadata invariant) |
 | D6 | Streaming with a batch in a different order | **Rejected** (panic in Rust, `ValueError` in Python), like any schema mismatch | Silently reorder the batch to the digester's order |
-| D7 | Duplicate sibling names / entry-path aliasing | **Rejected whenever any new switch is on**; default behaviour unchanged | Support them via positional entry paths (D3 alternative) |
+| D7 | Duplicate names / path aliasing | **Rejected whenever any new switch is on** (two schema nodes with the same node path); default behaviour unchanged | Support them via positional entry paths (D3 alternative) |
 | D8 | `hash_array` API in Rust | **Add `hash_array_with_config(array, config)`**; `hash_array(array)` stays and equals it with the default config | Change `hash_array` to take a config (breaking; 86 call sites) |
 | D9 | uniffi bindings in `src/pyarrow.rs` | **Leave default-only**, as was done for `include_metadata` (the Python package ships from starfix-python) | Add config arguments to the uniffi functions |
 | D10 | Golden file | **`tests/golden/ordered_v0.5.json`**, generator `cargo run --bin emit_golden_ordered`, append-only | — |
@@ -53,7 +56,7 @@ pub struct HasherConfig {
     pub include_metadata: bool,      // existing
     pub ordered_columns: bool,       // new: top-level column order is part of the hash
     pub ordered_struct_fields: bool, // new: struct field order is part of the hash, at every depth
-    pub struct_validity: bool,       // new: struct-level nulls get their own validity bits
+    pub nested_validity: bool,       // new (placeholder name): lossless layout, Sections 3.4-3.5
 }
 ```
 
@@ -69,7 +72,7 @@ with; the one-shot functions take it as an argument.
 | `ArrowDigester::update(batch)` | uses the config given to `new` |
 | `ArrowDigester::finalize()` | unchanged |
 | `ArrowDigester::hash_record_batch(batch, config)` | honours all four fields |
-| `ArrowDigester::hash_schema(schema, config)` | honours all four fields (see §5.1 for why `struct_validity` matters here) |
+| `ArrowDigester::hash_schema(schema, config)` | honours all four fields (see §5.1 for why `nested_validity` matters here) |
 | `ArrowDigester::hash_array(array)` | unchanged; equals `hash_array_with_config(array, HasherConfig::default())` |
 | `ArrowDigester::hash_array_with_config(array, config)` | **new**; `include_metadata` is ignored (as today: no schema); the three new switches apply |
 
@@ -86,11 +89,11 @@ Keyword-only arguments, same names, all default `False`, mirroring `include_meta
 
 ```python
 ArrowDigester(schema, *, include_metadata=False, ordered_columns=False,
-              ordered_struct_fields=False, struct_validity=False)
-ArrowDigester.hash_schema(schema, *, include_metadata=False, ordered_columns=False, ordered_struct_fields=False, struct_validity=False)
+              ordered_struct_fields=False, nested_validity=False)
+ArrowDigester.hash_schema(schema, *, include_metadata=False, ordered_columns=False, ordered_struct_fields=False, nested_validity=False)
 ArrowDigester.hash_record_batch(batch, *, ...same four...)
 ArrowDigester.hash_table(table, *, ...same four...)
-ArrowDigester.hash_array(array, *, ordered_columns=False, ordered_struct_fields=False, struct_validity=False)
+ArrowDigester.hash_array(array, *, ordered_columns=False, ordered_struct_fields=False, nested_validity=False)
 ```
 
 `hash_table` = `new(table.schema)` + `update` per batch of `table.to_batches()` + `finalize`.
@@ -126,8 +129,18 @@ descendants. Verified on `main` (v0.4.0):
    (3 rows) gives the same hash as `[{a:1}, {a:3}]` (2 rows): the child has no validity bits, and
    null-struct rows are skipped in its data.
 
-Recommendation: a **separate switch `struct_validity`** that gives every nullable struct its own
-validity bits (§5.4). Reasons:
+A systematic search (pyarrow-generated tables, 420 column types: list / large list / struct /
+struct with a non-null sibling, nullable or not at every level, int and dictionary leaves, up to
+three container levels) found that **262 of 420** types lose information on v0.4.0, by exactly
+two rules: (1) the type contains a nullable struct anywhere (including the column itself);
+(2) a list's element is a nullable list (outer lengths are lost; the total number of inner
+lists survives, so 2-level single-row tables are safe but `[[1]],[[2],[3]]` vs
+`[[1],[2]],[[3]]` collide, and 3-level single rows collide) or a nullable struct.
+
+Recommendation (accepted provisionally): **one separate switch** with one rule: every nullable
+struct, and every nullable list or struct that is a list element, records its own validity
+bits (byte-layout spec 9.5). With it the same search finds 0 collisions. Reasons for a separate
+switch:
 
 * it is orthogonal to order; Orcapod streams (order independent) have the same bug and should be
   able to opt in without also becoming order sensitive;
@@ -135,6 +148,20 @@ validity bits (§5.4). Reasons:
 
 Alternative: bundle it into `ordered_struct_fields` (fewer switches, but streams cannot get the
 fix). Default behaviour does not change in either case.
+
+### 3.5 Booleans (found by the golden generator's relation check)
+
+Default Boolean data is bit-packed per call and a non-nullable Boolean entry has no count:
+`[true]` and `[true, false, false]` collide (one-column, non-nullable), `hash_array([true]) ==
+hash_array([true, false])`, and Boolean columns are not batch-split independent (a 2-chunk table
+differs from its combined form). A sweep of every supported leaf type × nullability × position
+(top level, struct, list, nullable struct, nullable list) × {row-count sensitivity, batch split,
+slice/offset, empty vs absent} found that in the default mode **only Booleans** break batch-split
+independence; all other default-mode hashes are batch-split and slice independent.
+
+Recommendation (accepted provisionally, option A): fold the fix into the third switch: one byte
+per valid Boolean value (byte-layout spec 9.5.1). The third switch is thereby the "lossless
+layout" switch; with it the sweep (320 cases, `tests/lossless_properties.rs`) is clean.
 
 ---
 
@@ -178,16 +205,12 @@ collide:
 
 These are already ambiguous today; the default behaviour is not changed. **Whenever any new switch
 is on, such schemas are rejected** (Rust panics, documented under `# Panics`; Python raises
-`ValueError`). Precisely, the schema (or, for `hash_array`, the array type) is rejected when:
-
-1. two top-level columns have the same name; or
-2. two children of the same struct (at any depth, including inside lists, maps, dictionaries) have
-   the same name; or
-3. the entry extraction of byte-layout §3 would create two entries with the same path. (The one
-   intended sharing, a nullable struct that is a list element reusing the list's element entry
-   under `struct_validity`, §5.4, is not a collision.)
-
-This applies to `hash_schema` too (it runs the extraction without hashing data). Rejecting now
+`ValueError`). Precisely: every schema node (column, struct child, list / fixed-size list / map
+element) has a node path (`name`, `parent/child`, `parent/`); the schema is rejected when two
+nodes share one (byte-layout spec 9.6). This covers duplicate names at any depth and `/`
+aliasing, but accepts a `/` that aliases nothing (`km/h`). It runs in `hash_schema`, on digester
+creation, on every batch, and in `hash_array`. (Checking node paths rather than entry paths
+avoids flagging the default layout's own entry sharing between a list and its element.) Rejecting now
 keeps the door open: a later definition for these inputs would not move any hash.
 
 pandas (`Table.from_pandas`) and Polars already refuse duplicate column names, so Orcapod values
@@ -203,7 +226,7 @@ Notation as in the byte-layout spec. `flags` is one byte:
 |---|---|---|
 | 0 | `0x01` | `ordered_columns` |
 | 1 | `0x02` | `ordered_struct_fields` |
-| 2 | `0x04` | `struct_validity` |
+| 2 | `0x04` | `nested_validity` |
 | 3–7 | 0 | reserved, must be 0 |
 
 `include_metadata` is **not** a flag bit; it keeps its existing Phase 2 behaviour in every mode.
@@ -233,12 +256,12 @@ When `flags != 0x00`:
   final = SHA-256()
   final.update(options_tag)
   final.update(type_json(effective_type, flags))   // §5.3
-  ... entries exactly as byte-layout §6 (with §5.4 if struct_validity) ...
+  ... entries exactly as byte-layout §6 (with §5.4 if nested_validity) ...
   output = 00 00 01 || final.finalize()
   ```
 
 All bits of `flags` are written as configured at every entry point, including bits that have no
-effect there (`ordered_columns` for `hash_array`, `struct_validity` for `hash_schema`). One rule,
+effect there (`ordered_columns` for `hash_array`, `nested_validity` for `hash_schema`). One rule,
 no per-entry-point masking that an independent implementation could get wrong.
 
 **Why the tag separates the modes.** Every untagged input to these SHA-256 instances starts with
@@ -305,7 +328,11 @@ unique (§4.1), and the order is already pinned by Phase 1.
 `ordered_struct_fields` rule of §5.2. `ordered_columns` has no effect on the JSON. The array's
 nullability is, as today, "the array has at least one null" (`Array::is_nullable`).
 
-### 5.4 `struct_validity = 1`: struct validity bits
+### 5.4 `nested_validity = 1`: struct validity bits (superseded)
+
+Superseded by byte-layout spec Sections 9.5 (which also covers list elements that are nullable
+lists) and 9.5.1 (Booleans). The original text follows.
+
 
 Entry extraction (byte-layout §3), additional rule. For a **Struct node at path P whose field is
 nullable**:
@@ -329,10 +356,10 @@ Finalization is unchanged: entries in BTreeMap path order (byte-wise UTF-8 order
 `sorted()` on `str` gives the same order), each written per byte-layout §4. A validity-only entry
 at P sorts before all entries below P.
 
-Effect on the examples of §3.4, with `struct_validity = 1`: `[null, {a: null}]` gives struct bits
+Effect on the examples of §3.4, with `nested_validity = 1`: `[null, {a: null}]` gives struct bits
 `[0, 1]` versus `[1, 1]` for `[{a: null}, {a: null}]`; the 3-row case records 3 struct bits.
 
-Note: with `struct_validity = 0`, a `List<nullable Struct>` element entry has `null_bits` that are
+Note: with `nested_validity = 0`, a `List<nullable Struct>` element entry has `null_bits` that are
 never filled, so it always contributes `bit_count = 0` (8 zero bytes). That is part of the frozen
 default layout and stays as is.
 
@@ -365,12 +392,16 @@ bits) are either per-digester constants or appended per row.
 | I5 | In every mode: `Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`, `List`≡`LargeList`, dictionary≡plain. |
 | I6 | In every mode: splitting rows into batches does not change the hash. |
 | I7 | Within a fixed `flags`: `include_metadata = true` without any metadata equals `include_metadata = false`. |
-| I8 | `struct_validity = 1`: null struct ≠ struct with all-null fields; null struct rows are counted. |
+| I8 | `nested_validity = 1`: null struct ≠ struct with all-null fields; null struct rows are counted. |
 | I9 | Any new switch on: duplicate sibling names and entry-path collisions are rejected. |
 
 ---
 
 ## 6. Golden vectors (D10)
+
+As built: `tests/golden/ordered_v0.5.json`, 170 vectors and 73 relations (hash_record_batch,
+hash_schema, hash_array, hash_stream), generated by `cargo run --bin emit_golden_ordered`, format
+in byte-layout spec 9.11. The plan below was the starting point.
 
 ### 6.1 File and format
 
@@ -390,7 +421,7 @@ bits) are either per-digester constants or appended per row.
       "include_metadata": false,
       "ordered_columns": true,
       "ordered_struct_fields": false,
-      "struct_validity": false,
+      "nested_validity": false,
       "ipc_b64": "<Arrow IPC stream>",
       "expected_hash": "000001..."
     }
@@ -501,12 +532,12 @@ Consequences for the Polars consumer:
 * **Data entries are keyed by name paths.** Handled by keeping data as is and pinning order in the
   schema digest; that requires unique paths, hence D7.
 * **Structs are transparent.** That is the source of the ITL-848 gap and the vanishing-row case;
-  `struct_validity` adds entries without disturbing the existing ones.
-* **`List<nullable Struct>` quirk** (§5.4 note): reused deliberately by `struct_validity`.
+  `nested_validity` adds entries without disturbing the existing ones.
+* **`List<nullable Struct>` quirk** (§5.4 note): reused deliberately by `nested_validity`.
 * **`hash_array` has no config.** D8.
 * **Exhaustive `HasherConfig` literals** in tests (D11, §3.1).
 
-**Performance when off:** the data path is untouched by the order switches. `struct_validity` adds
+**Performance when off:** the data path is untouched by the order switches. `nested_validity` adds
 one boolean check per struct node per batch (not per row). Schema serialization and the
 per-`update` schema check keep their existing fast path when `flags = 0`. No measurable cost is
 expected; the existing test suite's timings will be compared before and after.
@@ -516,7 +547,7 @@ expected; the existing test suite's timings will be compared before and after.
 ## 9. Open questions for the developer
 
 1. Approve D1 (two order switches) and the names.
-2. Approve D2: `struct_validity` as a separate third switch (versus bundled into
+2. Approve D2: `nested_validity` as a separate third switch (versus bundled into
    `ordered_struct_fields`).
 3. Approve D5 strict separation (one-column table hashes differ between modes).
 4. Approve D7 rejection of duplicate names / path aliasing under the new switches.
