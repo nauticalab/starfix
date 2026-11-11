@@ -4,6 +4,10 @@ This document describes the **exact byte-level serialization** used by Starfix t
 
 All multi-byte integers use **little-endian** byte order unless explicitly stated otherwise.
 
+Sections 1–8 specify the **default** layout. The opt-in options `ordered_columns`,
+`ordered_struct_fields` and `nested_validity` (v0.5) are specified in **Section 9**; with all of
+them off, Section 9 does not apply.
+
 ---
 
 ## 1. Output Format
@@ -14,7 +18,7 @@ Every Starfix hash is **35 bytes**:
 [version: 3 bytes] [SHA-256 digest: 32 bytes]
 ```
 
-The version prefix is currently `0x00 0x00 0x01` (version 0.0.1).
+The version prefix is currently `0x00 0x00 0x01` (version 0.0.1), in every mode (Section 9.2).
 
 When displayed as hex, a hash looks like:
 
@@ -30,7 +34,7 @@ When displayed as hex, a hash looks like:
 
 The schema is serialized as a **compact JSON string** (no whitespace) of an object where:
 
-- **Keys** are field names, sorted alphabetically (via `BTreeMap`).
+- **Keys** are field names, sorted alphabetically (via `BTreeMap`). (With `ordered_columns` the top level is an array instead; Section 9.3.)
 - **Values** are objects with keys `"data_type"` and `"nullable"`, with JSON keys sorted alphabetically within every nested object (recursively).
 
 Because all JSON object keys are sorted recursively, the key order is always `"data_type"` before `"nullable"` (and `"data_type"` before `"name"` before `"nullable"` for struct children).
@@ -52,6 +56,7 @@ Before serialization, these logical equivalence classes are collapsed:
 ```json
 {"Struct": [<array of child objects sorted by "name">]}
 ```
+(With `ordered_struct_fields` the children keep their declaration order; Section 9.3.)
 Each child object: `{"data_type": ..., "name": "<field_name>", "nullable": <bool>}`.
 
 **List / LargeList elements** are serialized as:
@@ -234,7 +239,7 @@ Compare with `[[1],[2,3]]`: same data digest but different structural digest —
 
 ### 3.5 Struct Types (Record-Batch Path)
 
-Struct fields are **transparent** in the record-batch path — they do not create a BTreeMap entry. Instead:
+Struct fields are **transparent** in the record-batch path — they do not create a BTreeMap entry (default; with `nested_validity` a nullable struct gets a validity entry, Section 9.5). Instead:
 
 1. **Children are traversed** in alphabetical order by field name.
 2. **Struct-level nulls are AND-propagated** to all descendant entries. If a struct row is null, none of its children's data is hashed for that row, and the null is reflected in each descendant's effective validity.
@@ -1251,3 +1256,347 @@ output = 00 00 01 || schema_digest          // 35 bytes
 - **Integer sizes**: All length prefixes use `u64` (8 bytes, LE). Validity bitmaps use `BitVec<u8, Lsb0>` (1 byte per word). Bit counts use `u64` (8 bytes, LE). Hashes are **platform-independent**.
 - **Byte order**: All values use little-endian. Validity words are `u8` (1 byte, so endianness is trivial). Bit counts use little-endian.
 - **Floating point**: IEEE 754 representation is hashed directly. `NaN` values with different bit patterns produce different hashes. `+0.0` and `-0.0` produce different hashes.
+
+---
+
+## 9. Hashing Options: Order Sensitivity and Nested Validity (v0.5)
+
+Sections 1–8 describe the **default** layout. This section specifies three opt-in options. With
+all three off, nothing in this section applies and every byte is exactly as in Sections 1–8.
+Rust is the reference implementation; the golden vectors in `tests/golden/ordered_v0.5.json`
+pin the values (see Section 9.9).
+
+### 9.1 Options and the flags byte
+
+| Option | Rust (`HasherConfig` field) / Python keyword | Flag bit | Effect |
+|---|---|---|---|
+| order of top-level columns is part of the hash | `ordered_columns` | `0x01` | Section 9.3 |
+| order of struct fields is part of the hash, at every depth | `ordered_struct_fields` | `0x02` | Sections 9.3, 9.4 |
+| nullable nested values record their own validity | `nested_validity` | `0x04` | Section 9.5 |
+
+```
+flags = (ordered_columns ? 0x01 : 0) | (ordered_struct_fields ? 0x02 : 0) | (nested_validity ? 0x04 : 0)
+```
+
+Bits 3–7 are reserved and always 0. `include_metadata` is **not** a flag bit: it keeps its
+Section 2.2.1 behaviour in every mode. Options are per call (per streaming digester); they are
+never global.
+
+Every entry point takes all options. Options that have no effect on an entry point's layout
+(`ordered_columns` for `hash_array`, `nested_validity` for `hash_schema`) still enter the flags
+byte. There is no per-entry-point masking.
+
+### 9.2 Options tag (domain separation)
+
+```
+options_tag = 0x00 || "starfix-options-v1" || flags        // 1 + 18 + 1 = 20 bytes
+            = 00 73 74 61 72 66 69 78 2d 6f 70 74 69 6f 6e 73 2d 76 31 <flags>
+```
+
+When `flags == 0x00` the tag is **not** written (default layout). When `flags != 0x00`:
+
+**Schema digest** (`hash_schema`, and the schema digest at the start of every record-batch /
+streaming hash, Section 5):
+
+```
+hasher = SHA-256()
+hasher.update(options_tag)                                  // 20 bytes
+hasher.update(phase1_json(schema, flags))                   // Section 9.3
+if include_metadata: Phase 2 exactly as Section 2.2.1       // unchanged
+schema_digest = hasher.finalize()
+```
+
+`hash_schema` returns `00 00 01 || schema_digest`. The record-batch final digest (Section 5) starts
+with this `schema_digest`, then the entries, exactly as in Section 5.
+
+**`hash_array`** (Section 6): the tag is the first input of the final digest:
+
+```
+final_digest = SHA-256()
+final_digest.update(options_tag)                            // 20 bytes
+final_digest.update(type_json(effective_type, flags))       // Section 9.4
+... entries exactly as Section 6 (with Section 9.5 if nested_validity) ...
+output = 00 00 01 || final_digest.finalize()
+```
+
+The version prefix stays `00 00 01` in every mode.
+
+**Why this separates the modes.** Untagged inputs to these SHA-256 instances always start with
+canonical JSON (`{`, `[` or `"`), never with `0x00`. Tagged inputs start with `0x00` and carry the
+whole `flags` byte at offset 19. So the SHA-256 inputs for two different `flags` values always
+differ, and equal hashes would require a SHA-256 collision. In particular a table hashed with
+any option on never has the same hash as with the options off, even when order cannot matter
+(a one-column table without structs). For record batches the separation is carried by the
+schema digest, the first 32 bytes of the final input.
+
+Within one `flags` value the empty-metadata invariant (Section 2.2.1) still holds:
+`include_metadata = true` on a schema without metadata gives the same hash as `false`.
+
+### 9.3 Phase 1 canonical schema JSON with options
+
+Same canonicalization as Section 2.1 (type equivalence classes, dictionary replaced by its value
+type, list elements without their field name, compact JSON, object keys sorted recursively),
+with two changes:
+
+**`ordered_columns`.** The top level is a **JSON array** with one element per column, in schema
+order. Each element has the struct-child form, keys sorted:
+
+```
+{"data_type": <canonical type>, "name": "<column name>", "nullable": <bool>}
+```
+
+Without `ordered_columns` the top level is the Section 2.1 object keyed by column name.
+
+**`ordered_struct_fields`.** In every `{"Struct": [...]}` array the children appear in their
+**declaration order** instead of sorted by name. This applies wherever a struct type occurs: a
+column, a struct child, a list / large list element (`{"LargeList": {...}}`), a fixed-size list
+element (`{"FixedSizeList": [{...}, size]}`), map entries (`{"Map": [{...}, sorted]}`, whose
+entries struct lists `key` then `value` as declared), a dictionary value type, and any nesting
+of these. Object keys inside each child (`data_type`, `name`, `nullable`) stay sorted.
+
+Without `ordered_struct_fields` struct children are sorted by name (Section 2.1).
+
+Examples. Schema `[b: Int32 non-null, a: Utf8 nullable]`:
+
+```
+flags 0x00 (no tag):  {"a":{"data_type":"LargeUtf8","nullable":true},"b":{"data_type":"Int32","nullable":false}}
+flags 0x01:           [{"data_type":"Int32","name":"b","nullable":false},{"data_type":"LargeUtf8","name":"a","nullable":true}]
+```
+
+Schema `[s: Struct<y: Boolean non-null, x: Int32 non-null> non-null]`:
+
+```
+flags 0x00, 0x01, 0x04, 0x05:  ..."Struct":[{"data_type":"Int32","name":"x",...},{"data_type":"Boolean","name":"y",...}]...
+flags 0x02, 0x03, 0x06, 0x07:  ..."Struct":[{"data_type":"Boolean","name":"y",...},{"data_type":"Int32","name":"x",...}]...
+```
+
+(With `ordered_columns` the whole thing is additionally wrapped as a top-level array element.)
+
+**Data entries are unchanged by the order options.** Entry paths, entry contents and the
+finalization order (sorted by path, Section 5) are exactly as in Sections 3–5. Position enters
+the hash only through the canonical JSON: given the ordered JSON, every entry path names exactly
+one field position (guaranteed by Section 9.6), so two inputs that differ only in column or
+struct-field order differ in the schema digest (or, for `hash_array`, in the type JSON).
+
+### 9.4 `hash_array` type JSON with options
+
+`type_json` is the Section 6 canonical type JSON of the effective type, with the
+`ordered_struct_fields` rule of Section 9.3. `ordered_columns` does not change it (it only enters
+the flags byte). The top-level nullability used by `hash_array` is unchanged: the array is
+treated as nullable iff it contains at least one null.
+
+### 9.5 `nested_validity`: validity of nested values
+
+In the default layout a struct has no entry of its own (Section 3.5) and a list element that is
+itself a nullable list replaces the outer list's element entry. That loses information:
+
+* a null struct and a struct whose fields are all null hash the same;
+* when a nullable struct has non-nullable descendants, its null rows contribute nothing at all
+  (a 3-row column with one null struct hashes like the 2-row column without it);
+* in `List<nullable List<...>>` the outer list lengths are never hashed (`[[[1],[2]]]` (one row)
+  hashes like `[[[1]],[[2]]]` (two rows));
+* in `List<nullable Struct<...>>` a null element hashes like an element with all-null fields.
+
+`nested_validity` closes all of these with one rule: **every nullable struct, and every nullable
+list or struct that is a list element, records its own validity bits.**
+
+**Entry extraction** (Section 3), complete algorithm with `nested_validity` (`NV`). `entries` is
+the path-keyed map; `join(p, n)` is `n` if `p == ""` else `p + "/" + n`; `normalize` applies the
+Section 2.1 equivalence classes (dictionary → value type, `List` → `LargeList`, etc.):
+
+```
+extract(type, nullable, path):
+    t = normalize(type)
+    reuse = NV and nullable and (path in entries)    # only true for a list element (see below)
+    if t is Struct(children):
+        if NV and nullable and not reuse:
+            entries[path] = validity_only()
+        for child in children:                        # any order; entries are keyed by path
+            extract(child.type, child.nullable, join(path, child.name))
+    elif t is LargeList(element):
+        if nullable and not reuse:
+            entries[path] = validity_only()           # default: REPLACES an existing entry
+        lp = path + "/"
+        if normalize(element.type) is Struct or LargeList:
+            entries[lp] = structural_only(nullable = element.nullable)
+            extract(element.type, element.nullable, lp)
+        else:
+            entries[lp] = list_leaf(nullable = element.nullable)
+    else:
+        entries[path] = data_only(nullable)
+```
+
+`reuse` is true exactly when the node is the element of a list: the list has just created its
+element entry at `lp`, and that entry has `null_bits` because the element is nullable. With
+`NV` the element's validity goes into that entry, which keeps its structural digest (the list
+lengths). Without `NV` a nullable list element replaces the entry with a validity-only entry
+(the outer lengths are then lost; this is the frozen default layout and must be reproduced
+exactly), and a nullable struct element records nothing (its entry keeps empty `null_bits`, so it
+always finalizes as `bit_count = 0`: eight `0x00` bytes and no words).
+
+New entries created by `NV`: a validity-only entry at the path of every nullable struct that is
+not a list element: `s` for a column `s`, `parent/child` for a struct child, `""` for a nullable
+struct array passed to `hash_array`.
+
+**Traversal** (Sections 3.4–3.5), additional step with `NV`, when a struct array of length `n` is
+visited at `path` with `nullable = true`:
+
+```
+combined = struct's own validity AND ancestor struct validity     # as already computed for its children
+entries[path].null_bits.extend(combined[0..n])                    # all 1s if neither has a null buffer
+```
+
+This happens before its children are traversed (the order does not matter: different entries).
+The children are then traversed exactly as before (the struct's nulls are still ANDed into its
+descendants). Lists need no new traversal step: a nullable list already pushes its validity into
+`entries[path].null_bits` (Section 3.4), and with `NV` that entry is, for a list element, the
+outer list's element entry.
+
+Non-nullable structs get no entry (as non-nullable leaves get no validity bits).
+
+**Finalization** is unchanged: entries sorted by path (byte-wise UTF-8 order, which equals Python's
+`sorted()` on `str`), each written per Section 4. A validity-only entry at `P` sorts before every
+entry below `P` (`"s"` < `"s/a"`).
+
+### 9.6 Rejected schemas (any option on)
+
+When `flags != 0`, a schema (or, for `hash_array`, the array's type) is **rejected** when two of
+its nodes have the same **node path**. Rust panics (`# Panics` in the API docs); Python raises
+`ValueError`. With `flags == 0` nothing is checked (default behaviour unchanged).
+
+```
+seen = {}
+claim(p): if p in seen: reject; add p to seen
+schema:     for column in schema: claim(column.name); walk(column.type, column.name)
+hash_array: claim(""); walk(array_type, "")
+walk(type, p):
+    t = normalize(type)
+    if t is Struct(children):
+        for c in children: cp = join(p, c.name); claim(cp); walk(c.type, cp)
+    elif t is LargeList(e) or FixedSizeList(e, _) or Map(e, _):
+        ep = p + "/"; claim(ep); walk(e.type, ep)
+```
+
+This rejects duplicate column names, duplicate field names within a struct (at any depth), and
+names containing `/` that alias another node (a column `"a/b"` next to a struct column `a` with
+child `b`; a column `"x/"` next to a list column `x`). A `/` that aliases nothing (`"km/h"`) is
+accepted. The check runs in `hash_schema`, when a streaming digester is created, on every batch
+passed to `update`, and in `hash_record_batch` and `hash_array`.
+
+Reason: entries are keyed by path, so two nodes with one path would feed one entry, making the
+hash depend on how rows are split into batches and letting different tables collide.
+
+### 9.7 Streaming
+
+The digester keeps the Phase 1 JSON of Section 9.3 for its `flags` (plus, with `include_metadata`,
+the metadata key, Section 2.2.1). Every batch given to `update` must produce the same key with
+the same `flags`, and must pass Section 9.6; otherwise it is rejected ("Record batch schema does
+not match ArrowDigester schema"; Python `ValueError`). Hence:
+
+* `ordered_columns`: a batch with the same columns in a different order is rejected. Without it,
+  such a batch is accepted (as in the default).
+* `ordered_struct_fields`: a batch whose struct fields (any depth) are in a different order is
+  rejected. Without it, it is accepted.
+
+Batch-split independence (Example J) holds in every mode.
+
+A Python `hash_table(table)` is `new(table.schema)`, `update` for each batch of
+`table.to_batches()`, `finalize`.
+
+### 9.8 Invariants
+
+| # | Invariant |
+|---|---|
+| I1 | `flags = 0`: byte-identical to v0.4.0 at every entry point. |
+| I2 | Hashes taken with different `flags` never coincide (modulo SHA-256 collisions). |
+| I3 | `ordered_columns`: permuting columns changes the hash. Without it, it does not (whatever the other options). |
+| I4 | `ordered_struct_fields`: permuting struct fields at any depth changes the hash. Without it, it does not. |
+| I5 | In every mode: `Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`, `List`≡`LargeList`, dictionary≡plain. |
+| I6 | In every mode: splitting rows into batches does not change the hash. |
+| I7 | Within one `flags` value: `include_metadata = true` without any metadata equals `false`. |
+| I8 | `nested_validity`: the four losses listed in Section 9.5 do not occur. |
+| I9 | Any option on: ambiguous node paths are rejected (Section 9.6). |
+
+### 9.9 Worked examples
+
+**Example T1: `hash_schema`, `ordered_columns` (flags `0x01`).** Schema `[b: Int32 non-null, a: Utf8 nullable]`.
+
+```
+schema_digest = SHA-256(
+    00 73 74 61 72 66 69 78 2d 6f 70 74 69 6f 6e 73 2d 76 31 01
+    [{"data_type":"Int32","name":"b","nullable":false},{"data_type":"LargeUtf8","name":"a","nullable":true}]
+)
+output = 00 00 01 || schema_digest
+```
+
+**Example T2: record batch, `ordered_columns`.** Columns `b: Int32 non-null [5]`, `a: Int32 non-null [6]`.
+
+```
+schema_digest = SHA-256(options_tag(0x01) ||
+    [{"data_type":"Int32","name":"b","nullable":false},{"data_type":"Int32","name":"a","nullable":false}])
+final = SHA-256(
+    schema_digest
+    SHA-256(06 00 00 00)        // entry "a" (entries stay sorted by path)
+    SHA-256(05 00 00 00)        // entry "b"
+)
+output = 00 00 01 || final
+```
+
+**Example T3: `hash_array`, `ordered_struct_fields` (flags `0x02`).** `StructArray [{z: 1, a: 2}]`,
+children declared `z: Int32 non-null`, `a: Int32 non-null`, no nulls.
+
+```
+final = SHA-256(
+    options_tag(0x02)
+    {"Struct":[{"data_type":"Int32","name":"z","nullable":false},{"data_type":"Int32","name":"a","nullable":false}]}
+    SHA-256(02 00 00 00)        // entry "a"
+    SHA-256(01 00 00 00)        // entry "z"
+)
+```
+
+**Example T4: `nested_validity` (flags `0x04`), nullable struct.** Column `s: Struct<a: Int32 nullable> nullable`,
+rows `[null, {a: null}, {a: 1}]` (child array `[5, null, 1]`, struct validity `[0, 1, 1]`).
+
+```
+schema_digest = SHA-256(options_tag(0x04) ||
+    {"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}})
+final = SHA-256(
+    schema_digest
+    03 00 00 00 00 00 00 00  06          // entry "s": validity-only, bits [0,1,1] -> 0b110
+    03 00 00 00 00 00 00 00  04          // entry "s/a": [1,0,1] AND [0,1,1] = [0,0,1] -> 0b100
+    SHA-256(01 00 00 00)                 //   data: only row 2
+)
+```
+
+Without `nested_validity` the entry `"s"` does not exist, and the rows `[null, {a: null}]` and
+`[{a: null}, {a: null}]` give the same hash.
+
+**Example T5: `nested_validity`, list of nullable list.** Column `c: List<List<Int32 nullable> nullable>` non-null,
+one row `[[1], [2]]`.
+
+```
+schema_digest = SHA-256(options_tag(0x04) ||
+    {"c":{"data_type":{"LargeList":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}},"nullable":false}})
+final = SHA-256(
+    schema_digest
+    // entry "c/": structural entry KEPT, null_bits = inner-list validity [1,1]
+    02 00 00 00 00 00 00 00  03
+    SHA-256(02 00 00 00 00 00 00 00)                          // outer lengths [2]
+    // entry "c//": list-leaf, item validity [1,1], inner lengths [1,1], data [1,2]
+    02 00 00 00 00 00 00 00  03
+    SHA-256(01 00 00 00 00 00 00 00  01 00 00 00 00 00 00 00)
+    SHA-256(01 00 00 00  02 00 00 00)
+)
+```
+
+In the default layout the entry `"c/"` is validity-only (bits `[1,1]`, no lengths), which is why
+`[[[1],[2]]]` and `[[[1]],[[2]]]` collide there.
+
+### 9.10 Type support
+
+The options change no type support. Data hashing supports `Boolean`, all integer and float types,
+`Date32/64`, `Time32/64`, `Timestamp`, `Duration`, `Decimal32/64/128/256`, `FixedSizeBinary`,
+`Binary`/`LargeBinary`, `Utf8`/`LargeUtf8`, `List`/`LargeList`, `Struct`, and `Dictionary` of a
+supported value type. `Null`, `FixedSizeList`, `Map`, `Interval`, the view types, `Union` and
+`RunEndEncoded` data are not supported (Rust panics with `not yet implemented`). Schema hashing
+accepts all types, and the Section 9.3 struct rule applies inside each of them.
