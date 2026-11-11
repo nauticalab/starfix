@@ -862,6 +862,72 @@ mod tests {
         assert_ne!(array_hash(&three, cfg(0x04)), array_hash(&two, cfg(0x04)));
     }
 
+    // ── Boolean data under the third switch ────────────────────────────────
+
+    fn bool_batch(nullable: bool, values: Vec<Option<bool>>) -> RecordBatch {
+        batch(
+            vec![Field::new("b", DataType::Boolean, nullable)],
+            vec![Arc::new(BooleanArray::from(values))],
+        )
+    }
+
+    #[test]
+    fn boolean_trailing_false_rows_are_counted() {
+        let one = bool_batch(false, vec![Some(true)]);
+        let three = bool_batch(false, vec![Some(true), Some(false), Some(false)]);
+        for flags in 0x00_u8..=0x07 {
+            let same = rb_hash(&one, cfg(flags)) == rb_hash(&three, cfg(flags));
+            assert_eq!(same, flags & 0x04 == 0, "flags {flags:#04x}");
+        }
+        let a1 = BooleanArray::from(vec![true]);
+        let a2 = BooleanArray::from(vec![true, false]);
+        assert_eq!(array_hash(&a1, cfg(0)), array_hash(&a2, cfg(0)));
+        assert_ne!(array_hash(&a1, cfg(0x04)), array_hash(&a2, cfg(0x04)));
+    }
+
+    #[test]
+    fn boolean_batch_split_independence_with_third_switch() {
+        for nullable in [false, true] {
+            let whole = bool_batch(nullable, vec![Some(true), Some(false), Some(true)]);
+            for flags in [0x04_u8, 0x07] {
+                let mut d = ArrowDigester::new(&whole.schema(), cfg(flags));
+                d.update(&bool_batch(nullable, vec![Some(true)]));
+                d.update(&bool_batch(nullable, vec![Some(false), Some(true)]));
+                assert_eq!(
+                    hex::encode(d.finalize()),
+                    rb_hash(&whole, cfg(flags)),
+                    "nullable {nullable}, flags {flags:#04x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn boolean_one_byte_per_value_bytes() {
+        // b: Boolean nullable [true, null, false]; flags 0x04
+        let b = bool_batch(true, vec![Some(true), None, Some(false)]);
+        let json = r#"{"b":{"data_type":"Boolean","nullable":true}}"#;
+        let expected = versioned(&sha(&[
+            &sha(&[&tag(0x04), json.as_bytes()]),
+            &3_u64.to_le_bytes(),
+            &[0b101],
+            &sha(&[&[0x01, 0x00]]), // one byte per VALID value
+        ]));
+        assert_eq!(ArrowDigester::hash_record_batch(&b, cfg(0x04)), expected);
+
+        // hash_array, non-nullable [true, false, true]
+        let a = BooleanArray::from(vec![true, false, true]);
+        let expected_array = versioned(&sha(&[
+            &tag(0x04),
+            br#""Boolean""#,
+            &sha(&[&[0x01, 0x00, 0x01]]),
+        ]));
+        assert_eq!(
+            ArrowDigester::hash_array_with_config(&a, cfg(0x04)),
+            expected_array
+        );
+    }
+
     // ── invariants that hold in every mode ─────────────────────────────────
 
     #[test]

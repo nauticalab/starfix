@@ -23,13 +23,24 @@
     clippy::too_many_lines,
     reason = "each golden vector group is a self-contained fixture block"
 )]
+#![expect(
+    clippy::semicolon_outside_block,
+    clippy::literal_string_with_formatting_args,
+    clippy::shadow_unrelated,
+    reason = "fixture blocks and descriptions with metadata/struct literal syntax"
+)]
+#![expect(
+    clippy::struct_excessive_bools,
+    reason = "fixture rows mirror the HasherConfig options one-to-one"
+)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::Arc;
+use std::{fs, slice};
 
 use arrow::array::{
-    Array, ArrayRef, BooleanArray, DictionaryArray, Int32Array, Int32Builder, LargeListArray,
+    Array as _, ArrayRef, BooleanArray, DictionaryArray, Int32Array, Int32Builder, LargeListArray,
     LargeStringArray, ListArray, ListBuilder, RecordBatch, RecordBatchOptions, StringArray,
     StructArray,
 };
@@ -115,15 +126,12 @@ const fn cfg(flags: u8, include_metadata: bool) -> HasherConfig {
 }
 
 fn ipc_b64(schema: &SchemaRef, batches: &[RecordBatch]) -> String {
-    let mut buf: Vec<u8> = Vec::new();
-    {
-        let mut writer = StreamWriter::try_new(&mut buf, schema).unwrap();
-        for b in batches {
-            writer.write(b).unwrap();
-        }
-        writer.finish().unwrap();
+    let mut writer = StreamWriter::try_new(Vec::new(), schema).unwrap();
+    for b in batches {
+        writer.write(b).unwrap();
     }
-    BASE64_STANDARD.encode(&buf)
+    writer.finish().unwrap();
+    BASE64_STANDARD.encode(writer.into_inner().unwrap())
 }
 
 fn batch(fields: Vec<Field>, columns: Vec<ArrayRef>) -> RecordBatch {
@@ -162,7 +170,7 @@ impl Builder {
             ),
             Input::Batch(b) => (
                 "hash_record_batch",
-                ipc_b64(&b.schema(), std::slice::from_ref(b)),
+                ipc_b64(&b.schema(), slice::from_ref(b)),
                 ArrowDigester::hash_record_batch(b, config),
             ),
             Input::Stream(schema, batches) => {
@@ -217,7 +225,7 @@ impl Builder {
                     .as_str()
             })
             .collect();
-        let distinct: std::collections::HashSet<&str> = hashes.iter().copied().collect();
+        let distinct: HashSet<&str> = hashes.iter().copied().collect();
         match kind {
             "equal" => assert!(distinct.len() == 1, "relation equal violated: {ids:?}"),
             "different" => assert!(
@@ -411,34 +419,34 @@ fn meta(pairs: &[(&str, &str)]) -> HashMap<String, String> {
 // ── vectors ─────────────────────────────────────────────────────────────────
 
 fn build() -> Builder {
-    let mut g = Builder::default();
+    let mut gen = Builder::default();
 
     // 1. Column order: record batch, schema, stream.
     let ab = two_cols(true, vec![1, 2], vec![Some("x"), None]);
     let ba = two_cols(false, vec![1, 2], vec![Some("x"), None]);
     for flags in [0x00_u8, 0x01] {
-        g.add(
+        gen.add(
             &format!("cols_ab_rb_f{flags}"),
             "Record batch [a: Int32, b: LargeUtf8?], columns a,b",
             flags,
             false,
             &Input::Batch(ab.clone()),
         );
-        g.add(
+        gen.add(
             &format!("cols_ba_rb_f{flags}"),
             "Same data, columns b,a",
             flags,
             false,
             &Input::Batch(ba.clone()),
         );
-        g.add(
+        gen.add(
             &format!("cols_ab_schema_f{flags}"),
             "Schema [a, b]",
             flags,
             false,
             &Input::Schema(ab.schema()),
         );
-        g.add(
+        gen.add(
             &format!("cols_ba_schema_f{flags}"),
             "Schema [b, a]",
             flags,
@@ -446,22 +454,22 @@ fn build() -> Builder {
             &Input::Schema(ba.schema()),
         );
     }
-    g.relate(
+    gen.relate(
         "equal",
         &["cols_ab_rb_f0", "cols_ba_rb_f0"],
         "column order ignored by default",
     );
-    g.relate(
+    gen.relate(
         "different",
         &["cols_ab_rb_f1", "cols_ba_rb_f1"],
         "ordered_columns: column order is part of the hash",
     );
-    g.relate(
+    gen.relate(
         "equal",
         &["cols_ab_schema_f0", "cols_ba_schema_f0"],
         "schema: column order ignored by default",
     );
-    g.relate(
+    gen.relate(
         "different",
         &["cols_ab_schema_f1", "cols_ba_schema_f1"],
         "schema: ordered_columns",
@@ -469,14 +477,14 @@ fn build() -> Builder {
     {
         let p1 = two_cols(false, vec![1], vec![Some("x")]);
         let p2 = two_cols(false, vec![2], vec![None]);
-        g.add(
+        gen.add(
             "cols_ba_stream_f1",
             "Stream of the cols_ba data split into two batches, ordered_columns",
             0x01,
             false,
             &Input::Stream(ba.schema(), vec![p1, p2]),
         );
-        g.relate(
+        gen.relate(
             "equal",
             &["cols_ba_stream_f1", "cols_ba_rb_f1"],
             "batch-split independence in ordered mode",
@@ -491,7 +499,7 @@ fn build() -> Builder {
             (true, false, "ns_yx"),
             (false, false, "sn_yx"),
         ] {
-            g.add(
+            gen.add(
                 &format!("combo_{tag}_f{flags}"),
                 "Columns n: Int32 and s: Struct<x: Int32, y: Boolean>; ns/sn = column order, xy/yx = struct field order",
                 flags,
@@ -500,7 +508,7 @@ fn build() -> Builder {
             );
         }
     }
-    g.relate(
+    gen.relate(
         "equal",
         &[
             "combo_ns_xy_f0",
@@ -510,37 +518,37 @@ fn build() -> Builder {
         ],
         "flags 0: no order matters",
     );
-    g.relate(
+    gen.relate(
         "equal",
         &["combo_ns_xy_f1", "combo_ns_yx_f1"],
         "flags 1: struct order ignored",
     );
-    g.relate(
+    gen.relate(
         "equal",
         &["combo_sn_xy_f1", "combo_sn_yx_f1"],
         "flags 1: struct order ignored",
     );
-    g.relate(
+    gen.relate(
         "different",
         &["combo_ns_xy_f1", "combo_sn_xy_f1"],
         "flags 1: column order matters",
     );
-    g.relate(
+    gen.relate(
         "equal",
         &["combo_ns_xy_f2", "combo_sn_xy_f2"],
         "flags 2: column order ignored",
     );
-    g.relate(
+    gen.relate(
         "equal",
         &["combo_ns_yx_f2", "combo_sn_yx_f2"],
         "flags 2: column order ignored",
     );
-    g.relate(
+    gen.relate(
         "different",
         &["combo_ns_xy_f2", "combo_ns_yx_f2"],
         "flags 2: struct order matters",
     );
-    g.relate(
+    gen.relate(
         "different",
         &[
             "combo_ns_xy_f3",
@@ -550,7 +558,7 @@ fn build() -> Builder {
         ],
         "flags 3: both orders matter",
     );
-    g.relate(
+    gen.relate(
         "different",
         &[
             "combo_ns_xy_f0",
@@ -563,35 +571,35 @@ fn build() -> Builder {
 
     // 3. Struct order at depth: struct in struct, in list / large list, fixed-size list, map.
     for flags in [0x00_u8, 0x02] {
-        g.add(
+        gen.add(
             &format!("nested_struct_ab_schema_f{flags}"),
             "s: Struct<q, p: Struct<a, b>>",
             flags,
             false,
             &Input::Schema(nested_struct_schema(true)),
         );
-        g.add(
+        gen.add(
             &format!("nested_struct_ba_schema_f{flags}"),
             "s: Struct<q, p: Struct<b, a>> (only the inner level permuted)",
             flags,
             false,
             &Input::Schema(nested_struct_schema(false)),
         );
-        g.add(
+        gen.add(
             &format!("list_struct_ab_rb_f{flags}"),
             "l: List<Struct<a: Int32, b: Utf8?>?>? rows [[{1,'x'},{2,null}], null, []]",
             flags,
             false,
             &Input::Batch(list_of_struct(true, false)),
         );
-        g.add(
+        gen.add(
             &format!("list_struct_ba_rb_f{flags}"),
             "Same, struct fields declared b, a",
             flags,
             false,
             &Input::Batch(list_of_struct(false, false)),
         );
-        g.add(
+        gen.add(
             &format!("large_list_struct_ab_rb_f{flags}"),
             "Same as list_struct_ab with LargeList",
             flags,
@@ -605,14 +613,14 @@ fn build() -> Builder {
                 false,
             )]))
         };
-        g.add(
+        gen.add(
             &format!("fsl_struct_ab_schema_f{flags}"),
             "f: FixedSizeList<Struct<a, b>, 2> (schema only: data unsupported)",
             flags,
             false,
             &Input::Schema(fsl(true)),
         );
-        g.add(
+        gen.add(
             &format!("fsl_struct_ba_schema_f{flags}"),
             "f: FixedSizeList<Struct<b, a>, 2>",
             flags,
@@ -634,14 +642,14 @@ fn build() -> Builder {
                 true,
             )]))
         };
-        g.add(
+        gen.add(
             &format!("map_struct_ab_schema_f{flags}"),
             "m: Map<Utf8, Struct<a, b>> (schema only)",
             flags,
             false,
             &Input::Schema(map(true)),
         );
-        g.add(
+        gen.add(
             &format!("map_struct_ba_schema_f{flags}"),
             "m: Map<Utf8, Struct<b, a>>",
             flags,
@@ -655,23 +663,23 @@ fn build() -> Builder {
         ("fsl_struct_ab_schema", "fsl_struct_ba_schema"),
         ("map_struct_ab_schema", "map_struct_ba_schema"),
     ] {
-        g.relate(
+        gen.relate(
             "equal",
             &[&format!("{a}_f0"), &format!("{b}_f0")],
             "struct order ignored by default",
         );
-        g.relate(
+        gen.relate(
             "different",
             &[&format!("{a}_f2"), &format!("{b}_f2")],
             "ordered_struct_fields applies at this depth",
         );
     }
-    g.relate(
+    gen.relate(
         "equal",
         &["list_struct_ab_rb_f2", "large_list_struct_ab_rb_f2"],
         "List and LargeList agree in ordered mode",
     );
-    g.relate(
+    gen.relate(
         "equal",
         &["list_struct_ab_rb_f0", "large_list_struct_ab_rb_f0"],
         "List and LargeList agree by default",
@@ -693,21 +701,21 @@ fn build() -> Builder {
                 format!("one_col_schema_f{flags}"),
                 format!("one_col_array_f{flags}"),
             );
-            g.add(
+            gen.add(
                 &r,
                 "One column v: Int32 [1, 2, 3]",
                 flags,
                 false,
                 &Input::Batch(b.clone()),
             );
-            g.add(
+            gen.add(
                 &s,
                 "Schema [v: Int32]",
                 flags,
                 false,
                 &Input::Schema(b.schema()),
             );
-            g.add(
+            gen.add(
                 &a,
                 "hash_array of Int32 [1, 2, 3]",
                 flags,
@@ -720,7 +728,7 @@ fn build() -> Builder {
         }
         for ids in [rb_ids, schema_ids, array_ids] {
             let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-            g.relate(
+            gen.relate(
                 "different",
                 &refs,
                 "every flag value is domain separated, even when order cannot matter",
@@ -742,28 +750,28 @@ fn build() -> Builder {
             meta(&[("source", "golden")]),
         ));
         for flags in [0x01_u8, 0x07] {
-            g.add(
+            gen.add(
                 &format!("plain_schema_f{flags}_im0"),
                 "Schema [b, a] without metadata, include_metadata=false",
                 flags,
                 false,
                 &Input::Schema(Arc::clone(&plain)),
             );
-            g.add(
+            gen.add(
                 &format!("plain_schema_f{flags}_im1"),
                 "Same, include_metadata=true",
                 flags,
                 true,
                 &Input::Schema(Arc::clone(&plain)),
             );
-            g.add(
+            gen.add(
                 &format!("meta_schema_f{flags}_im1"),
                 "Schema [b{unit:kg}, a] + schema metadata {source:golden}, include_metadata=true",
                 flags,
                 true,
                 &Input::Schema(Arc::clone(&with_meta)),
             );
-            g.relate(
+            gen.relate(
                 "equal",
                 &[
                     &format!("plain_schema_f{flags}_im0"),
@@ -771,7 +779,7 @@ fn build() -> Builder {
                 ],
                 "empty-metadata invariant holds within each mode",
             );
-            g.relate(
+            gen.relate(
                 "different",
                 &[
                     &format!("plain_schema_f{flags}_im1"),
@@ -790,14 +798,14 @@ fn build() -> Builder {
             batch(vec![field], vec![Arc::new(s)])
         };
         for flags in [0x00_u8, 0x02] {
-            g.add(
+            gen.add(
                 &format!("ext_struct_xy_rb_f{flags}_im1"),
                 "Extension type (metadata) over Struct<x, y> storage, include_metadata=true",
                 flags,
                 true,
                 &Input::Batch(ext(true)),
             );
-            g.add(
+            gen.add(
                 &format!("ext_struct_yx_rb_f{flags}_im1"),
                 "Extension type over Struct<y, x> storage, include_metadata=true",
                 flags,
@@ -805,12 +813,12 @@ fn build() -> Builder {
                 &Input::Batch(ext(false)),
             );
         }
-        g.relate(
+        gen.relate(
             "equal",
             &["ext_struct_xy_rb_f0_im1", "ext_struct_yx_rb_f0_im1"],
             "extension storage struct order ignored by default",
         );
-        g.relate(
+        gen.relate(
             "different",
             &["ext_struct_xy_rb_f2_im1", "ext_struct_yx_rb_f2_im1"],
             "extension storage struct order counts with ordered_struct_fields",
@@ -820,7 +828,7 @@ fn build() -> Builder {
     // 6. Edge cases.
     {
         let schema = ba.schema();
-        g.add(
+        gen.add(
             "empty_stream_f1",
             "Schema [b, a], zero batches, ordered_columns",
             0x01,
@@ -828,14 +836,14 @@ fn build() -> Builder {
             &Input::Stream(Arc::clone(&schema), vec![]),
         );
         let zero_rows = two_cols(false, vec![], vec![]);
-        g.add(
+        gen.add(
             "zero_row_rb_f1",
             "Schema [b, a], one batch with zero rows, ordered_columns",
             0x01,
             false,
             &Input::Batch(zero_rows),
         );
-        g.relate(
+        gen.relate(
             "equal",
             &["empty_stream_f1", "zero_row_rb_f1"],
             "a zero-row batch contributes nothing",
@@ -850,21 +858,21 @@ fn build() -> Builder {
             .unwrap()
         };
         for flags in [0x00_u8, 0x01] {
-            g.add(
+            gen.add(
                 &format!("zero_cols_0rows_rb_f{flags}"),
                 "Zero columns, 0 rows",
                 flags,
                 false,
                 &Input::Batch(zero_cols(0)),
             );
-            g.add(
+            gen.add(
                 &format!("zero_cols_3rows_rb_f{flags}"),
                 "Zero columns, 3 rows (row count of a zero-column table is not hashed)",
                 flags,
                 false,
                 &Input::Batch(zero_cols(3)),
             );
-            g.relate(
+            gen.relate(
                 "equal",
                 &[
                     &format!("zero_cols_0rows_rb_f{flags}"),
@@ -873,7 +881,7 @@ fn build() -> Builder {
                 "documented limitation: zero-column tables do not hash their row count",
             );
         }
-        g.relate(
+        gen.relate(
             "different",
             &["zero_cols_0rows_rb_f0", "zero_cols_0rows_rb_f1"],
             "zero-column table is still domain separated",
@@ -890,7 +898,7 @@ fn build() -> Builder {
                 Arc::new(Int32Array::from(vec![None::<i32>, None])),
             ],
         );
-        g.add(
+        gen.add(
             "leaf_nulls_rb_f3",
             "Nullable leaves with nulls and an all-null Int32 column, flags 3",
             0x03,
@@ -908,7 +916,7 @@ fn build() -> Builder {
             Arc::clone(&child),
             Some(NullBuffer::from(vec![true, false])),
         );
-        let null_fields = single_struct_col(f_nullable.clone(), child, None);
+        let null_fields = single_struct_col(f_nullable, child, None);
         let f_non_null = Fields::from(vec![Field::new("a", DataType::Int32, false)]);
         let rows3 = single_struct_col(
             f_non_null.clone(),
@@ -925,56 +933,56 @@ fn build() -> Builder {
         let ls_null = list_of_nullable_struct(true);
         let ls_fields = list_of_nullable_struct(false);
         for flags in [0x00_u8, 0x04, 0x07] {
-            g.add(
+            gen.add(
                 &format!("nv_null_struct_rb_f{flags}"),
                 "s: Struct<a: Int32?>? rows [{a:1}, null]",
                 flags,
                 false,
                 &Input::Batch(null_struct.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_null_fields_rb_f{flags}"),
                 "s: Struct<a: Int32?>? rows [{a:1}, {a:null}]",
                 flags,
                 false,
                 &Input::Batch(null_fields.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_rows3_rb_f{flags}"),
                 "s: Struct<a: Int32>? rows [{a:1}, null, {a:3}]",
                 flags,
                 false,
                 &Input::Batch(rows3.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_rows2_rb_f{flags}"),
                 "s: Struct<a: Int32>? rows [{a:1}, {a:3}]",
                 flags,
                 false,
                 &Input::Batch(rows2.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_list_list_1row_rb_f{flags}"),
                 "c: List<List<Int32?>?> one row [[1], [2]]",
                 flags,
                 false,
                 &Input::Batch(ll1.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_list_list_2rows_rb_f{flags}"),
                 "c: List<List<Int32?>?> two rows [[1]], [[2]]",
                 flags,
                 false,
                 &Input::Batch(ll2.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_list_null_elem_rb_f{flags}"),
                 "l: List<Struct<a: Int32?>?> one row [null, {a:4}]",
                 flags,
                 false,
                 &Input::Batch(ls_null.clone()),
             );
-            g.add(
+            gen.add(
                 &format!("nv_list_null_fields_elem_rb_f{flags}"),
                 "l: List<Struct<a: Int32?>?> one row [{a:null}, {a:4}]",
                 flags,
@@ -988,17 +996,17 @@ fn build() -> Builder {
             ("nv_list_list_1row_rb", "nv_list_list_2rows_rb"),
             ("nv_list_null_elem_rb", "nv_list_null_fields_elem_rb"),
         ] {
-            g.relate(
+            gen.relate(
                 "equal",
                 &[&format!("{a}_f0"), &format!("{b}_f0")],
                 "default layout loses this distinction (frozen)",
             );
-            g.relate(
+            gen.relate(
                 "different",
                 &[&format!("{a}_f4"), &format!("{b}_f4")],
                 "nested_validity records it",
             );
-            g.relate(
+            gen.relate(
                 "different",
                 &[&format!("{a}_f7"), &format!("{b}_f7")],
                 "nested_validity records it (all options on)",
@@ -1032,7 +1040,7 @@ fn build() -> Builder {
             vec![Arc::new(outer)],
         );
         for flags in [0x04_u8, 0x07] {
-            g.add(
+            gen.add(
                 &format!("nv_nested_structs_rb_f{flags}"),
                 "o: Struct<w: Int32, i: Struct<v: Int32?>?>? with nulls at both levels",
                 flags,
@@ -1051,14 +1059,14 @@ fn build() -> Builder {
             Arc::new(Int32Array::from(vec![0, 3])),
             Some(NullBuffer::from(vec![false, true])),
         );
-        g.add(
+        gen.add(
             "nv_rows3_stream_f4",
             "nv_rows3 data split into two batches, nested_validity",
             0x04,
             false,
             &Input::Stream(rows3.schema(), vec![p1, p2]),
         );
-        g.relate(
+        gen.relate(
             "equal",
             &["nv_rows3_stream_f4", "nv_rows3_rb_f4"],
             "batch-split independence with nested_validity",
@@ -1075,14 +1083,14 @@ fn build() -> Builder {
             None,
         ));
         for flags in [0x00_u8, 0x04] {
-            g.add(
+            gen.add(
                 &format!("nv_array_rows3_f{flags}"),
                 "hash_array of Struct<a: Int32> [{a:1}, null, {a:3}]",
                 flags,
                 false,
                 &Input::Array(Arc::clone(&arr3)),
             );
-            g.add(
+            gen.add(
                 &format!("nv_array_rows2_f{flags}"),
                 "hash_array of Struct<a: Int32> [{a:1}, {a:3}]",
                 flags,
@@ -1090,12 +1098,12 @@ fn build() -> Builder {
                 &Input::Array(Arc::clone(&arr2)),
             );
         }
-        g.relate(
+        gen.relate(
             "equal",
             &["nv_array_rows3_f0", "nv_array_rows2_f0"],
             "default hash_array drops null struct rows (frozen)",
         );
-        g.relate(
+        gen.relate(
             "different",
             &["nv_array_rows3_f4", "nv_array_rows2_f4"],
             "nested_validity counts them",
@@ -1115,28 +1123,28 @@ fn build() -> Builder {
             )
         };
         for flags in [0x00_u8, 0x03, 0x07] {
-            g.add(
+            gen.add(
                 &format!("phys_dict_rb_f{flags}"),
                 "[z: Int32, d: Dictionary<Int32, Utf8>]",
                 flags,
                 false,
                 &Input::Batch(mk(Arc::new(dict.clone()))),
             );
-            g.add(
+            gen.add(
                 &format!("phys_utf8_rb_f{flags}"),
                 "[z: Int32, d: Utf8] same values",
                 flags,
                 false,
                 &Input::Batch(mk(Arc::new(StringArray::from(vec!["p", "q", "p"])))),
             );
-            g.add(
+            gen.add(
                 &format!("phys_large_utf8_rb_f{flags}"),
                 "[z: Int32, d: LargeUtf8] same values",
                 flags,
                 false,
                 &Input::Batch(mk(Arc::new(LargeStringArray::from(vec!["p", "q", "p"])))),
             );
-            g.relate(
+            gen.relate(
                 "equal",
                 &[
                     &format!("phys_dict_rb_f{flags}"),
@@ -1151,14 +1159,14 @@ fn build() -> Builder {
     // 9. hash_array with struct order.
     {
         for flags in [0x00_u8, 0x02, 0x06] {
-            g.add(
+            gen.add(
                 &format!("array_struct_xy_f{flags}"),
                 "hash_array of Struct<x: Int32, y: Boolean> [{1,true},{2,false}]",
                 flags,
                 false,
                 &Input::Array(Arc::new(xy_struct(true, vec![1, 2], vec![true, false]))),
             );
-            g.add(
+            gen.add(
                 &format!("array_struct_yx_f{flags}"),
                 "Same, fields declared y, x",
                 flags,
@@ -1166,24 +1174,24 @@ fn build() -> Builder {
                 &Input::Array(Arc::new(xy_struct(false, vec![1, 2], vec![true, false]))),
             );
         }
-        g.relate(
+        gen.relate(
             "equal",
             &["array_struct_xy_f0", "array_struct_yx_f0"],
             "hash_array: struct order ignored by default",
         );
-        g.relate(
+        gen.relate(
             "different",
             &["array_struct_xy_f2", "array_struct_yx_f2"],
             "hash_array: ordered_struct_fields",
         );
-        g.relate(
+        gen.relate(
             "different",
             &["array_struct_xy_f6", "array_struct_yx_f6"],
             "hash_array: ordered_struct_fields with nested_validity",
         );
         let l = list_of_struct(false, false);
         for flags in [0x02_u8, 0x07] {
-            g.add(
+            gen.add(
                 &format!("array_list_struct_f{flags}"),
                 "hash_array of List<Struct<b, a>?> with a null row",
                 flags,
@@ -1204,33 +1212,124 @@ fn build() -> Builder {
         );
         let p1 = cols_and_struct(false, false, vec![7], vec![1], vec![true]);
         let p2 = cols_and_struct(false, false, vec![8, 9], vec![2, 3], vec![false, true]);
-        g.add(
+        gen.add(
             "combo_sn_yx_3rows_rb_f7",
             "Columns s, n; struct y, x; 3 rows; all options on",
             0x07,
             false,
             &Input::Batch(whole.clone()),
         );
-        g.add(
+        gen.add(
             "combo_sn_yx_3rows_stream_f7",
             "Same data as two batches",
             0x07,
             false,
             &Input::Stream(whole.schema(), vec![p1, p2]),
         );
-        g.relate(
+        gen.relate(
             "equal",
             &["combo_sn_yx_3rows_rb_f7", "combo_sn_yx_3rows_stream_f7"],
             "batch-split independence with all options on",
         );
     }
 
-    g
+    // 11. Boolean data under the third switch (one byte per valid value).
+    {
+        let bools = |nullable: bool, values: Vec<Option<bool>>| {
+            batch(
+                vec![Field::new("b", DataType::Boolean, nullable)],
+                vec![Arc::new(BooleanArray::from(values))],
+            )
+        };
+        let one = bools(false, vec![Some(true)]);
+        let three = bools(false, vec![Some(true), Some(false), Some(false)]);
+        for flags in [0x00_u8, 0x04] {
+            gen.add(
+                &format!("bool_1row_rb_f{flags}"),
+                "b: Boolean non-null [true]",
+                flags,
+                false,
+                &Input::Batch(one.clone()),
+            );
+            gen.add(
+                &format!("bool_3rows_rb_f{flags}"),
+                "b: Boolean non-null [true, false, false]",
+                flags,
+                false,
+                &Input::Batch(three.clone()),
+            );
+            gen.add(
+                &format!("bool_array_1_f{flags}"),
+                "hash_array of Boolean [true]",
+                flags,
+                false,
+                &Input::Array(Arc::new(BooleanArray::from(vec![true]))),
+            );
+            gen.add(
+                &format!("bool_array_2_f{flags}"),
+                "hash_array of Boolean [true, false]",
+                flags,
+                false,
+                &Input::Array(Arc::new(BooleanArray::from(vec![true, false]))),
+            );
+        }
+        gen.relate(
+            "equal",
+            &["bool_1row_rb_f0", "bool_3rows_rb_f0"],
+            "default layout: trailing false Boolean rows are lost (frozen)",
+        );
+        gen.relate(
+            "different",
+            &["bool_1row_rb_f4", "bool_3rows_rb_f4"],
+            "third switch: one byte per Boolean value counts them",
+        );
+        gen.relate(
+            "equal",
+            &["bool_array_1_f0", "bool_array_2_f0"],
+            "default hash_array: trailing false lost (frozen)",
+        );
+        gen.relate(
+            "different",
+            &["bool_array_1_f4", "bool_array_2_f4"],
+            "third switch: counted",
+        );
+        let whole = bools(true, vec![Some(true), None, Some(false), Some(true)]);
+        let p1 = bools(true, vec![Some(true)]);
+        let p2 = bools(true, vec![None, Some(false), Some(true)]);
+        for flags in [0x00_u8, 0x04] {
+            gen.add(
+                &format!("bool_nullable_rb_f{flags}"),
+                "b: Boolean nullable [true, null, false, true]",
+                flags,
+                false,
+                &Input::Batch(whole.clone()),
+            );
+            gen.add(
+                &format!("bool_nullable_stream_f{flags}"),
+                "Same as two batches [true] + [null, false, true]",
+                flags,
+                false,
+                &Input::Stream(whole.schema(), vec![p1.clone(), p2.clone()]),
+            );
+        }
+        gen.relate(
+            "different",
+            &["bool_nullable_rb_f0", "bool_nullable_stream_f0"],
+            "default layout: Boolean data is packed per batch, so batch splits change the hash (frozen)",
+        );
+        gen.relate(
+            "equal",
+            &["bool_nullable_rb_f4", "bool_nullable_stream_f4"],
+            "third switch: Boolean is batch-split independent",
+        );
+    }
+
+    gen
 }
 
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
 fn check_append_only(vectors: &[GoldenVector]) {
-    let Ok(raw) = std::fs::read_to_string(FIXTURE_PATH) else {
+    let Ok(raw) = fs::read_to_string(FIXTURE_PATH) else {
         return; // no committed fixture yet
     };
     let existing: ExistingFixture = serde_json::from_str(&raw).unwrap();

@@ -765,6 +765,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     effective_array,
                     path,
                     ancestor_struct_nulls,
+                    nested_validity,
                     fields,
                 );
             }
@@ -908,6 +909,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         array: &dyn Array,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
+        nested_validity: bool,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
         let entry = fields
@@ -947,15 +949,20 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 .build()
                 .expect("rebuild array with combined null buffer");
             let combined_array = make_array(new_data);
-            Self::hash_leaf_data(data_type, combined_array.as_ref(), entry);
+            Self::hash_leaf_data(data_type, combined_array.as_ref(), nested_validity, entry);
         } else {
-            Self::hash_leaf_data(data_type, array, entry);
+            Self::hash_leaf_data(data_type, array, nested_validity, entry);
         }
     }
 
     /// Hash leaf data into the entry's data digest, without modifying `null_bits`
     /// (which are already handled by `traverse_leaf`).
-    fn hash_leaf_data(data_type: &DataType, array: &dyn Array, entry: &mut DigestBufferType<D>) {
+    fn hash_leaf_data(
+        data_type: &DataType,
+        array: &dyn Array,
+        nested_validity: bool,
+        entry: &mut DigestBufferType<D>,
+    ) {
         // Save and restore null_bits so array_digest_update's handle_null_bits
         // pushes don't pollute the real null_bits (which traverse_leaf manages).
         // We keep null_bits in place during the call so hash functions use
@@ -966,7 +973,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         if array.nulls().is_some() {
             entry.null_bits = Some(BitVec::<u8, Lsb0>::new());
         }
-        Self::array_digest_update(data_type, array, entry);
+        Self::array_digest_update(data_type, array, nested_validity, entry);
         // Restore the real null_bits
         entry.null_bits = saved;
     }
@@ -994,6 +1001,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     fn array_digest_update(
         data_type: &DataType,
         array: &dyn Array,
+        nested_validity: bool,
         digest: &mut DigestBufferType<D>,
     ) {
         // Normalize small variants to their large equivalents so every code path
@@ -1033,7 +1041,19 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     .downcast_ref::<BooleanArray>()
                     .expect("Failed to downcast to BooleanArray");
 
-                if let Some(ref mut null_bits) = digest.null_bits {
+                if nested_validity {
+                    // Lossless layout (byte-layout spec Section 9.5): one byte (0x00 / 0x01)
+                    // per VALID value, so the value count is hashed and batches can be split
+                    // anywhere. Nulls are skipped, as in the default layout.
+                    if let Some(ref mut null_bits) = digest.null_bits {
+                        Self::handle_null_bits(bool_array, null_bits);
+                    }
+                    let bytes: Vec<u8> = (0..bool_array.len())
+                        .filter(|&i| bool_array.is_valid(i))
+                        .map(|i| u8::from(bool_array.value(i)))
+                        .collect();
+                    digest.data_mut().update(&bytes);
+                } else if let Some(ref mut null_bits) = digest.null_bits {
                     // Handle null bits first
                     Self::handle_null_bits(bool_array, null_bits);
 
@@ -1124,7 +1144,12 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::Dictionary(_, value_type) => {
                 let resolved = cast(effective_array, value_type.as_ref())
                     .expect("Failed to cast dictionary to plain array");
-                Self::array_digest_update(value_type.as_ref(), resolved.as_ref(), digest);
+                Self::array_digest_update(
+                    value_type.as_ref(),
+                    resolved.as_ref(),
+                    nested_validity,
+                    digest,
+                );
             }
             DataType::Decimal128(_, _) => {
                 Self::hash_fixed_size_array(effective_array, digest, 16);
