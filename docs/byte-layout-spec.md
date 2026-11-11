@@ -75,7 +75,7 @@ Each type is serialized to a canonical JSON value.
 |---|---|
 | Struct | `{"Struct":[<child>, ...]}`, children **sorted by name** (by UTF-8 bytes; with `ordered_struct_fields`, in declaration order); `<child>` = `{"data_type":<type>,"name":"<name>","nullable":<bool>}` |
 | List / LargeList | `{"LargeList":<element>}`; `<element>` = `{"data_type":<type>,"nullable":<bool>}` (the element field's name is **not** hashed) |
-| FixedSizeList(f, n) | `{"FixedSizeList":[<element>,n]}` |
+| FixedSizeList(f, n) | `{"FixedSizeList":[<element>,n]}` (`<element>` as for List; **not** canonicalized to `LargeList`: a fixed-size list is a different type from a variable-size list and from a fixed-size list of another size) |
 | Map(entries, keys_sorted) | `{"Map":{"key":<element>,"keys_sorted":<bool>,"value":<element>}}` where key and value are the entries struct's first and second field (their names, the entries field's name and its nullability are **not** hashed) |
 
 Example, `m: Map<Utf8, Struct<z: Int32, a: Int32> nullable>` nullable, `keys_sorted = false`:
@@ -116,7 +116,8 @@ to `LargeUtf8` / `LargeBinary` first.
 
 Time units are spelled `Second`, `Millisecond`, `Microsecond`, `Nanosecond`. The golden file has
 one `hash_schema` vector per form (`type_*_schema_f0`). `ListView`, `LargeListView`, `Union` and
-`RunEndEncoded` are rejected (Section 7).
+`RunEndEncoded` are rejected (Section 7). `FixedSizeBinary(n)` and `FixedSizeList<UInt8, n>` are
+different types (different JSON and different nodes).
 
 #### JSON text rules
 
@@ -233,8 +234,8 @@ hash as `false`.
 The schema is a tree of **nodes**: each column, each struct child and each list element is a
 node. Node paths: a column is its `name`; a struct child is `p + "/" + name` (always, also when
 `p` or `name` is empty); a list, large-list or fixed-size-list element is `p + "/"`; a map `m`
-has the nodes `m/`, `m//key` and `m//value`. Fixed-size-list and map nodes exist for the path
-checks (Section 7) and Phase 2 only, as their data is not supported (Section 8). For `hash_array` the array is the node `""`,
+has the nodes `m/`, `m//key` and `m//value`. Map nodes exist for the path checks (Section 7) and
+Phase 2 only, as map data is not supported (Section 8). For `hash_array` the array is the node `""`,
 so a child of a root struct is `"/" + name`. Example: column `items: List<Struct<id, label>>` has
 nodes `items`, `items/`, `items//id`, `items//label`; a struct column `""` with child `x` has
 nodes `""` and `/x` (distinct from a column `x`). A dictionary node is a node of its value type
@@ -249,25 +250,35 @@ applicable, of:
 
 1. **validity** — if the node's field is nullable:
    `bit_count (u64) || validity words (u8 each, bits Lsb0, last word zero-padded)`;
-2. **lengths** — if the node is a list: `SHA-256( length (u64) of every valid element, in order )`;
-3. **values** — if the node is a leaf (neither struct nor list): `SHA-256( value bytes of every effectively valid element, in order )`.
+2. **lengths** — if the node is a list or large list: `SHA-256( length (u64) of every valid element, in order )`;
+3. **values** — if the node is a leaf (neither struct nor list nor fixed-size list): `SHA-256( value bytes of every effectively valid element, in order )`.
 
 A struct has no lengths or values: a non-nullable struct's entry is empty; a nullable struct's
-entry is its validity.
+entry is its validity. A **fixed-size list** has no lengths (every valid value has exactly `n`
+items, and `n` is in the schema) and no values: like a struct, a non-nullable fixed-size list's
+entry is empty and a nullable one's entry is its validity.
 
 **Elements of a node.** The elements of a column are the rows. A struct child has one element per
 element of its struct (also where the struct value is null; the child's validity bit is then 0).
 A list element node's elements are the items of all **effectively valid** values of its list
 (below), in order; items of null list values (and child slots outside every list value's offset
-range) are not elements and are never visited, whatever they hold. The `hash_array` root's
-elements are the array's elements.
+range) are not elements and are never visited, whatever they hold. The same holds for a
+fixed-size list `FixedSizeList<_, n>`: value `i` (logical index, after the array's offset) covers
+the `n` child positions `[i·n, (i+1)·n)`; the element node's elements are the `n` items of every
+effectively valid value, in order. A null value still occupies `n` child positions in Arrow;
+those items are not elements and never affect the hash, and neither do child positions past the
+last value (`n = 0`: the element node never has elements). (pyarrow: `FixedSizeListArray.values`
+ignores the array's offset; value `i` covers `values[(offset + i)·n : (offset + i + 1)·n]`.) The
+`hash_array` root's elements are the array's elements.
 
 **Validity bits.** Every node has an *effective validity* per element: `1` iff the element is
 valid **and** every enclosing struct value at the same list level is valid (struct nulls are
 ANDed downwards; list boundaries reset this). It is computed for **every** node and **written**
 (item 1) only for nullable nodes. Elements whose effective validity is `0` contribute no lengths
 and no values — also for non-nullable nodes, whose nulls can only come from an enclosing struct.
-"Valid" in items 2 and 3 always means effectively valid. For a dictionary node at any depth,
+"Valid" in items 2 and 3 always means effectively valid. Lists and fixed-size lists start a new
+list level: the elements of their element node are only items of effectively valid values, so no
+enclosing struct null applies to them. For a dictionary node at any depth,
 "valid" refers to the **decoded** array: an element whose index is valid but whose dictionary
 value is null is null (validity bit 0, no value, and a Section 7 item 4 violation if the field is
 non-nullable). pyarrow's `DictionaryArray.null_count` and `is_valid()` look only at the indices;
@@ -367,7 +378,9 @@ Rust panics (documented under `# Panics`); Python raises `ValueError`:
    (a non-nullable dictionary column whose valid index points at a null dictionary value, or
    IPC data read without validation, reaches the hasher); pyarrow can build them.
    A null in a child slot that is not an element — under a null list value, or outside every
-   list value's offset range — is ignored, for `List` and `LargeList` alike;
+   list value's offset range — is ignored, for `List`, `LargeList` and `FixedSizeList` alike
+   (also for nulls of any depth below such a slot). A non-nullable field (including a
+   fixed-size list) whose array has a null value at an element is rejected like any other;
 5. a streamed batch whose schema does not match (Section 5).
 
 **Duplicate metadata keys are not portable.** Metadata is a map (Section 2.3); stored Arrow
@@ -390,10 +403,14 @@ be discarded (a `Result`-returning API is a proposed follow-up).
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
 Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
-List/LargeList, Struct, Dictionary of any of these (also of structs and lists; a dictionary of
-dictionaries resolves recursively), and extension types over any of these. Schemas of `Null`, `FixedSizeList`, `Map`, `Interval`, `Utf8View` and
-`BinaryView` hash, but data hashing of a schema that contains them is rejected (Section 7, item 3;
-Rust panics with `not yet implemented`; Python raises).
+List/LargeList, FixedSizeList (any size, also 0), Struct, Dictionary of any of these (also of
+structs, lists and fixed-size lists; a dictionary of dictionaries resolves recursively), and
+extension types over any of these (for example `arrow.fixed_shape_tensor`, whose storage is a
+fixed-size list). Schemas of `Null`, `Map`, `Interval`, `Utf8View` and `BinaryView` hash, but data
+hashing of a schema that contains them anywhere (also inside a fixed-size list) is rejected
+(Section 7, item 3; Rust panics with `not yet implemented`; Python raises). `FixedSizeList` data
+was rejected until ITL-927; adding it moved no existing hash, as every input containing it was
+rejected before any data was hashed.
 
 ---
 
@@ -444,6 +461,24 @@ final = SHA-256(
     SHA-256(01 00 00 00)                          //   values [1]
 )
 ```
+
+**Example 3b — fixed-size list.** `f: FixedSizeList<Int32 nullable, 2>` nullable, rows
+`[[1, null], null, [3, 4]]`, child array `[1, null, 7, 8, 3, 4]` (`7, 8` under the null value).
+
+```
+final = SHA-256(
+    header('R', 0x00)
+    schema_digest(f)       // {"f":{"data_type":{"FixedSizeList":[{"data_type":"Int32","nullable":true},2]},"nullable":true}}
+    03 00 00 00 00 00 00 00                       // row count
+    03 00 00 00 00 00 00 00  05                   // entry "f": validity [1,0,1] (no lengths)
+    04 00 00 00 00 00 00 00  0d                   // entry "f/": validity [1,0,1,1] (items of values 0 and 2)
+    SHA-256(01 00 00 00  03 00 00 00  04 00 00 00)   //   values [1, 3, 4]
+)
+hash = 000002e0b5ce37cf5204e24c40101db9cfae979021334d99aea08e0408f8174f841f3b
+```
+
+The same rows as `List<Int32 nullable>` hash differently: the schema digest differs, and entry
+`"f"` would also hold `SHA-256` of the lengths `[2, 2]`.
 
 **Example 4 — list of nullable struct.** `l: List<Struct<a: Int32 non-null> nullable>` non-null, one row
 `[null, {a: 4}]`: entries `"l"` = `SHA-256(02 00 00 00 00 00 00 00)` (lengths), `"l/"` =
@@ -506,7 +541,7 @@ format-2 value.
 | I1 | Order: without `ordered_columns`, permuting columns does not change the hash; with it, it does. The same for struct fields at every depth and `ordered_struct_fields`. |
 | I2 | Hashes taken with different order options never coincide. |
 | I2a | Outputs of different entry points (`hash_schema`, record batch / stream, `hash_array`) never coincide (each starts its SHA-256 input with its own kind byte, Section 1). |
-| I3 | `Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`, `List`≡`LargeList`, dictionary≡plain, in every mode. |
+| I3 | `Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`, `List`≡`LargeList`, dictionary≡plain, in every mode; `FixedSizeList<_, n>` is equivalent to nothing else (not `List`, not another size, not `FixedSizeBinary`). |
 | I4 | For every supported type: splitting rows into batches, slicing (non-zero offsets) and empty batches do not change the hash; adding or removing rows does; logically different data never collides (tested exhaustively on small inputs). |
 | I5 | Within one `flags` value, `include_metadata = true` without metadata equals `false`. |
 
@@ -543,10 +578,16 @@ were kept). From the release on it is append-only:
 | `hash_stream` | `new(schema)`, `update` with each batch in order (possibly none), `finalize` |
 | `hash_array` | column 0 of the single batch, as an array |
 
-The vectors `hidden_null_list_rb_f0`, `hidden_null_large_list_rb_f0` and `nested_hidden_*`
-hold non-nullable nulls hidden by null lists or ancestor structs (Section 7, item 4),
-including dictionary-encoded descendants: decode them without full validation
-(arrow-rs's validating IPC reader rejects them; pyarrow reads them).
+The vectors `hidden_null_list_rb_f0`, `hidden_null_large_list_rb_f0`, `nested_hidden_*`,
+`fsl_fsl_hidden_nulls_rb_f0`, `fsl_fsl_hidden_nulls_array_f0`, `fsl_struct_masked_nulls_rb_f0`
+and `fsl_struct2_masked_nulls_rb_f0` hold non-nullable nulls hidden by null lists, null
+fixed-size lists or ancestor structs (Section 7, item 4), including dictionary-encoded
+descendants: decode them without full validation (arrow-rs's validating IPC reader rejects them;
+pyarrow reads them).
+
+The `fsl_*` vectors (ITL-927) pin `FixedSizeList` data. A few earlier vectors describe
+fixed-size-list schemas as "schema only: data unsupported"; their descriptions are kept verbatim
+(vectors are permanent) and record the state when they were added.
 
 A relation `equal` requires all listed vectors to have the same `expected_hash`; `different`
 requires them to be pairwise different.

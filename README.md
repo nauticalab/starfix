@@ -109,14 +109,16 @@ while starfix-python rejects such inputs with `include_metadata` (spec Section 7
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
 Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
-List/LargeList, Struct, and Dictionary of any of these (a dictionary of dictionaries resolves
-recursively; `FixedSizeBinary(0)` is supported). Schemas of `Null`, `FixedSizeList`, `Map`,
-`Interval`, `Utf8View` and `BinaryView` can be hashed, but their data cannot yet. Extension types
+List/LargeList, FixedSizeList, Struct, and Dictionary of any of these (a dictionary of
+dictionaries resolves recursively; `FixedSizeBinary(0)` and `FixedSizeList<_, 0>` are supported).
+`FixedSizeList<T, n>` is its own type: it never hashes like `List<T>` / `LargeList<T>` with the
+same values, nor like a fixed-size list of another size or `FixedSizeBinary(n)`. Schemas of
+`Null`, `Map`, `Interval`, `Utf8View` and `BinaryView` can be hashed, but their data cannot yet. Extension types
 hash as their storage type; with `include_metadata`, their `ARROW:extension:*` metadata counts
 too (an absent `ARROW:extension:metadata` equals an empty one).
 
-Performance: dictionary-encoded columns whose values are nested (struct or list) are hashed per
-row; plain nested columns and dictionaries of scalars and strings are unaffected.
+Performance: dictionary-encoded columns whose values are nested (struct, list or fixed-size list)
+are hashed per row; plain nested columns and dictionaries of scalars and strings are unaffected.
 
 ## Legacy 0.4 mode (format 1)
 

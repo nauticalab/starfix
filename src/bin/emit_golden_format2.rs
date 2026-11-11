@@ -3038,7 +3038,7 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
             "hash_array List<Int32?> [[1, null], null, [3, 4]]",
             0x00,
             false,
-            &Input::Array(as_list.column(0).clone()),
+            &Input::Array(Arc::clone(as_list.column(0))),
         );
     }
     gen.relate(
@@ -3138,7 +3138,7 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
                 &format!("hash_array of an empty FixedSizeList<Int32 non-null, {size}>"),
                 0x00,
                 false,
-                &Input::Array(empty.column(0).clone()),
+                &Input::Array(Arc::clone(empty.column(0))),
             );
         }
     }
@@ -3250,14 +3250,14 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
             "hash_array of the fsl_fsl_hidden_values column",
             0x00,
             false,
-            &Input::Array(nested([Some(9); 4], [true, true]).column(0).clone()),
+            &Input::Array(Arc::clone(nested([Some(9); 4], [true, true]).column(0))),
         );
         gen.add(
             "fsl_fsl_hidden_nulls_array_f0",
             "hash_array of the fsl_fsl_hidden_nulls column",
             0x00,
             false,
-            &Input::Array(nested([None; 4], [false, true]).column(0).clone()),
+            &Input::Array(Arc::clone(nested([None; 4], [false, true]).column(0))),
         );
 
         let masked1 = |hidden: [Option<i32>; 2]| {

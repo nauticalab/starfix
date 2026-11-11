@@ -1,6 +1,7 @@
 # FixedSizeList data hashing in hash format 2 (ITL-927) — design
 
-Status: **proposal, awaiting maintainer approval**. No library code is written before approval.
+Status: **provisionally approved** by the coordinator (2026-11-11); the layout (FORMAT 1 and 2
+below) is with the maintainer for final confirmation. Implemented on this branch.
 
 Base: PR #20 (hash format 2, `e079d56`). References are to `docs/byte-layout-spec.md` (the
 "spec"). Maintainer decision (2026-11-11), binding: *"Fixed length list is NOT type identical to

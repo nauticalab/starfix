@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+Whether this ships inside 0.5.0 or as 0.5.1 is the maintainer's call.
+
+### Added — `FixedSizeList` data hashing (ITL-927)
+
+- Record batches, streams and `hash_array` now accept `FixedSizeList` data (any size, also 0;
+  at any depth, also dictionary-encoded and as extension storage such as
+  `arrow.fixed_shape_tensor`). Previously data hashing of any schema containing a
+  `FixedSizeList` panicked.
+- `FixedSizeList<T, n>` is a different type from `List<T>` / `LargeList<T>` and from
+  `FixedSizeList<T, m>` (`m != n`): equal values hash differently (schema and data). Its schema
+  form was already defined and is unchanged.
+- Layout (byte-layout spec Section 3.2, Example 3b): a fixed-size list node's entry is its
+  validity if nullable and nothing else (no lengths); its element node's elements are the `n`
+  items of every effectively valid value. Items under null values (and child positions past the
+  last value) never affect the hash; a null of a non-nullable element there is accepted, a
+  visible one is rejected.
+- No existing hash changes: every input containing a `FixedSizeList` was rejected before any
+  data was hashed. `tests/golden/format2_v0.5.json` gains 73 `fsl_*` vectors and 34 relations
+  (appended; the 423 earlier vectors and 114 relations are unchanged).
+
 ## Unreleased (proposed 0.5.0)
 
 ### Changed — hash format 2 (every hash changes)
