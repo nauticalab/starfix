@@ -2350,9 +2350,10 @@ fn add_review_coverage(gen: &mut Builder) {
             ],
             "an absent ARROW:extension:metadata equals an empty one",
         );
+        // Canonical storage as Arrow C++ / pyarrow define it: the item field is NULLABLE.
         let tensor =
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), 4);
-        gen.add("ext_tensor_canonical_schema_f0_im1", "arrow.fixed_shape_tensor with canonical metadata {\"shape\":[2,2]} over FixedSizeList<Float32, 4> (schema only)", 0x00, true, &Input::Schema(ext("arrow.fixed_shape_tensor", &[("ARROW:extension:metadata", "{\"shape\":[2,2]}")], tensor)));
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 4);
+        gen.add("ext_tensor_canonical_schema_f0_im1", "arrow.fixed_shape_tensor with canonical metadata {\"shape\":[2,2]} over its canonical storage FixedSizeList<item: Float32 nullable, 4> (schema only)", 0x00, true, &Input::Schema(ext("arrow.fixed_shape_tensor", &[("ARROW:extension:metadata", "{\"shape\":[2,2]}")], tensor)));
     }
 
     // 25. Empty names (R7) and the format-2 nullable-struct example with a non-nullable child (E2)

@@ -175,9 +175,12 @@ extension types it has registered. Add them back: `ARROW:extension:name` =
 UTF-8 for Python-defined `pa.ExtensionType` subclasses (these round-trip their stored bytes).
 pyarrow's natively registered canonical extension types (`arrow.uuid`, `arrow.json`,
 `arrow.bool8`, `arrow.fixed_shape_tensor`, `arrow.variable_shape_tensor`, `arrow.opaque`,
-depending on the pyarrow version) expose only their canonical serialization; their hash is
-**defined only when the stored metadata is already in that canonical form** (as every Arrow
-implementation writes it). Unregistered extension types keep both keys in `field.metadata`.
+depending on the pyarrow version) expose only their canonical serialization and rebuild their
+storage type from their own definition; their hash is **defined only when both the stored
+metadata and the stored storage type are already in the canonical form that the reader
+reconstructs** (as every Arrow implementation writes them) — for the tensor types this includes
+the element nullability (`arrow.fixed_shape_tensor` storage is `FixedSizeList<item: T nullable,
+n>`). Unregistered extension types keep both keys in `field.metadata`.
 Without `include_metadata`, an extension type hashes exactly like its storage type.
 
 ### 2.4 Names that are not hashed
