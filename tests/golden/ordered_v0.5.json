@@ -1,7 +1,7 @@
 {
   "version": "0.5",
   "generated_by": "cargo run --bin emit_golden_ordered",
-  "rust_commit": "cf318f6675ff50252cca28442f43f52146e6b3cc",
+  "rust_commit": "e5b49c45351194943498a2ef488a388be71a1c1e",
   "vectors": [
     {
       "id": "cols_ab_rb_f0",
@@ -1883,6 +1883,611 @@
       "nested_validity": true,
       "ipc_b64": "/////zgBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAAdP///xgAAAAMAAAAAAAADMAAAAABAAAAGAAAAGj///8QABQAEAAOAA8ABAAAAAgAEAAAABwAAAAMAAAAAAABDYQAAAACAAAAVAAAAAgAAACc////yP///xgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAAFAAAAdmFsdWUAAAAQABQAEAAAAA8ABAAAAAgAEAAAABgAAAAMAAAAAAAABRAAAAAAAAAABAAEAAQAAAADAAAAa2V5AAQAAABpdGVtAAAAAAIAAABrdgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////OAEAABAAAAAMABoAGAAXAAQACAAMAAAAIAAAAAACAAAAAAAAAAAAAAAAAAMEAAoAGAAMAAgABAAKAAAAXAAAABAAAAABAAAAAAAAAAAAAAAEAAAAAQAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAABAAAAAAAAAEAAAAAAAAAACAAAAAAAAACAAAAAAAAAAAEAAAAAAAAAwAAAAAAAAAABAAAAAAAAAAABAAAAAAAADAAAAAAAAABAAQAAAAAAAAIAAAAAAAAAgAEAAAAAAAABAAAAAAAAAMABAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYmEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
       "expected_hash": "00000165094d74353dc990af3bf495d67dbef64b278e757fed267583a7ce44f7d6088d"
+    },
+    {
+      "id": "type_null_schema_f0",
+      "description": "Schema [c: Null nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQEQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001450e51629d5bf2b2ef7ab0639e64238f7598446f0dbd0716e3d7f4b64b8c640c"
+    },
+    {
+      "id": "type_boolean_schema_f0",
+      "description": "Schema [c: Boolean nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQYQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001f9913189cc32c79fb14c307c8eef776bfe6a5ac40a7ccc49a0461b5ee557e0d1"
+    },
+    {
+      "id": "type_int8_schema_f0",
+      "description": "Schema [c: Int8 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAACAAAAAAAAAEAAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "0000012b83e283d49b73e9069da9861fc1741adb391ce8f592220935a64344ada102a8"
+    },
+    {
+      "id": "type_int16_schema_f0",
+      "description": "Schema [c: Int16 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAEAAAAAAAAAEAAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "000001880d3e13346e5b9ee77784fc268e1627cf77e8b3411e11b46f6454c3510e381e"
+    },
+    {
+      "id": "type_int32_schema_f0",
+      "description": "Schema [c: Int32 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "00000127e2d4e9ff00877d5f7d23ed3881633983fc7aef3b006a96fedb859d128c3989"
+    },
+    {
+      "id": "type_int64_schema_f0",
+      "description": "Schema [c: Int64 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAQAAAAAAAAAEAAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "000001b025613f15b5f393a4989ef73a15771a1102a55ef411a4b632aabade82a3d01b"
+    },
+    {
+      "id": "type_uint8_schema_f0",
+      "description": "Schema [c: UInt8 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAWABAADgAPAAQAAAAIABAAAAAYAAAAHAAAAAAAAQIYAAAAAAAGAAgABAAGAAAACAAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "00000100824cb9155025aae789d5dd0df53c9c16c88deb0972fc9b1e863c39ec55acbd"
+    },
+    {
+      "id": "type_uint16_schema_f0",
+      "description": "Schema [c: UInt16 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAWABAADgAPAAQAAAAIABAAAAAYAAAAHAAAAAAAAQIYAAAAAAAGAAgABAAGAAAAEAAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001b0f78a84d6b3598e5526341cd4f4570bc0ec6e98718f4d5249b851c6152eabc7"
+    },
+    {
+      "id": "type_uint32_schema_f0",
+      "description": "Schema [c: UInt32 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAWABAADgAPAAQAAAAIABAAAAAYAAAAHAAAAAAAAQIYAAAAAAAGAAgABAAGAAAAIAAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001351c5bba858bc19d1b0e76c645616c137ab578e680a168263de0c183d881ebfe"
+    },
+    {
+      "id": "type_uint64_schema_f0",
+      "description": "Schema [c: UInt64 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAWABAADgAPAAQAAAAIABAAAAAYAAAAHAAAAAAAAQIYAAAAAAAGAAgABAAGAAAAQAAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000013f0e525838f78941dd7ebf1cf53a38aab1ce76083120f046e3c7d5d3a1d36674"
+    },
+    {
+      "id": "type_float16_schema_f0",
+      "description": "Schema [c: Float16 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAUAAAAFAAAAAAAAQMQAAAABAAEAAQAAAAAAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000014da58ec28052f47317cbc02b5af025698cb2c541ca0c0296a0f37098e1bc8393"
+    },
+    {
+      "id": "type_float32_schema_f0",
+      "description": "Schema [c: Float32 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAWABAADgAPAAQAAAAIABAAAAAYAAAAHAAAAAAAAQMYAAAAAAAGAAgABgAGAAAAAAABAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001b79ddc004ecda1cacf1ca4129c9339f87231e38b3feb324f37505fbb00448261"
+    },
+    {
+      "id": "type_float64_schema_f0",
+      "description": "Schema [c: Float64 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAWABAADgAPAAQAAAAIABAAAAAYAAAAHAAAAAAAAQMYAAAAAAAGAAgABgAGAAAAAAACAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000018a4b885963f8e74a322a01627a43ace66eff8b29f9bffaae78d75026d6c338f0"
+    },
+    {
+      "id": "type_date32_schema_f0",
+      "description": "Schema [c: Date32 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQgYAAAAAAAAAAAABgAIAAYABgAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000017067a187a25f7004d66cca4b06e7e3e319f7f71288a9fc42df603f092b6c7f4b"
+    },
+    {
+      "id": "type_date64_schema_f0",
+      "description": "Schema [c: Date64 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQgQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001eafdd4283792f22e1655bf61378bdc53de9f32d3b34cba20ee33349b6d215d27"
+    },
+    {
+      "id": "type_time32_s_schema_f0",
+      "description": "Schema [c: Time32(Second) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQkYAAAAAAAAAAAABgAIAAYABgAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001fedd3327155f022a4dd129ad3ed5afca9999f932498d991cc8efbb8e020052a2"
+    },
+    {
+      "id": "type_time32_ms_schema_f0",
+      "description": "Schema [c: Time32(Millisecond) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQkQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001c2e1de3bcbf6a5a5faaec60dce7c65c5124061f0ccb97e7ef165a17a42b2fc4b"
+    },
+    {
+      "id": "type_time64_us_schema_f0",
+      "description": "Schema [c: Time64(Microsecond) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQkcAAAAAAAAAAgADAAGAAgACAAAAAAAAgBAAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "000001228968561050acaeb788b5475feba508a6ea8234768429d0671bf0e62d58d71b"
+    },
+    {
+      "id": "type_time64_ns_schema_f0",
+      "description": "Schema [c: Time64(Nanosecond) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQkcAAAAAAAAAAgADAAGAAgACAAAAAAAAwBAAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "0000018b7675631dcdbdaf3dfa91e3f3286f7211cf2193dcae672411b09afe4050fe59"
+    },
+    {
+      "id": "type_timestamp_s_naive_schema_f0",
+      "description": "Schema [c: Timestamp(Second, None) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQoYAAAAAAAAAAQABAAEAAAAAAAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000019fe4c7746047294fd6a07264648cedf7f0e64f08a644d779c852d270dde089db"
+    },
+    {
+      "id": "type_timestamp_ms_utc_schema_f0",
+      "description": "Schema [c: Timestamp(Millisecond, Some(\"UTC\")) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQokAAAAAAAAAAgADAAKAAQACAAAAAgAAAAAAAEAAwAAAFVUQwABAAAAYwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "00000196d90de77d3557403eb475d0f0d64774319117987aa1c588115c455666c597b5"
+    },
+    {
+      "id": "type_timestamp_us_offset_schema_f0",
+      "description": "Schema [c: Timestamp(Microsecond, Some(\"+05:30\")) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQooAAAAAAAAAAgADAAKAAQACAAAAAgAAAAAAAIABgAAACswNTozMAAAAQAAAGMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "000001c87d3b92444ee5a6b5e4e2f3bc098236ba7bcc9524ffe6e58cd012c3092bb922"
+    },
+    {
+      "id": "type_timestamp_ns_named_tz_schema_f0",
+      "description": "Schema [c: Timestamp(Nanosecond, Some(\"America/New_York\")) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQo0AAAAAAAAAAgADAAKAAQACAAAAAgAAAAAAAMAEAAAAEFtZXJpY2EvTmV3X1lvcmsAAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "000001940af673c638fc1ff9aefe02078d47ad1713ba21d3916a1a87bdb0ead51afc5e"
+    },
+    {
+      "id": "type_duration_s_schema_f0",
+      "description": "Schema [c: Duration(Second) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAARIYAAAAAAAAAAAABgAIAAYABgAAAAAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000019ef92ec048bd73719517bcdd78f1a52e57dd8d3ebbba8c3dbe689bf3473c8454"
+    },
+    {
+      "id": "type_duration_ms_schema_f0",
+      "description": "Schema [c: Duration(Millisecond) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARIQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000015f844828d2b1cf182199ab026ac2903425f0f84898befe53f53b38a8468ae257"
+    },
+    {
+      "id": "type_duration_us_schema_f0",
+      "description": "Schema [c: Duration(Microsecond) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAARIYAAAAAAAAAAAABgAIAAYABgAAAAAAAgABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001bc8e82b752d5d898ae332e360b8325e742b6d7359b6b6aed59ff21578b53141e"
+    },
+    {
+      "id": "type_duration_ns_schema_f0",
+      "description": "Schema [c: Duration(Nanosecond) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAARIYAAAAAAAAAAAABgAIAAYABgAAAAAAAwABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001e881ee30b58bdaa77fbc333e13eb21a00d3ca4e96283f1eeb4062fb29995352f"
+    },
+    {
+      "id": "type_interval_year_month_schema_f0",
+      "description": "Schema [c: Interval(YearMonth) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQsQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001edfdb7dd18d6d1f1726bd0a820e82c13ba013ca920bd3d93d08530782119785b"
+    },
+    {
+      "id": "type_interval_day_time_schema_f0",
+      "description": "Schema [c: Interval(DayTime) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQsYAAAAAAAAAAAABgAIAAYABgAAAAAAAQABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001ff900d6b57d11a3aed395b0a882a0cdf411450df8a497826e4cbdad57a41217f"
+    },
+    {
+      "id": "type_interval_month_day_nano_schema_f0",
+      "description": "Schema [c: Interval(MonthDayNano) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQsYAAAAAAAAAAAABgAIAAYABgAAAAAAAgABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001b8ebd94791c839fcf2572f1abfe6584d39ff559624dc3362f6ff6a9b43bfd9b7"
+    },
+    {
+      "id": "type_decimal32_schema_f0",
+      "description": "Schema [c: Decimal32(9, 2) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAgAAAADAAAAAAAAQckAAAAAAAAAAAACgAQAAwACAAEAAoAAAAgAAAAAgAAAAkAAAABAAAAYwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "000001dd88bf3c39e96145f03d8fc9054089eb4dd8c437d74b1d4aa1b25b8e351e5c75"
+    },
+    {
+      "id": "type_decimal64_negative_scale_schema_f0",
+      "description": "Schema [c: Decimal64(18, -3) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAgAAAADAAAAAAAAQckAAAAAAAAAAAACgAQAAwACAAEAAoAAABAAAAA/f///xIAAAABAAAAYwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "000001e16e0018ba784be83994c7a94db3071ab9c5462566161105d4ef8128105ed816"
+    },
+    {
+      "id": "type_decimal128_schema_f0",
+      "description": "Schema [c: Decimal128(38, 10) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQccAAAAAAAAAAgADAAIAAQACAAAAAoAAAAmAAAAAQAAAGMAAAD/////AAAAAA==",
+      "expected_hash": "000001ebcc3afc437ac2f831005f29907440ae6d08ab647a04f974be15d44951326683"
+    },
+    {
+      "id": "type_decimal256_schema_f0",
+      "description": "Schema [c: Decimal256(76, 0) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAgAAAADAAAAAAAAQcgAAAAAAAAAAAACgAMAAgAAAAEAAoAAAAAAQAATAAAAAEAAABjAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "0000017bf47db10e1322b3ebd6780afe01406dd3680654a3b77133f8139ebd4c987e04"
+    },
+    {
+      "id": "type_fixed_size_binary_schema_f0",
+      "description": "Schema [c: FixedSizeBinary(16) nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQ8YAAAAAAAAAAAABgAIAAQABgAAABAAAAABAAAAYwAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001a1ed63688a1bfef27f1bb08ffbc85de0edc469fc74ca4a78b89d524c1524eaa4"
+    },
+    {
+      "id": "type_utf8_schema_f0",
+      "description": "Schema [c: Utf8 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQUQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001a3d7da25cd2184dbb26c33361e651f15494198c62c060256714159fe9ff0b5f8"
+    },
+    {
+      "id": "type_large_utf8_schema_f0",
+      "description": "Schema [c: LargeUtf8 nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARQQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001a3d7da25cd2184dbb26c33361e651f15494198c62c060256714159fe9ff0b5f8"
+    },
+    {
+      "id": "type_binary_schema_f0",
+      "description": "Schema [c: Binary nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAAQQQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001551df4389549b007c7e698ab71bddf84a9946cdf127716abc37606b3a8911da5"
+    },
+    {
+      "id": "type_large_binary_schema_f0",
+      "description": "Schema [c: LargeBinary nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARMQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001551df4389549b007c7e698ab71bddf84a9946cdf127716abc37606b3a8911da5"
+    },
+    {
+      "id": "type_utf8_view_schema_f0",
+      "description": "Schema [c: Utf8View nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARgQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001c4f113df591f75ffe79c1da85c5000f0ade80eae214b97713872cab348800aa7"
+    },
+    {
+      "id": "type_binary_view_schema_f0",
+      "description": "Schema [c: BinaryView nullable], default options",
+      "method": "hash_schema",
+      "include_metadata": false,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARcQAAAAAAAAAAQABAAEAAAAAQAAAGMAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001d212dca06f49287359b6359167ac3cc02782572c4463bb552297ae03a347b856"
+    },
+    {
+      "id": "meta_map_value_schema_f0_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on the value field (path m//value)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARH8AAAAAQAAAAgAAAAs////WP///yAAAAAMAAAAAAAADdAAAAACAAAAoAAAACAAAAAEAAYABAAAAAAAEgAYABQAEgATAAgAAAAMAAQAEgAAADgAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABQAAAHZhbHVlAAAAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAIAAABrZwAABAAAAHVuaXQAAAAAEAAUABAAAAAPAAQAAAAIABAAAAAYAAAADAAAAAAAAAUQAAAAAAAAAAQABAAEAAAAAwAAAGtleQAHAAAAZW50cmllcwABAAAAbQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "0000018e90e39f63cff9891fa1536def277ab7c2545567c51cecf37e765e75f0609789"
+    },
+    {
+      "id": "meta_map_key_schema_f0_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on the key field (path m//key)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAArP///xgAAAAMAAAAAAABEQQBAAABAAAAGAAAAFT///8QABQAEAAAAA8ABAAAAAgAEAAAABwAAAAMAAAAAAAADcgAAAACAAAAZAAAABgAAACI////EAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABQAAAHZhbHVlABIAGAAUAAAAEwAIAAAADAAEABIAAAAoAAAAGAAAAAwAAAAAAAAFEAAAAAAAAAAEAAQABAAAAAMAAABrZXkAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAIAAABpZAAABAAAAHJvbGUAAAAABwAAAGVudHJpZXMAAQAAAG0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "00000197b0e3e6528d52a065864a687be4a19b4197dfb62a4ca9915c6b7d3e6bd31ee7"
+    },
+    {
+      "id": "meta_map_entries_schema_f0_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on the entries field (path m/)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAAoP///xwAAAAMAAAAAAABERABAAABAAAAIAAAAAQABgAEAAAAAAASABgAFAAAABMACAAAAAwABAASAAAAsAAAABwAAAAMAAAAAAAADZQAAAACAAAAZAAAABgAAACM////EAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABQAAAHZhbHVlAAAAEAAUABAAAAAPAAQAAAAIABAAAAAYAAAADAAAAAAAAAUQAAAAAAAAAAQABAAEAAAAAwAAAGtleQAHAAAAZW50cmllcwABAAAADAAAAAgADAAIAAQACAAAAAgAAAAQAAAABQAAAHBhaXJzAAAABAAAAHJvbGUAAAAAAQAAAG0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "00000138559b12d08a2cd6fc073ad2f98a22d75737b580905227d99207851c25e89951"
+    },
+    {
+      "id": "meta_map_all_schema_f0_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on entries, key and value",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARFYAQAAAQAAAAgAAAAs////Xv///xABAAAgAAAADAAAAAAAAA30AAAAAgAAAJgAAAAgAAAABAAGAAQAAAAAABIAGAAUABIAEwAIAAAADAAEABIAAAA4AAAAGAAAACAAAAAAAAECHAAAAAgADAAEAAsACAAAACAAAAAAAAABAAAAAAUAAAB2YWx1ZQAAAAEAAAAEAAAAaP///wgAAAAMAAAAAgAAAGtnAAAEAAAAdW5pdAAAEgAYABQAAAATAAgAAAAMAAQAEgAAACgAAAAYAAAADAAAAAAAAAUQAAAAAAAAAAQABAAEAAAAAwAAAGtleQABAAAABAAAAMz///8IAAAADAAAAAIAAABpZAAABAAAAHJvbGUAAAAABwAAAGVudHJpZXMAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAAEAAAAAUAAABwYWlycwAAAAQAAAByb2xlAAAAAAEAAABtAAAAAAAAAP////8AAAAA",
+      "expected_hash": "0000017f5cbc6a8a7a9e6f8b06fdb33a8689f413b5034a80e41451cc7d3e50d648dbaf"
+    },
+    {
+      "id": "meta_struct_child_schema_f0_im1",
+      "description": "s: Struct<a{unit:m}, b>, metadata on a struct child (path s/a)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////zgBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAA2P///yAAAAAMAAAAAAAADcwAAAACAAAAXAAAABwAAAAEAAQABAAAABAAFAAQAAAADwAEAAAACAAQAAAAEAAAABgAAAAAAAACFAAAAMD///8gAAAAAAAAAQAAAAABAAAAYgASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAYQAAAAEAAAAMAAAACAAMAAgABAAIAAAACAAAAAwAAAABAAAAbQAAAAQAAAB1bml0AAAAAAEAAABzAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "0000013ad8bf07377e7c14cdf271b6626b203a28f2295391ef0e9ac21d40d99bd0473a"
+    },
+    {
+      "id": "meta_list_element_schema_f0_im1",
+      "description": "l: List<Int32{unit:s}>, metadata on the element field (path l/)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQyUAAAAAQAAACAAAAAEAAYABAAAAAAAEgAYABQAEgATAAgAAAAMAAQAEgAAADgAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABAAAAGl0ZW0AAAAAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAEAAABzAAAABAAAAHVuaXQAAAAAAQAAAGwAAAAAAAAAAAAAAP////8AAAAA",
+      "expected_hash": "00000138cb63f6c736f44536dbc3c1cef7a81d6caa89a68a35db9ef4fcb04a82cfe91f"
+    },
+    {
+      "id": "meta_fsl_element_schema_f0_im1",
+      "description": "f: FixedSizeList<Int32{unit:s}, 2>, metadata on the element field (path f/)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": false,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAgAAAADAAAAAAAARCcAAAAAQAAACgAAAAAAAYACgAEAAYAAAACAAAAAAASABgAFAASABMACAAAAAwABAASAAAAOAAAABgAAAAgAAAAAAABAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAAEAAAAaXRlbQAAAAABAAAADAAAAAgADAAIAAQACAAAAAgAAAAMAAAAAQAAAHMAAAAEAAAAdW5pdAAAAAABAAAAZgAAAP////8AAAAA",
+      "expected_hash": "00000167f097bbffcd5ab67297252711a30106996ce8d0d7940e91ceab68b69c07023a"
+    },
+    {
+      "id": "meta_map_value_schema_f1_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on the value field (path m//value)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARH8AAAAAQAAAAgAAAAs////WP///yAAAAAMAAAAAAAADdAAAAACAAAAoAAAACAAAAAEAAYABAAAAAAAEgAYABQAEgATAAgAAAAMAAQAEgAAADgAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABQAAAHZhbHVlAAAAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAIAAABrZwAABAAAAHVuaXQAAAAAEAAUABAAAAAPAAQAAAAIABAAAAAYAAAADAAAAAAAAAUQAAAAAAAAAAQABAAEAAAAAwAAAGtleQAHAAAAZW50cmllcwABAAAAbQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "00000113d0fd6b28169745d9c4d182918e571390b1cdc5081347332df240882251759d"
+    },
+    {
+      "id": "meta_map_key_schema_f1_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on the key field (path m//key)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAArP///xgAAAAMAAAAAAABEQQBAAABAAAAGAAAAFT///8QABQAEAAAAA8ABAAAAAgAEAAAABwAAAAMAAAAAAAADcgAAAACAAAAZAAAABgAAACI////EAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABQAAAHZhbHVlABIAGAAUAAAAEwAIAAAADAAEABIAAAAoAAAAGAAAAAwAAAAAAAAFEAAAAAAAAAAEAAQABAAAAAMAAABrZXkAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAIAAABpZAAABAAAAHJvbGUAAAAABwAAAGVudHJpZXMAAQAAAG0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "00000114911c97fa61b213f4dad790c41703f48d942ae6dc5c5daedc3f6058445c0015"
+    },
+    {
+      "id": "meta_map_entries_schema_f1_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on the entries field (path m/)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////3gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAAoP///xwAAAAMAAAAAAABERABAAABAAAAIAAAAAQABgAEAAAAAAASABgAFAAAABMACAAAAAwABAASAAAAsAAAABwAAAAMAAAAAAAADZQAAAACAAAAZAAAABgAAACM////EAAUABAADgAPAAQAAAAIABAAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABQAAAHZhbHVlAAAAEAAUABAAAAAPAAQAAAAIABAAAAAYAAAADAAAAAAAAAUQAAAAAAAAAAQABAAEAAAAAwAAAGtleQAHAAAAZW50cmllcwABAAAADAAAAAgADAAIAAQACAAAAAgAAAAQAAAABQAAAHBhaXJzAAAABAAAAHJvbGUAAAAAAQAAAG0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA=",
+      "expected_hash": "000001a75deaf594d41aa6dd774d1a115aa616f04c70a36e485293823428d2e508d8f3"
+    },
+    {
+      "id": "meta_map_all_schema_f1_im1",
+      "description": "m: Map<Utf8, Int32>, metadata on entries, key and value",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////7gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAYAAAADAAAAAAAARFYAQAAAQAAAAgAAAAs////Xv///xABAAAgAAAADAAAAAAAAA30AAAAAgAAAJgAAAAgAAAABAAGAAQAAAAAABIAGAAUABIAEwAIAAAADAAEABIAAAA4AAAAGAAAACAAAAAAAAECHAAAAAgADAAEAAsACAAAACAAAAAAAAABAAAAAAUAAAB2YWx1ZQAAAAEAAAAEAAAAaP///wgAAAAMAAAAAgAAAGtnAAAEAAAAdW5pdAAAEgAYABQAAAATAAgAAAAMAAQAEgAAACgAAAAYAAAADAAAAAAAAAUQAAAAAAAAAAQABAAEAAAAAwAAAGtleQABAAAABAAAAMz///8IAAAADAAAAAIAAABpZAAABAAAAHJvbGUAAAAABwAAAGVudHJpZXMAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAAEAAAAAUAAABwYWlycwAAAAQAAAByb2xlAAAAAAEAAABtAAAAAAAAAP////8AAAAA",
+      "expected_hash": "000001a6df789e7d95703d35ac88bf1438ef6da2062c332fc369685c2983abf3987407"
+    },
+    {
+      "id": "meta_struct_child_schema_f1_im1",
+      "description": "s: Struct<a{unit:m}, b>, metadata on a struct child (path s/a)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "/////zgBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAEAAAA2P///yAAAAAMAAAAAAAADcwAAAACAAAAXAAAABwAAAAEAAQABAAAABAAFAAQAAAADwAEAAAACAAQAAAAEAAAABgAAAAAAAACFAAAAMD///8gAAAAAAAAAQAAAAABAAAAYgASABgAFAAAABMACAAAAAwABAASAAAANAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAABAAAAYQAAAAEAAAAMAAAACAAMAAgABAAIAAAACAAAAAwAAAABAAAAbQAAAAQAAAB1bml0AAAAAAEAAABzAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAA==",
+      "expected_hash": "000001116ae1c6756fb49fdc4725823fec527edd01ac1967861bfee2aa1f9173b5c2a7"
+    },
+    {
+      "id": "meta_list_element_schema_f1_im1",
+      "description": "l: List<Int32{unit:s}>, metadata on the element field (path l/)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAcAAAADAAAAAAAAQyUAAAAAQAAACAAAAAEAAYABAAAAAAAEgAYABQAEgATAAgAAAAMAAQAEgAAADgAAAAYAAAAIAAAAAAAAQIcAAAACAAMAAQACwAIAAAAIAAAAAAAAAEAAAAABAAAAGl0ZW0AAAAAAQAAAAwAAAAIAAwACAAEAAgAAAAIAAAADAAAAAEAAABzAAAABAAAAHVuaXQAAAAAAQAAAGwAAAAAAAAAAAAAAP////8AAAAA",
+      "expected_hash": "000001f9f1fcf3d5677aacd3ded7dd226567241e40326037a175e03ac1c8f974de1d12"
+    },
+    {
+      "id": "meta_fsl_element_schema_f1_im1",
+      "description": "f: FixedSizeList<Int32{unit:s}, 2>, metadata on the element field (path f/)",
+      "method": "hash_schema",
+      "include_metadata": true,
+      "ordered_columns": true,
+      "ordered_struct_fields": false,
+      "nested_validity": false,
+      "ipc_b64": "//////gAAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAEAAAAUAAAAEAAUABAADgAPAAQAAAAIABAAAAAgAAAADAAAAAAAARCcAAAAAQAAACgAAAAAAAYACgAEAAYAAAACAAAAAAASABgAFAASABMACAAAAAwABAASAAAAOAAAABgAAAAgAAAAAAABAhwAAAAIAAwABAALAAgAAAAgAAAAAAAAAQAAAAAEAAAAaXRlbQAAAAABAAAADAAAAAgADAAIAAQACAAAAAgAAAAMAAAAAQAAAHMAAAAEAAAAdW5pdAAAAAABAAAAZgAAAP////8AAAAA",
+      "expected_hash": "0000018a1bc48fd6b563121326907f9cd57a3b038a74de116c9ba2594f50d0913bee86"
     }
   ],
   "relations": [
@@ -2496,6 +3101,40 @@
         "list_kv_ba_rb_f7"
       ],
       "why": "list element order is part of the hash in every mode (starfix never sorts lists)"
+    },
+    {
+      "kind": "equal",
+      "ids": [
+        "type_utf8_schema_f0",
+        "type_large_utf8_schema_f0"
+      ],
+      "why": "Utf8 and LargeUtf8 share the canonical form"
+    },
+    {
+      "kind": "equal",
+      "ids": [
+        "type_binary_schema_f0",
+        "type_large_binary_schema_f0"
+      ],
+      "why": "Binary and LargeBinary share the canonical form"
+    },
+    {
+      "kind": "different",
+      "ids": [
+        "type_utf8_schema_f0",
+        "type_utf8_view_schema_f0"
+      ],
+      "why": "Utf8View is not canonicalized"
+    },
+    {
+      "kind": "different",
+      "ids": [
+        "meta_map_value_schema_f0_im1",
+        "meta_map_key_schema_f0_im1",
+        "meta_map_entries_schema_f0_im1",
+        "meta_map_all_schema_f0_im1"
+      ],
+      "why": "metadata on the map's entries, key and value fields is recorded at distinct paths"
     }
   ]
 }

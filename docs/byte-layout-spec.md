@@ -116,9 +116,34 @@ For example a column named `é` serializes its key as the two bytes `c3 a9`, and
 `{"Struct":[{"data_type":"Int32","name":"é","nullable":false}]}` with `é` raw, giving
 `000001e445fa3cdc5fe37df7cb3de55cf94dcee2a8990bb8dd46fb5c3b00398f8cfb2c`.
 
-**Primitive types** use Arrow's built-in serde:
-- `"Int32"`, `"Boolean"`, `"Float64"`, `"LargeBinary"`, `"LargeUtf8"`, etc.
-- `{"Decimal128": [38, 5]}`, `{"Time32": "Second"}`, etc.
+**Primitive types** use these exact forms (they are arrow-rs serde's, listed here so that no
+implementation depends on arrow-rs). `Utf8` and `Binary` never appear: they are canonicalized
+to `LargeUtf8` / `LargeBinary` first.
+
+| Arrow type | Canonical JSON |
+|---|---|
+| Null, Boolean | `"Null"`, `"Boolean"` |
+| Int8, Int16, Int32, Int64 | `"Int8"`, `"Int16"`, `"Int32"`, `"Int64"` |
+| UInt8, UInt16, UInt32, UInt64 | `"UInt8"`, `"UInt16"`, `"UInt32"`, `"UInt64"` |
+| Float16, Float32, Float64 | `"Float16"`, `"Float32"`, `"Float64"` |
+| Date32, Date64 | `"Date32"`, `"Date64"` |
+| Time32(unit), unit ∈ Second, Millisecond | `{"Time32":"Second"}` |
+| Time64(unit), unit ∈ Microsecond, Nanosecond | `{"Time64":"Nanosecond"}` |
+| Timestamp(unit, tz) | `{"Timestamp":["Microsecond","UTC"]}`; no time zone: `{"Timestamp":["Second",null]}`; the tz string is copied verbatim (`"+05:30"`, `"America/New_York"`) |
+| Duration(unit) | `{"Duration":"Millisecond"}` |
+| Interval(unit), unit ∈ YearMonth, DayTime, MonthDayNano | `{"Interval":"DayTime"}` |
+| Decimal32/64/128/256(precision, scale) | `{"Decimal128":[38,10]}`; scale may be negative: `{"Decimal64":[18,-3]}` |
+| FixedSizeBinary(n) | `{"FixedSizeBinary":16}` |
+| Utf8 / LargeUtf8 | `"LargeUtf8"` |
+| Binary / LargeBinary | `"LargeBinary"` |
+| Utf8View, BinaryView | `"Utf8View"`, `"BinaryView"` (not canonicalized; data unsupported) |
+
+Time units are spelled `Second`, `Millisecond`, `Microsecond`, `Nanosecond`. The golden file has
+one `hash_schema` vector per form (`type_*_schema_f0`).
+
+`ListView`, `LargeListView`, `Union` and `RunEndEncoded` types are serialized with arrow-rs's
+full internal `Field` representation; their schema hashes are not part of the portable
+specification, and other implementations may reject them.
 
 ### 2.2 Schema Digest (include_metadata = false)
 
@@ -150,6 +175,27 @@ if meta_doc non-empty: hasher.update(serde_json::to_string(meta_doc).as_bytes())
 ```
 
 The final `schema_digest` is `hasher.finalize()` — 32 bytes, as before.
+
+**Field paths in `"fields"`.** Every field of the schema tree that has non-empty metadata is
+recorded under its path, built exactly like the node paths of Section 9.6 (`join(p, n)` is `n`
+when `p` is empty, else `p + "/" + n`):
+
+| Field | Path |
+|---|---|
+| top-level column `c` | `c` |
+| child `n` of a struct field at path `p` | `join(p, n)` (e.g. `s/n`) |
+| element field of a list / large list / fixed-size list at path `p` (its name, e.g. `item`, is not used) | `p + "/"` (e.g. `l/`) |
+| entries field of a map at path `p` | `p + "/"` (e.g. `m/`) |
+| key and value fields of that map (children of the entries struct) | `p + "//key"`, `p + "//value"` (struct-child rule; their actual names are used) |
+
+Dictionary types are replaced by their value type before the walk. Paths are sorted by their
+UTF-8 bytes (the map is a `BTreeMap`), each field's metadata map is sorted by key, and metadata
+values are JSON strings. Example: `m: Map<Utf8, Int32>` where the value field has metadata
+`{"unit": "kg"}` and the entries field has `{"role": "pairs"}`:
+
+```
+{"fields":{"m/":{"role":"pairs"},"m//value":{"unit":"kg"}}}
+```
 
 **Empty-metadata invariant:** When a schema has no metadata at any level, Phase 2 adds nothing to the hasher. A schema with `include_metadata = true` therefore produces the **same hash** as `include_metadata = false` when no metadata is present.
 

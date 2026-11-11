@@ -47,7 +47,7 @@ use arrow::array::{
 use arrow::buffer::{NullBuffer, OffsetBuffer};
 use arrow::datatypes::Int32Type;
 use arrow_ipc::writer::StreamWriter;
-use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
+use arrow_schema::{DataType, Field, Fields, IntervalUnit, Schema, SchemaRef, TimeUnit};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -1233,6 +1233,13 @@ fn build() -> Builder {
         );
     }
 
+    add_boolean_names_types_and_metadata(&mut gen);
+
+    gen
+}
+
+/// Vector groups 11–15 (split out of `build` to keep each function readable).
+fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
     // 11. Boolean data under the third switch (one byte per valid value).
     {
         let bools = |nullable: bool, values: Vec<Option<bool>>| {
@@ -1435,7 +1442,207 @@ fn build() -> Builder {
         }
     }
 
-    gen
+    // 14. One hash_schema vector per primitive type JSON form (byte-layout spec Section 2.1).
+    {
+        let types: Vec<(&str, DataType)> = vec![
+            ("null", DataType::Null),
+            ("boolean", DataType::Boolean),
+            ("int8", DataType::Int8),
+            ("int16", DataType::Int16),
+            ("int32", DataType::Int32),
+            ("int64", DataType::Int64),
+            ("uint8", DataType::UInt8),
+            ("uint16", DataType::UInt16),
+            ("uint32", DataType::UInt32),
+            ("uint64", DataType::UInt64),
+            ("float16", DataType::Float16),
+            ("float32", DataType::Float32),
+            ("float64", DataType::Float64),
+            ("date32", DataType::Date32),
+            ("date64", DataType::Date64),
+            ("time32_s", DataType::Time32(TimeUnit::Second)),
+            ("time32_ms", DataType::Time32(TimeUnit::Millisecond)),
+            ("time64_us", DataType::Time64(TimeUnit::Microsecond)),
+            ("time64_ns", DataType::Time64(TimeUnit::Nanosecond)),
+            (
+                "timestamp_s_naive",
+                DataType::Timestamp(TimeUnit::Second, None),
+            ),
+            (
+                "timestamp_ms_utc",
+                DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())),
+            ),
+            (
+                "timestamp_us_offset",
+                DataType::Timestamp(TimeUnit::Microsecond, Some("+05:30".into())),
+            ),
+            (
+                "timestamp_ns_named_tz",
+                DataType::Timestamp(TimeUnit::Nanosecond, Some("America/New_York".into())),
+            ),
+            ("duration_s", DataType::Duration(TimeUnit::Second)),
+            ("duration_ms", DataType::Duration(TimeUnit::Millisecond)),
+            ("duration_us", DataType::Duration(TimeUnit::Microsecond)),
+            ("duration_ns", DataType::Duration(TimeUnit::Nanosecond)),
+            (
+                "interval_year_month",
+                DataType::Interval(IntervalUnit::YearMonth),
+            ),
+            (
+                "interval_day_time",
+                DataType::Interval(IntervalUnit::DayTime),
+            ),
+            (
+                "interval_month_day_nano",
+                DataType::Interval(IntervalUnit::MonthDayNano),
+            ),
+            ("decimal32", DataType::Decimal32(9, 2)),
+            ("decimal64_negative_scale", DataType::Decimal64(18, -3)),
+            ("decimal128", DataType::Decimal128(38, 10)),
+            ("decimal256", DataType::Decimal256(76, 0)),
+            ("fixed_size_binary", DataType::FixedSizeBinary(16)),
+            ("utf8", DataType::Utf8),
+            ("large_utf8", DataType::LargeUtf8),
+            ("binary", DataType::Binary),
+            ("large_binary", DataType::LargeBinary),
+            ("utf8_view", DataType::Utf8View),
+            ("binary_view", DataType::BinaryView),
+        ];
+        for (name, dt) in types {
+            let schema = Arc::new(Schema::new(vec![Field::new("c", dt.clone(), true)]));
+            gen.add(
+                &format!("type_{name}_schema_f0"),
+                &format!("Schema [c: {dt:?} nullable], default options"),
+                0x00,
+                false,
+                &Input::Schema(schema),
+            );
+        }
+        gen.relate(
+            "equal",
+            &["type_utf8_schema_f0", "type_large_utf8_schema_f0"],
+            "Utf8 and LargeUtf8 share the canonical form",
+        );
+        gen.relate(
+            "equal",
+            &["type_binary_schema_f0", "type_large_binary_schema_f0"],
+            "Binary and LargeBinary share the canonical form",
+        );
+        gen.relate(
+            "different",
+            &["type_utf8_schema_f0", "type_utf8_view_schema_f0"],
+            "Utf8View is not canonicalized",
+        );
+    }
+
+    // 15. Phase 2 metadata field paths (byte-layout spec Section 2.2.1).
+    {
+        let kv = |key_meta: bool, value_meta: bool, entries_meta: bool| {
+            let mut key = Field::new("key", DataType::Utf8, false);
+            if key_meta {
+                key = key.with_metadata(meta(&[("role", "id")]));
+            }
+            let mut value = Field::new("value", DataType::Int32, true);
+            if value_meta {
+                value = value.with_metadata(meta(&[("unit", "kg")]));
+            }
+            let mut entries = Field::new(
+                "entries",
+                DataType::Struct(Fields::from(vec![key, value])),
+                false,
+            );
+            if entries_meta {
+                entries = entries.with_metadata(meta(&[("role", "pairs")]));
+            }
+            Arc::new(Schema::new(vec![Field::new(
+                "m",
+                DataType::Map(Arc::new(entries), false),
+                true,
+            )]))
+        };
+        let struct_child = Arc::new(Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(Fields::from(vec![
+                Field::new("a", DataType::Int32, false).with_metadata(meta(&[("unit", "m")])),
+                Field::new("b", DataType::Int32, false),
+            ])),
+            false,
+        )]));
+        let list_element = Arc::new(Schema::new(vec![Field::new(
+            "l",
+            DataType::List(Arc::new(
+                Field::new("item", DataType::Int32, true).with_metadata(meta(&[("unit", "s")])),
+            )),
+            true,
+        )]));
+        let fsl_element = Arc::new(Schema::new(vec![Field::new(
+            "f",
+            DataType::FixedSizeList(
+                Arc::new(
+                    Field::new("item", DataType::Int32, true).with_metadata(meta(&[("unit", "s")])),
+                ),
+                2,
+            ),
+            true,
+        )]));
+        for flags in [0x00_u8, 0x01] {
+            for (id, desc, schema) in [
+                (
+                    "meta_map_value",
+                    "m: Map<Utf8, Int32>, metadata on the value field (path m//value)",
+                    kv(false, true, false),
+                ),
+                (
+                    "meta_map_key",
+                    "m: Map<Utf8, Int32>, metadata on the key field (path m//key)",
+                    kv(true, false, false),
+                ),
+                (
+                    "meta_map_entries",
+                    "m: Map<Utf8, Int32>, metadata on the entries field (path m/)",
+                    kv(false, false, true),
+                ),
+                (
+                    "meta_map_all",
+                    "m: Map<Utf8, Int32>, metadata on entries, key and value",
+                    kv(true, true, true),
+                ),
+                (
+                    "meta_struct_child",
+                    "s: Struct<a{unit:m}, b>, metadata on a struct child (path s/a)",
+                    Arc::clone(&struct_child),
+                ),
+                (
+                    "meta_list_element",
+                    "l: List<Int32{unit:s}>, metadata on the element field (path l/)",
+                    Arc::clone(&list_element),
+                ),
+                (
+                    "meta_fsl_element",
+                    "f: FixedSizeList<Int32{unit:s}, 2>, metadata on the element field (path f/)",
+                    Arc::clone(&fsl_element),
+                ),
+            ] {
+                gen.add(
+                    &format!("{id}_schema_f{flags}_im1"),
+                    desc,
+                    flags,
+                    true,
+                    &Input::Schema(schema),
+                );
+            }
+        }
+        gen.relate(
+            "different",
+            &[
+                "meta_map_value_schema_f0_im1",
+                "meta_map_key_schema_f0_im1",
+                "meta_map_entries_schema_f0_im1",
+                "meta_map_all_schema_f0_im1",
+            ],
+            "metadata on the map's entries, key and value fields is recorded at distinct paths",
+        );
+    }
 }
 
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]

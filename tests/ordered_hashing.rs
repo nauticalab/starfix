@@ -948,6 +948,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn map_metadata_paths_bytes() {
+        // default options; Phase 2 paths: entries field at "m/", value field at "m//value"
+        let entries = Field::new(
+            "entries",
+            DataType::Struct(Fields::from(vec![
+                Field::new("key", DataType::Utf8, false),
+                Field::new("value", DataType::Int32, true)
+                    .with_metadata([("unit".to_owned(), "kg".to_owned())].into()),
+            ])),
+            false,
+        )
+        .with_metadata([("role".to_owned(), "pairs".to_owned())].into());
+        let schema = Schema::new(vec![Field::new(
+            "m",
+            DataType::Map(Arc::new(entries), false),
+            true,
+        )]);
+        let phase1 = r#"{"m":{"data_type":{"Map":[{"data_type":{"Struct":[{"data_type":"LargeUtf8","name":"key","nullable":false},{"data_type":"Int32","name":"value","nullable":true}]},"name":"entries","nullable":false},false]},"nullable":true}}"#;
+        let phase2 = r#"{"fields":{"m/":{"role":"pairs"},"m//value":{"unit":"kg"}}}"#;
+        let config = HasherConfig {
+            include_metadata: true,
+            ..HasherConfig::default()
+        };
+        assert_eq!(
+            ArrowDigester::hash_schema(&schema, config),
+            versioned(&sha(&[phase1.as_bytes(), phase2.as_bytes()]))
+        );
+    }
+
     // ── invariants that hold in every mode ─────────────────────────────────
 
     #[test]
