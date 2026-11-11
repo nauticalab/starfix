@@ -108,7 +108,8 @@ with the array as the node at path `""` (nullable iff it has a null).
 ### 3.4 Golden files
 
 - Keep `tests/golden/include_metadata_v0.3.json` byte-identical as the historical format-1 record
-  (no longer asserted; a README line in `tests/golden/` says so).
+  (superseded by the legacy 0.4 mode: it is asserted again, with `starfix::legacy::v0_4`, by
+  `tests/legacy_v0_4_golden_vectors.rs`).
 - Replace the unreleased `ordered_v0.5.json` and `fixed_in_v0.5.json` by
   **`tests/golden/format2_v0.5.json`** (all vectors, including regenerated versions of the 9
   metadata vectors under the same ids, generator `cargo run --bin emit_golden_format2`,

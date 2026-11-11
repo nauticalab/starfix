@@ -480,7 +480,8 @@ byte for byte) or by starfix 0.4.
 
 **Format 2** (`00 00 02`): this document.
 
-`tests/golden/include_metadata_v0.3.json` is kept unchanged as the historical format-1 record;
+`tests/golden/include_metadata_v0.3.json` is kept unchanged as the historical format-1 record
+(still asserted with `starfix::legacy::v0_4` by `tests/legacy_v0_4_golden_vectors.rs`);
 `tests/golden/format1_to_format2.json` maps every format-1 golden and pinned test value to its
 format-2 value.
 
