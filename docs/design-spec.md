@@ -174,13 +174,14 @@ pub struct HasherConfig {
 }
 ```
 
-`HasherConfig::default()` sets every option to `false`, preserving backward-compatible behavior.
-The two v0.5 options are specified in `docs/byte-layout-spec.md` Section 9 (design rationale:
-`docs/metamorphic/specs/2026-11-11-ordered-hashing-design.md`): `ordered_columns` and
-`ordered_struct_fields` make column order and struct field order part of the hash. When either
-is on, an options tag domain-separates the hash. v0.5 also fixes information losses of the
-v0.4.0 default layout (Booleans, nullable structs, lists of nullable lists/structs); see
-`docs/byte-layout-spec.md` Section 10.
+`HasherConfig::default()` sets every option to `false`. In hash format 2 (v0.5) **every hash
+differs from 0.4, also with the default configuration**: the format-2 header (version and the
+order-option flags) is written in every mode, and the data layout changed (Section 10 of the
+byte-layout spec lists the format-1 defects it fixes). The two v0.5 options are specified in
+`docs/byte-layout-spec.md` Section 6 (design rationale:
+`docs/metamorphic/specs/2026-11-11-format-2-design.md`): `ordered_columns` and
+`ordered_struct_fields` make column order and struct field order part of the hash; their flags
+in the header domain-separate the hashes of different option values.
 
 `HasherConfig` is passed as a parameter to the following public methods:
 - `ArrowDigester::new(schema: &Schema, config: HasherConfig)`

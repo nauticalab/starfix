@@ -91,8 +91,11 @@ entry is the concatenation of, in this order and only where applicable:
    format-1 leaf encodings (fixed-size little-endian bytes; u64 length + bytes for
    strings/binary) except **Boolean: one byte `00`/`01` per valid value**.
 
-A non-nullable struct's entry is empty. Elements of a null list row or a null struct row are not
-visited (no validity bits, lengths or values for them below that level).
+A non-nullable struct's entry is empty. Items of a null list value are not visited at all. A null
+struct value is different: its children still have that element (a nullable child records a `0`
+validity bit for it), but no lengths or values are hashed for it below the struct (struct nulls
+are ANDed into the children's effective validity). The byte-layout spec, Section 3.2, is
+authoritative.
 
 `hash_array` = `00 00 02 || SHA-256( header || type_json || array length u64 LE || entries )`,
 with the array as the node at path `""` (nullable iff it has a null).

@@ -10,9 +10,10 @@ same logical data under the same schema, regardless of how the data is laid out 
 Every hash is 35 bytes: a 3-byte **hash format version** followed by a SHA-256 digest. This crate
 produces **hash format 2** (`00 00 02`). The exact bytes are specified in
 [`docs/byte-layout-spec.md`](docs/byte-layout-spec.md), precisely enough for an independent
-implementation; [starfix-python](https://github.com/nauticalab/starfix-python) implements the
-same format and is checked against the Rust-generated golden vectors in
-`tests/golden/format2_v0.5.json`.
+implementation. [starfix-python](https://github.com/nauticalab/starfix-python) is being updated
+to format 2 in a companion change (its released versions produce format 1); its format-2
+implementation must match the Rust-generated golden vectors in `tests/golden/format2_v0.5.json`
+exactly.
 
 ## Usage
 
