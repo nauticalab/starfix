@@ -15,6 +15,10 @@ mod tests {
 
     const FROZEN: &[(&str, &str)] = &[
         (
+            "tests/golden/legacy_v0_4_reference_digests.json",
+            "d2588a52f73107d506d92f907aa676a78080bffbaed526b087486a422a356f4b",
+        ),
+        (
             "src/legacy/v0_4.rs",
             "0fb07968ee1bd3086ba6a4f23baa0b21ac8e3a60d97d9728bd2de1c20e39ce5b",
         ),
