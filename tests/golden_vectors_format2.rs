@@ -280,12 +280,12 @@ mod tests {
     fn golden_fixture_count_floor() {
         let fixture = load_fixture();
         assert!(
-            fixture.vectors.len() >= 339,
+            fixture.vectors.len() >= 423,
             "{} vectors",
             fixture.vectors.len()
         );
         assert!(
-            fixture.relations.len() >= 96,
+            fixture.relations.len() >= 114,
             "{} relations",
             fixture.relations.len()
         );
