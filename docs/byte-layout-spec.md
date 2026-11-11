@@ -14,9 +14,10 @@ canonicalizations are not orderings of data: metadata keys (unordered maps) are 
 but logically equal types are unified (Section 2.1); the Arrow-internal list element field name
 is omitted.
 
-Sections 1–8 specify the **default** layout. The opt-in options `ordered_columns`,
-`ordered_struct_fields` and `nested_validity` (v0.5) are specified in **Section 9**; with all of
-them off, Section 9 does not apply.
+Sections 1–8 specify the **default** layout (as corrected in v0.5; Section 10 records exactly
+what changed from v0.4.0 and which inputs are affected). The opt-in options `ordered_columns`
+and `ordered_struct_fields` (v0.5) are specified in **Section 9**; with both off, Section 9 does
+not apply.
 
 ---
 
@@ -177,13 +178,13 @@ if meta_doc non-empty: hasher.update(serde_json::to_string(meta_doc).as_bytes())
 The final `schema_digest` is `hasher.finalize()` — 32 bytes, as before.
 
 **Field paths in `"fields"`.** Every field of the schema tree that has non-empty metadata is
-recorded under its path, built exactly like the node paths of Section 9.6 (`join(p, n)` is `n`
-when `p` is empty, else `p + "/" + n`):
+recorded under its **metadata path** (these equal the node paths of Section 9.6 except below a
+column named `""`):
 
 | Field | Path |
 |---|---|
 | top-level column `c` | `c` |
-| child `n` of a struct field at path `p` | `join(p, n)` (e.g. `s/n`) |
+| child `n` of a struct field at path `p` | `p + "/" + n` (e.g. `s/n`; always with the `/`, so below a column named `""` the path starts with `/`) |
 | element field of a list / large list / fixed-size list at path `p` (its name, e.g. `item`, is not used) | `p + "/"` (e.g. `l/`) |
 | entries field of a map at path `p` | `p + "/"` (e.g. `m/`) |
 | key and value fields of that map (children of the entries struct) | `p + "//key"`, `p + "//value"` (struct-child rule; their actual names are used) |
@@ -218,7 +219,11 @@ schema_digest = SHA-256(b'{"age":{"data_type":"Int32","nullable":false},"name":{
 
 ## 3. Field Data Serialization
 
-The schema is recursively decomposed into a `BTreeMap` of entries. **Leaf fields** and **list intermediate nodes** get their own entries. **Struct fields are transparent** — they do not create entries themselves; instead, their null validity is AND-propagated to descendant entries, and their children are recursively traversed.
+The schema is recursively decomposed into a `BTreeMap` of entries. **Leaf fields** and **list intermediate nodes** get their own entries. A **struct** creates no data entry of its own: its children are recursively traversed and its null validity is AND-propagated to descendant entries; a **nullable** struct additionally records its own validity bits (Section 3.5).
+
+> **v0.5 fix.** Sections 3.2, 3.4 and 3.5 describe the corrected layout of v0.5. The v0.4.0
+> layout lost information for Booleans, nullable structs and lists whose element is a nullable
+> list or struct; Section 10 lists exactly what changed and which inputs are affected.
 
 Each entry has a **digest buffer** containing up to three **optional** components:
 
@@ -234,8 +239,8 @@ There are four entry types:
 |------------|:-----------:|:------------:|:------:|---------|
 | **data-only** | — | — | yes | Non-nullable leaf field (e.g., `Int32`) |
 | **validity + data** | yes | — | yes | Nullable leaf field |
-| **validity-only** | yes | — | — | Nullable parent whose descendants have their own entries |
-| **structural-only** | — | yes | — | Non-nullable list whose value type is a struct or nested list |
+| **validity-only** | yes | — | — | Nullable list or nullable struct (not a list element) whose descendants have their own entries |
+| **structural-only** | optional | yes | — | List element entry when the element is a struct or a nested list (`null_bits` present iff the element is nullable) |
 | **list_leaf** | optional | yes | yes | List whose value type is a leaf (e.g., `List<Int32>`) |
 
 **Naming convention**: Struct adds `/fieldname` to the path. List adds a trailing `/`. Nested lists add `//`, etc.
@@ -267,19 +272,21 @@ If a nullable field has no actual nulls (null buffer absent), all elements are m
 
 ### 3.2 Boolean Type
 
-Boolean values are **bit-packed** using **LSB-first** (`Lsb0`) ordering into bytes.
+Each **valid** Boolean value is fed to the data digest as **one byte**: `0x01` for `true`, `0x00`
+for `false`. Null values are skipped (their validity bit records them).
 
-**Non-nullable**: All values are packed sequentially into a `BitVec<u8, Lsb0>`, then the raw bytes are fed into the data digest.
+**Non-nullable**: one byte per value.
 
 **Nullable**:
 1. Extend the validity `BitVec` as usual.
-2. Only **valid** values are packed (nulls are skipped).
-3. The packed bytes are fed into the data digest.
+2. Feed one byte per **valid** value; nulls are skipped.
 
 **Example**: `[true, NULL, false, true]` (nullable, 4 elements)
 - Validity bits: `[1, 0, 1, 1]`
-- Data bits (valid only): `[true, false, true]` → Lsb0 packed: `00000_1_0_1` = `0x05`
-- Bytes fed to data digest: `[0x05]`
+- Bytes fed to data digest: `01 00 01`
+
+(v0.4.0 bit-packed the valid values per call into whole bytes, `0x05` here; that lost trailing
+`false` values and depended on batch boundaries. Fixed in v0.5, Section 10.)
 
 ### 3.3 Variable-Length Types (Binary, String)
 
@@ -308,12 +315,25 @@ List columns are **recursively decomposed** into separate BTreeMap entries. A li
 **Decomposition by value type:**
 
 - **`List<leaf>`** (e.g., `List<Int32>`): The entry at `path/` is a **list-leaf** with both structural and data digests. List lengths go to structural; leaf values go to data.
-- **`List<Struct<...>>`**: The entry at `path/` is **structural-only** (list lengths). The struct is transparent, and each struct child creates its own entry at `path//childname`.
+- **`List<Struct<...>>`**: The entry at `path/` is **structural-only** (list lengths). Each struct child creates its own entry at `path//childname`.
 - **`List<List<...>>`**: The entry at `path/` is structural-only. The inner list creates another entry at `path//`, and so on recursively.
 
-**Nullable list columns**: The column-level entry at `path` (without trailing `/`) is **validity-only**, recording which rows are null vs valid. Null list elements are not traversed — no structural or data bytes are written for them.
+The element entry at `path/` has `null_bits` iff the element field is nullable. For a nullable
+element that is a **struct or a list**, those `null_bits` record the element validity (one bit per
+element), and the entry keeps its structural digest. (A nullable leaf element's validity is
+recorded there too, as a list-leaf entry.)
+
+**Nullable list columns** (and nullable lists that are struct children): the entry at `path`
+(without trailing `/`) is **validity-only**, recording which rows are null vs valid. A list that
+is itself a list element has no such entry: its validity goes into the outer list's element
+entry, as above. Null list elements are not traversed — no structural or data bytes are written
+for them.
 
 **Traversal**: For each non-null list element, write the sub-array length (u64 LE) to the structural digest at `path/`, then recurse into the sub-array using the value type.
+
+(v0.4.0 replaced the outer element entry with a validity-only entry when the element was a
+nullable list, losing the outer lengths, and recorded nothing for a nullable struct element.
+Fixed in v0.5, Section 10.)
 
 #### Concrete Example: Structural vs Leaf Separation
 
@@ -336,13 +356,23 @@ Compare with `[[1],[2,3]]`: same data digest but different structural digest —
 
 ### 3.5 Struct Types (Record-Batch Path)
 
-Struct fields are **transparent** in the record-batch path — they do not create a BTreeMap entry (default; with `nested_validity` a nullable struct gets a validity entry, Section 9.5). Instead:
+A struct creates no data entry. Instead:
 
-1. **Children are traversed** in alphabetical order by field name.
+1. **Children are traversed** (the order does not matter: every child has its own entries, finalized in path order).
 2. **Struct-level nulls are AND-propagated** to all descendant entries. If a struct row is null, none of its children's data is hashed for that row, and the null is reflected in each descendant's effective validity.
 3. Each child is recursively decomposed (leaf → data entry, list → structural entry, nested struct → recurse further).
+4. A **nullable** struct records its own validity: a **validity-only entry at the struct's path**
+   (`s` for a column `s`, `parent/child` for a struct child, `""` for `hash_array` of a struct
+   array with nulls), or, when the struct is a list element, the list's element entry `path/`
+   (Section 3.4). When a nullable struct array of length `n` is traversed, `n` bits are pushed:
+   bit `i` = struct's own validity AND the ancestor struct validity (the same combined validity
+   that is propagated to its children); all `1` when neither has a null buffer. Non-nullable
+   structs record nothing (like non-nullable leaves).
 
-**Example**: A struct field `address` with children `city` (LargeUtf8) and `zip` (Int32) creates two leaf entries: `address/city` and `address/zip`. No entry exists for `address` itself.
+**Example**: A non-nullable struct field `address` with children `city` (LargeUtf8) and `zip` (Int32) creates two leaf entries: `address/city` and `address/zip`. If `address` is nullable there is also a validity-only entry `address` (sorted before its children).
+
+(v0.4.0 recorded no struct validity, so a null struct hashed like a struct with all-null fields,
+and null struct rows vanished when the fields were non-nullable. Fixed in v0.5, Section 10.)
 
 ### 3.6 Dictionary-Encoded Arrays
 
@@ -580,14 +610,14 @@ Note: `serde_json::to_string` of a JSON string value includes the surrounding qu
 - As u8 (Lsb0): binary `0000_1101` = 13
 - `as_raw_slice()` = `[13_u8]`
 
-**Data bits** (Lsb0 packed, valid values only):
-- Valid values: `[true, false, true]` (3 values)
-- Lsb0 packing: bit0=true(1), bit1=false(0), bit2=true(1), bits3-7=0
-- Byte: `00000101` = `0x05`
+**Data** (one byte per valid value, Section 3.2):
+- Valid values: `[true, false, true]` → `01 00 01`
 
 ```
-data_digest = SHA-256(0x05)
+data_digest = SHA-256(0x010001)
 ```
+
+(v0.4.0 fed the bit-packed byte `0x05`; Section 10.)
 
 #### Step 3: Finalization
 
@@ -702,7 +732,7 @@ Both produce the same canonical schema JSON:
 
 Both produce the same field digests (fields processed alphabetically: `x` then `y`):
 - Field `x`: `SHA-256(0x0a000000)` (10 as i32 LE)
-- Field `y`: validity `[1]` (1 bit, 1 word), data `0x01` (true packed Lsb0)
+- Field `y`: validity `[1]` (1 bit, 1 word), data `0x01` (one byte for `true`)
 
 Therefore `hash_record_batch(batch1) == hash_record_batch(batch2)`.
 
@@ -940,7 +970,7 @@ output = 0x000001 ++ final_digest.finalize()
 
 Children: `a: Int32 non-null`, `b: Boolean non-null`. Struct is non-nullable.
 
-`hash_array` uses the same recursive decomposition as the record-batch path. Struct is transparent — no BTreeMap entry for the struct itself. Children become separate entries.
+`hash_array` uses the same recursive decomposition as the record-batch path. The struct has no nulls, so it is treated as non-nullable and gets no entry of its own. Children become separate entries.
 
 #### Step 1: Type Metadata
 
@@ -960,8 +990,8 @@ data_a = SHA-256(0x01000000_02000000)    // [1, 2] as i32 LE
 
 **Entry "b"** (Boolean, non-nullable → data-only):
 ```
-// [true, false] → Lsb0: bit0=1, bit1=0 → 0x01
-data_b = SHA-256(0x01)
+// [true, false] → one byte per value: 01 00   (v0.4.0: bit-packed 0x01)
+data_b = SHA-256(0x0100)
 ```
 
 #### Step 3: Finalization
@@ -984,7 +1014,7 @@ output = 0x000001 ++ final_digest.finalize()
 
 Children: `a: Int32 non-null`, `b: LargeUtf8 non-null`. Struct is **nullable**.
 
-Row 1 is a null struct. Struct is transparent — its null is AND-propagated to children for data hashing. Since children are non-nullable per their Field definitions, their entries have no null_bits — but null rows are skipped in the data stream.
+Row 1 is a null struct. The array has a null, so it is nullable: the struct gets a validity-only entry at its path `""` (Section 3.5). Its null is also AND-propagated to the children for data hashing; since the children are non-nullable per their Field definitions, their entries have no null_bits, and null rows are skipped in their data streams. (v0.4.0 had no `""` entry, so the null row vanished; Section 10.)
 
 #### Step 1: Type Metadata
 
@@ -994,7 +1024,9 @@ Row 1 is a null struct. Struct is transparent — its null is AND-propagated to 
 
 #### Step 2: Decomposed Entries (with struct-null propagation)
 
-BTreeMap entries (sorted by key): `"a"`, `"b"`
+BTreeMap entries (sorted by key): `""`, `"a"`, `"b"`
+
+**Entry ""** (struct validity, validity-only): bits `[1, 0, 1]`, bit count 3, word `0b101` = `0x05`.
 
 **Entry "a"** (Int32, non-nullable → data-only):
 - Struct nulls propagated: rows 0, 2 valid → data: `[10, 30]`
@@ -1015,11 +1047,11 @@ data_b = SHA-256(
 
 #### Step 3: Finalization
 
-Each entry is non-nullable → no null_bits, no structural, just data.finalize().
-
 ```
 final_digest = SHA-256()
 final_digest.update( type_json_bytes )       // type metadata
+final_digest.update( 0x0300000000000000 )    // entry "": bit count 3 (u64 LE)
+final_digest.update( 0x05 )                  // entry "": validity word 0b101
 final_digest.update( data_a.finalize() )     // entry "a": 32 bytes
 final_digest.update( data_b.finalize() )     // entry "b": 32 bytes
 output = 0x000001 ++ final_digest.finalize()
@@ -1064,7 +1096,7 @@ The top-down recursive traversal processes each row:
 - `items` entry: push `valid` to null_bits
 - `items/` entry: write `2_u64.to_le_bytes()` to structural
 - Recurse into sub-array `[{id:1, label:"a"}, {id:2, label:"b"}]`:
-  - Struct is transparent — recurse into children (sorted: "id", "label"):
+  - The struct elements are non-nullable, so no struct validity is recorded — recurse into children ("id", "label"):
     - `items//id` entry: write `1_i32.to_le_bytes()`, `2_i32.to_le_bytes()` to data
     - `items//label` entry: write `len+"a"`, `len+"b"` to data
 
@@ -1356,12 +1388,11 @@ output = 00 00 01 || schema_digest          // 35 bytes
 
 ---
 
-## 9. Hashing Options: Order Sensitivity and Nested Validity (v0.5)
+## 9. Hashing Options: Order Sensitivity (v0.5)
 
-Sections 1–8 describe the **default** layout. This section specifies three opt-in options. With
-all three off, nothing in this section applies and every byte is exactly as in Sections 1–8.
-Rust is the reference implementation; the golden vectors in `tests/golden/ordered_v0.5.json`
-pin the values (see Section 9.9).
+Sections 1–8 describe the default layout. This section specifies two opt-in options. With both
+off, nothing in this section applies. Rust is the reference implementation; the golden vectors
+in `tests/golden/ordered_v0.5.json` pin the values (Section 9.11).
 
 ### 9.1 Options and the flags byte
 
@@ -1369,19 +1400,19 @@ pin the values (see Section 9.9).
 |---|---|---|---|
 | order of top-level columns is part of the hash | `ordered_columns` | `0x01` | Section 9.3 |
 | order of struct fields is part of the hash, at every depth | `ordered_struct_fields` | `0x02` | Sections 9.3, 9.4 |
-| lossless layout: nested values record their own validity, Booleans are counted | `nested_validity` (provisional name) | `0x04` | Sections 9.5, 9.5.1 |
 
 ```
-flags = (ordered_columns ? 0x01 : 0) | (ordered_struct_fields ? 0x02 : 0) | (nested_validity ? 0x04 : 0)
+flags = (ordered_columns ? 0x01 : 0) | (ordered_struct_fields ? 0x02 : 0)
 ```
 
-Bits 3–7 are reserved and always 0. `include_metadata` is **not** a flag bit: it keeps its
-Section 2.2.1 behaviour in every mode. Options are per call (per streaming digester); they are
-never global.
+Bits 2–7 are reserved and always 0. **Bit 2 (`0x04`) must never be reused:** during the v0.5
+work it briefly selected a provisional third option (the layout fixes of Section 10), which was
+never released; those fixes are now the only layout. `include_metadata` is not a flag bit: it
+keeps its Section 2.2.1 behaviour in every mode. Options are per call (per streaming digester);
+they are never global.
 
-Every entry point takes all options. Options that have no effect on an entry point's layout
-(`ordered_columns` for `hash_array`, `nested_validity` for `hash_schema`) still enter the flags
-byte. There is no per-entry-point masking.
+Every entry point takes both options. `ordered_columns` has no effect on the `hash_array` layout
+but still enters its flags byte. There is no per-entry-point masking.
 
 ### 9.2 Options tag (domain separation)
 
@@ -1390,7 +1421,7 @@ options_tag = 0x00 || "starfix-options-v1" || flags        // 1 + 18 + 1 = 20 by
             = 00 73 74 61 72 66 69 78 2d 6f 70 74 69 6f 6e 73 2d 76 31 <flags>
 ```
 
-When `flags == 0x00` the tag is **not** written (default layout). When `flags != 0x00`:
+When `flags == 0x00` the tag is **not** written. When `flags != 0x00`:
 
 **Schema digest** (`hash_schema`, and the schema digest at the start of every record-batch /
 streaming hash, Section 5):
@@ -1403,8 +1434,8 @@ if include_metadata: Phase 2 exactly as Section 2.2.1       // unchanged
 schema_digest = hasher.finalize()
 ```
 
-`hash_schema` returns `00 00 01 || schema_digest`. The record-batch final digest (Section 5) starts
-with this `schema_digest`, then the entries, exactly as in Section 5.
+`hash_schema` returns `<version prefix> || schema_digest`. The record-batch final digest
+(Section 5) starts with this `schema_digest`, then the entries, exactly as in Section 5.
 
 **`hash_array`** (Section 6): the tag is the first input of the final digest:
 
@@ -1412,19 +1443,19 @@ with this `schema_digest`, then the entries, exactly as in Section 5.
 final_digest = SHA-256()
 final_digest.update(options_tag)                            // 20 bytes
 final_digest.update(type_json(effective_type, flags))       // Section 9.4
-... entries exactly as Section 6 (with Section 9.5 if nested_validity) ...
-output = 00 00 01 || final_digest.finalize()
+... entries exactly as Section 6 ...
+output = <version prefix> || final_digest.finalize()
 ```
 
-The version prefix stays `00 00 01` in every mode.
+The options do not change the version prefix.
 
 **Why this separates the modes.** Untagged inputs to these SHA-256 instances always start with
 canonical JSON (`{`, `[` or `"`), never with `0x00`. Tagged inputs start with `0x00` and carry the
 whole `flags` byte at offset 19. So the SHA-256 inputs for two different `flags` values always
 differ, and equal hashes would require a SHA-256 collision. In particular a table hashed with
-any option on never has the same hash as with the options off, even when order cannot matter
-(a one-column table without structs). For record batches the separation is carried by the
-schema digest, the first 32 bytes of the final input.
+an order option on never has the same hash as with the options off, even when order cannot
+matter (a one-column table without structs). For record batches the separation is carried by
+the schema digest, the first 32 bytes of the final input.
 
 Within one `flags` value the empty-metadata invariant (Section 2.2.1) still holds:
 `include_metadata = true` on a schema without metadata gives the same hash as `false`.
@@ -1463,8 +1494,8 @@ flags 0x01:           [{"data_type":"Int32","name":"b","nullable":false},{"data_
 Schema `[s: Struct<y: Boolean non-null, x: Int32 non-null> non-null]`:
 
 ```
-flags 0x00, 0x01, 0x04, 0x05:  ..."Struct":[{"data_type":"Int32","name":"x",...},{"data_type":"Boolean","name":"y",...}]...
-flags 0x02, 0x03, 0x06, 0x07:  ..."Struct":[{"data_type":"Boolean","name":"y",...},{"data_type":"Int32","name":"x",...}]...
+flags 0x00, 0x01:  ..."Struct":[{"data_type":"Int32","name":"x",...},{"data_type":"Boolean","name":"y",...}]...
+flags 0x02, 0x03:  ..."Struct":[{"data_type":"Boolean","name":"y",...},{"data_type":"Int32","name":"x",...}]...
 ```
 
 (With `ordered_columns` the whole thing is additionally wrapped as a top-level array element.)
@@ -1482,130 +1513,53 @@ struct-field order differ in the schema digest (or, for `hash_array`, in the typ
 the flags byte). The top-level nullability used by `hash_array` is unchanged: the array is
 treated as nullable iff it contains at least one null.
 
-### 9.5 `nested_validity`: validity of nested values
+### 9.5 (removed)
 
-In the default layout a struct has no entry of its own (Section 3.5) and a list element that is
-itself a nullable list replaces the outer list's element entry. That loses information:
-
-* a null struct and a struct whose fields are all null hash the same;
-* when a nullable struct has non-nullable descendants, its null rows contribute nothing at all
-  (a 3-row column with one null struct hashes like the 2-row column without it);
-* in `List<nullable List<...>>` the outer list lengths are never hashed (`[[[1],[2]]]` (one row)
-  hashes like `[[[1]],[[2]]]` (two rows));
-* in `List<nullable Struct<...>>` a null element hashes like an element with all-null fields.
-
-`nested_validity` closes all of these with one rule: **every nullable struct, and every nullable
-list or struct that is a list element, records its own validity bits.**
-
-**Entry extraction** (Section 3), complete algorithm with `nested_validity` (`NV`). `entries` is
-the path-keyed map; `join(p, n)` is `n` if `p == ""` else `p + "/" + n`; `normalize` applies the
-Section 2.1 equivalence classes (dictionary → value type, `List` → `LargeList`, etc.):
-
-```
-extract(type, nullable, path):
-    t = normalize(type)
-    reuse = NV and nullable and (path in entries)    # only true for a list element (see below)
-    if t is Struct(children):
-        if NV and nullable and not reuse:
-            entries[path] = validity_only()
-        for child in children:                        # any order; entries are keyed by path
-            extract(child.type, child.nullable, join(path, child.name))
-    elif t is LargeList(element):
-        if nullable and not reuse:
-            entries[path] = validity_only()           # default: REPLACES an existing entry
-        lp = path + "/"
-        if normalize(element.type) is Struct or LargeList:
-            entries[lp] = structural_only(nullable = element.nullable)
-            extract(element.type, element.nullable, lp)
-        else:
-            entries[lp] = list_leaf(nullable = element.nullable)
-    else:
-        entries[path] = data_only(nullable)
-```
-
-`reuse` is true exactly when the node is the element of a list: the list has just created its
-element entry at `lp`, and that entry has `null_bits` because the element is nullable. With
-`NV` the element's validity goes into that entry, which keeps its structural digest (the list
-lengths). Without `NV` a nullable list element replaces the entry with a validity-only entry
-(the outer lengths are then lost; this is the frozen default layout and must be reproduced
-exactly), and a nullable struct element records nothing (its entry keeps empty `null_bits`, so it
-always finalizes as `bit_count = 0`: eight `0x00` bytes and no words).
-
-New entries created by `NV`: a validity-only entry at the path of every nullable struct that is
-not a list element: `s` for a column `s`, `parent/child` for a struct child, `""` for a nullable
-struct array passed to `hash_array`.
-
-**Traversal** (Sections 3.4–3.5), additional step with `NV`, when a struct array of length `n` is
-visited at `path` with `nullable = true`:
-
-```
-combined = struct's own validity AND ancestor struct validity     # as already computed for its children
-entries[path].null_bits.extend(combined[0..n])                    # all 1s if neither has a null buffer
-```
-
-This happens before its children are traversed (the order does not matter: different entries).
-The children are then traversed exactly as before (the struct's nulls are still ANDed into its
-descendants). Lists need no new traversal step: a nullable list already pushes its validity into
-`entries[path].null_bits` (Section 3.4), and with `NV` that entry is, for a list element, the
-outer list's element entry.
-
-Non-nullable structs get no entry (as non-nullable leaves get no validity bits).
-
-**Finalization** is unchanged: entries sorted by path (byte-wise UTF-8 order, which equals Python's
-`sorted()` on `str`), each written per Section 4. A validity-only entry at `P` sorts before every
-entry below `P` (`"s"` < `"s/a"`).
-
-#### 9.5.1 Booleans with the third switch
-
-In the default layout (Section 3.2) the valid Boolean values of each call are bit-packed into
-whole bytes, and a non-nullable Boolean entry has no element count. So padding bits look like
-`false` values (`[true]` and `[true, false, false]` hash the same when the column is
-non-nullable; `hash_array([true]) == hash_array([true, false])`), and Boolean columns are not
-batch-split independent (each batch is packed and padded separately).
-
-With flag `0x04`, Boolean data is instead fed as **one byte per valid value**:
-
-```
-for each element i (in order):
-    if valid(i):                     # nulls are skipped, exactly as in Section 3.2
-        data.update( 0x01 if value(i) else 0x00 )
-```
-
-Validity bits are unchanged (Section 3.2 / Section 4). This applies to every Boolean leaf:
-top-level columns, struct children, list elements, and `hash_array`.
-
-
+This section described the provisional third option. Its layout is now the default
+(Sections 3.2–3.5); see Section 10.
 
 ### 9.6 Rejected schemas (any option on)
 
-When `flags != 0`, a schema (or, for `hash_array`, the array's type) is **rejected** when two of
-its nodes have the same **node path**. Rust panics (`# Panics` in the API docs); Python raises
-`ValueError`. With `flags == 0` nothing is checked (default behaviour unchanged).
+When `flags != 0`, a schema (or, for `hash_array`, the array's type) is **rejected** (Rust
+panics, documented under `# Panics`; Python raises `ValueError`) when
+
+1. two of its nodes have the same **node path**, or
+2. two of its fields have the same **metadata path** (Section 2.2.1), or
+3. it contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type (their canonical
+   JSON is not portable, Section 2.1).
+
+With `flags == 0` nothing is checked (default behaviour unchanged).
 
 ```
-seen = {}
-claim(p): if p in seen: reject; add p to seen
-schema:     for column in schema: claim(column.name); walk(column.type, column.name)
-hash_array: claim(""); walk(array_type, "")
-walk(type, p):
+seen_node = {}; seen_meta = {}
+claim(np, mp): if np in seen_node or mp in seen_meta: reject; add np, mp
+schema:     for column in schema: claim(column.name, column.name); walk(column.type, column.name, column.name)
+hash_array: claim("", ""); walk(array_type, "", "")
+walk(type, np, mp):
     t = normalize(type)
+    if t is ListView, LargeListView, Union or RunEndEncoded: reject
     if t is Struct(children):
-        for c in children: cp = join(p, c.name); claim(cp); walk(c.type, cp)
+        for c in children:
+            cnp = join(np, c.name); cmp = mp + "/" + c.name
+            claim(cnp, cmp); walk(c.type, cnp, cmp)
     elif t is LargeList(e) or FixedSizeList(e, _) or Map(e, _):
-        ep = p + "/"; claim(ep); walk(e.type, ep)
+        claim(np + "/", mp + "/"); walk(e.type, np + "/", mp + "/")
 ```
 
-For `Map(e, _)`, `e` is the entries field (a struct), so a map column `m` claims `m`, `m/`,
-`m//key` and `m//value`.
+`join(p, n)` is `n` when `p` is empty, else `p + "/" + n`; the metadata path always appends
+`"/" + n`, so the two differ only below a column named `""`. For `Map(e, _)`, `e` is the entries
+field (a struct), so a map column `m` claims `m`, `m/`, `m//key` and `m//value`.
 
-This rejects duplicate column names, duplicate field names within a struct (at any depth), and
-names containing `/` that alias another node (a column `"a/b"` next to a struct column `a` with
-child `b`; a column `"x/"` next to a list column `x`). A `/` that aliases nothing (`"km/h"`) is
-accepted. The check runs in `hash_schema`, when a streaming digester is created, on every batch
-passed to `update`, and in `hash_record_batch` and `hash_array`.
+This rejects duplicate column names, duplicate field names within a struct (at any depth), names
+containing `/` that alias another node (a column `"a/b"` next to a struct column `a` with child
+`b`; a column `"x/"` next to a list column `x`), and a struct column `""` with child `a` next to a
+column `"/a"` (equal metadata paths). A `/` that aliases nothing (`"km/h"`) is accepted. The check
+runs in `hash_schema`, when a streaming digester is created, on every batch passed to `update`,
+and in `hash_record_batch` and `hash_array`.
 
-Reason: entries are keyed by path, so two nodes with one path would feed one entry, making the
-hash depend on how rows are split into batches and letting different tables collide.
+Reason: entries (and metadata) are keyed by path, so two nodes with one path would feed one
+entry, making the hash depend on how rows are split into batches and letting different tables
+collide.
 
 ### 9.7 Streaming
 
@@ -1629,7 +1583,7 @@ whose types differ only physically (`Utf8` vs `LargeUtf8`, dictionary vs plain, 
 * `ordered_struct_fields`: a batch whose struct fields (any depth) are in a different order is
   rejected. Without it, it is accepted.
 
-Batch-split independence (Example J) holds in every mode.
+Batch-split independence (Example J) holds in every mode, for every supported type (Section 10).
 
 A Python `hash_table(table)` is `new(table.schema)`, `update` for each batch of
 `table.to_batches()`, `finalize`.
@@ -1638,15 +1592,16 @@ A Python `hash_table(table)` is `new(table.schema)`, `update` for each batch of
 
 | # | Invariant |
 |---|---|
-| I1 | `flags = 0`: byte-identical to v0.4.0 at every entry point. |
+| I1 | `flags = 0`: no options tag; the default layout of Sections 1–8. |
 | I2 | Hashes taken with different `flags` never coincide (modulo SHA-256 collisions). |
-| I3 | `ordered_columns`: permuting columns changes the hash. Without it, it does not (whatever the other options). |
+| I3 | `ordered_columns`: permuting columns changes the hash. Without it, it does not (whatever the other option). |
 | I4 | `ordered_struct_fields`: permuting struct fields at any depth changes the hash. Without it, it does not. |
 | I5 | In every mode: `Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`, `List`≡`LargeList`, dictionary≡plain. |
-| I6 | In every mode: splitting rows into batches does not change the hash. |
+| I6 | In every mode, for every supported type: splitting rows into batches does not change the hash; slicing (non-zero offsets) does not; a zero-row batch equals no batch; adding rows changes it (Section 10; `tests/lossless_properties.rs`, `tests/nested_family.rs`). |
 | I7 | Within one `flags` value: `include_metadata = true` without any metadata equals `false`. |
-| I8 | Third switch: the losses listed in Sections 9.5 and 9.5.1 do not occur. For every supported leaf type, nullable or not, at top level, in a (nullable) struct or in a (nullable) list: adding rows changes the hash, splitting rows into batches does not, slicing (non-zero offsets) does not, and a zero-row batch equals no batch (`tests/lossless_properties.rs`). |
-| I9 | Any option on: ambiguous node paths are rejected (Section 9.6). |
+| I8 | Any option on: ambiguous schemas are rejected (Section 9.6). |
+
+Exceptions to I6: a table with zero columns does not hash its row count (in every mode).
 
 ### 9.9 Worked examples
 
@@ -1685,61 +1640,7 @@ final = SHA-256(
 )
 ```
 
-**Example T4: `nested_validity` (flags `0x04`), nullable struct.** Column `s: Struct<a: Int32 nullable> nullable`,
-rows `[null, {a: null}, {a: 1}]` (child array `[5, null, 1]`, struct validity `[0, 1, 1]`).
-
-```
-schema_digest = SHA-256(options_tag(0x04) ||
-    {"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}})
-final = SHA-256(
-    schema_digest
-    03 00 00 00 00 00 00 00  06          // entry "s": validity-only, bits [0,1,1] -> 0b110
-    03 00 00 00 00 00 00 00  04          // entry "s/a": [1,0,1] AND [0,1,1] = [0,0,1] -> 0b100
-    SHA-256(01 00 00 00)                 //   data: only row 2
-)
-```
-
-Without `nested_validity` the entry `"s"` does not exist, and the rows `[null, {a: null}]` and
-`[{a: null}, {a: null}]` give the same hash.
-
-**Example T5: `nested_validity`, list of nullable list.** Column `c: List<List<Int32 nullable> nullable>` non-null,
-one row `[[1], [2]]`.
-
-```
-schema_digest = SHA-256(options_tag(0x04) ||
-    {"c":{"data_type":{"LargeList":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}},"nullable":false}})
-final = SHA-256(
-    schema_digest
-    // entry "c/": structural entry KEPT, null_bits = inner-list validity [1,1]
-    02 00 00 00 00 00 00 00  03
-    SHA-256(02 00 00 00 00 00 00 00)                          // outer lengths [2]
-    // entry "c//": list-leaf, item validity [1,1], inner lengths [1,1], data [1,2]
-    02 00 00 00 00 00 00 00  03
-    SHA-256(01 00 00 00 00 00 00 00  01 00 00 00 00 00 00 00)
-    SHA-256(01 00 00 00  02 00 00 00)
-)
-```
-
-In the default layout the entry `"c/"` is validity-only (bits `[1,1]`, no lengths), which is why
-`[[[1],[2]]]` and `[[[1]],[[2]]]` collide there.
-
-**Example T6: Booleans with the third switch (flags `0x04`).** Column `b: Boolean nullable`,
-rows `[true, null, false]`.
-
-```
-schema_digest = SHA-256(options_tag(0x04) || {"b":{"data_type":"Boolean","nullable":true}})
-final = SHA-256(
-    schema_digest
-    03 00 00 00 00 00 00 00  05          // validity [1,0,1] -> 0b101
-    SHA-256(01 00)                       // one byte per VALID value: true, false
-)
-```
-
-`hash_array` of the non-nullable `BooleanArray [true, false, true]` with flags `0x04`:
-
-```
-final = SHA-256( options_tag(0x04) || "Boolean" (with quotes) || SHA-256(01 00 01) )
-```
+Examples of the default layout's v0.5 fixes are in Section 10.4.
 
 ### 9.10 Type support
 
@@ -1765,7 +1666,7 @@ exactly by every other implementation. Format:
     { "id": "...", "description": "...",
       "method": "hash_schema | hash_record_batch | hash_stream | hash_array",
       "include_metadata": false, "ordered_columns": true,
-      "ordered_struct_fields": false, "nested_validity": false,
+      "ordered_struct_fields": false,
       "ipc_b64": "<base64 Arrow IPC stream>", "expected_hash": "000001..." }
   ],
   "relations": [ { "kind": "equal | different", "ids": ["...", "..."], "why": "..." } ]
@@ -1781,4 +1682,143 @@ exactly by every other implementation. Format:
 
 A relation `equal` requires all listed vectors to have the same `expected_hash`; `different`
 requires them to be pairwise different. Vectors whose `id` ends in `_f0` use no options; a
-`hash_array` vector with `_f0` also equals `hash_array` called without options.
+`hash_array` vector with `_f0` also equals `hash_array` called without options. The file is
+append-only: the generator aborts when a committed value would change, except for one reviewed
+exception list (the v0.5 fix, Section 10.5).
+
+
+---
+
+## 10. v0.5 Fix: Information Losses in the v0.4.0 Layout
+
+v0.4.0's data layout lost information for some types: different data hashed the same, and some
+hashes depended on how rows were split into batches. These are bugs; v0.5 fixes them in the
+default layout (developer ruling, ITL-898, 2026-11-11). Inputs whose type is affected (Section
+10.2) get new hashes. **All other inputs keep their v0.4.0 hash byte for byte.**
+
+> **Version prefix — open decision.** (a) Fix in place: the prefix stays `00 00 01`; unaffected
+> inputs keep their v0.4.0 hash and only affected inputs move. (b) Bump the prefix to `00 00 02`:
+> every hash moves (in its first three bytes; the 32-byte digest of unaffected inputs is still
+> identical), so a v0.4.0 hash can always be told from a v0.5 hash. The implementation is one
+> line either way (`VERSION_BYTES` in `src/lib.rs`). This document is written for (a).
+
+### 10.1 The defects
+
+| Label | v0.4.0 behaviour | Example of a v0.4.0 collision |
+|---|---|---|
+| `boolean_packing` | Boolean values were bit-packed per call into whole bytes; a non-nullable Boolean entry had no count, and each batch was padded separately | one-column non-nullable `[true]` == `[true, false, false]`; `hash_array([true]) == hash_array([true, false])`; one batch `[true, false, true]` != the same rows as two batches |
+| `nullable_struct` | a struct had no entry; its nulls were only ANDed into its descendants | `[null]` == `[{a: null}]`; with non-nullable fields, `[{a:1}, null, {a:3}]` == `[{a:1}, {a:3}]` |
+| `list_of_nullable_list` | in `List<nullable List<..>>` the inner list's validity entry *replaced* the outer list's element entry, so the outer per-row lengths were lost | rows `[[1]], [[2],[3]]` == rows `[[1],[2]], [[3]]`; in three levels even a single row: `[[[1]],[[2],[3]]]` == `[[[1],[2]],[[3]]]` |
+| `list_of_nullable_struct` | in `List<nullable Struct<..>>` the element entry had `null_bits` that were never filled | element `null` == element `{a: null}` |
+
+Found by a search over 420 nested column types (list / large list / struct / struct with a second
+field, nullable or not, around integer and dictionary leaves, up to three levels): 268 of them
+lost information in v0.4.0 (`tests/nested_family.rs`), and by a sweep of every supported leaf
+type x nullability x position (top level, struct, list, nullable struct, nullable list) x
+{row count, batch split, slice, empty vs absent}: 68 of 320 cases failed in v0.4.0
+(`tests/lossless_properties.rs`). Both find nothing in v0.5, in every mode.
+
+### 10.2 Which inputs are affected
+
+A `hash_record_batch` / streaming / `hash_array` input is **affected** iff its type contains
+
+* a `Boolean` (also as a dictionary value type), or
+* a nullable struct (for `hash_array`, the array itself counts as nullable iff it has a null), or
+* a `List` / `LargeList` whose element field is nullable and whose element type is a list or a
+  struct.
+
+`hash_schema` is never affected. Unaffected inputs hash byte-identically to v0.4.0 (checked
+permanently by `tests/v0_5_fix.rs`). Affected inputs change for all but degenerate data (zero
+rows; all-null Booleans; a single `true` Boolean, whose packed byte happens to equal the new
+one).
+
+### 10.3 The corrected layout
+
+Sections 3.2, 3.4 and 3.5 are the corrected layout. In one place, entry extraction:
+
+```
+extract(type, nullable, path, list_element = false):
+    t = normalize(type)
+    if t is Struct(children):
+        if nullable and not list_element:
+            entries[path] = validity_only()
+        for child in children:
+            extract(child.type, child.nullable, join(path, child.name))
+    elif t is LargeList(element):
+        if nullable and not list_element:
+            entries[path] = validity_only()
+        lp = path + "/"
+        if normalize(element.type) is Struct or LargeList:
+            entries[lp] = structural_only(nullable = element.nullable)
+            extract(element.type, element.nullable, lp, list_element = true)
+        else:
+            entries[lp] = list_leaf(nullable = element.nullable)
+    else:
+        entries[path] = data_only(nullable)
+```
+
+and, during traversal, a nullable struct array of length `n` at `path` pushes `n` combined
+validity bits into `entries[path].null_bits` (Section 3.5); a nullable list already pushes its
+validity into `entries[path].null_bits` (Section 3.4), which for a list element is the outer
+element entry. Booleans: one byte per valid value (Section 3.2).
+
+### 10.4 Worked examples
+
+**Example V1: nullable struct.** Column `s: Struct<a: Int32 nullable> nullable`, rows
+`[null, {a: null}, {a: 1}]` (child array `[5, null, 1]`, struct validity `[0, 1, 1]`).
+
+```
+schema_digest = SHA-256({"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}})
+final = SHA-256(
+    schema_digest
+    03 00 00 00 00 00 00 00  06          // entry "s": validity-only, bits [0,1,1] -> 0b110
+    03 00 00 00 00 00 00 00  04          // entry "s/a": [1,0,1] AND [0,1,1] = [0,0,1] -> 0b100
+    SHA-256(01 00 00 00)                 //   data: only row 2
+)
+```
+
+**Example V2: list of nullable list.** Column `c: List<List<Int32 nullable> nullable>` non-null,
+one row `[[1], [2]]`.
+
+```
+schema_digest = SHA-256({"c":{"data_type":{"LargeList":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}},"nullable":false}})
+final = SHA-256(
+    schema_digest
+    // entry "c/": structural entry KEPT, null_bits = inner-list validity [1,1]
+    02 00 00 00 00 00 00 00  03
+    SHA-256(02 00 00 00 00 00 00 00)                          // outer lengths [2]
+    // entry "c//": list-leaf, item validity [1,1], inner lengths [1,1], data [1,2]
+    02 00 00 00 00 00 00 00  03
+    SHA-256(01 00 00 00 00 00 00 00  01 00 00 00 00 00 00 00)
+    SHA-256(01 00 00 00  02 00 00 00)
+)
+```
+
+**Example V3: Booleans.** Column `b: Boolean nullable`, rows `[true, null, false]`:
+
+```
+final = SHA-256(
+    SHA-256({"b":{"data_type":"Boolean","nullable":true}})
+    03 00 00 00 00 00 00 00  05          // validity [1,0,1] -> 0b101
+    SHA-256(01 00)                       // one byte per VALID value: true, false
+)
+```
+
+`hash_array` of the non-nullable `BooleanArray [true, false, true]`:
+`SHA-256( "Boolean" (with quotes) || SHA-256(01 00 01) )`.
+
+Examples B, L and M of Section 7 show the corrected layout too.
+
+### 10.5 Record of changed values
+
+`tests/golden/fixed_in_v0.5.json` (checked by `tests/v0_5_fix.rs`) records:
+
+* `existing_tests`: every value pinned by a v0.4.0 test that changed (7: two hash constants in
+  `tests/arrow_digester.rs`, two Boolean byte-layout tests in `src/arrow_digester_core.rs`, and
+  Examples B, L and M in `tests/digest_bytes.rs`), each with its v0.4.0 and v0.5 value and the
+  defect;
+* `reference_vectors`: every option-free vector of `tests/golden/ordered_v0.5.json` (99), with
+  its v0.4.0 hash (computed by the released v0.4.0 crate) and its v0.5 hash, its status
+  (`fixed` / `unchanged`), whether its type is affected (Section 10.2) and the defects.
+
+`tests/golden/include_metadata_v0.3.json` (schema hashes only) is unchanged.
