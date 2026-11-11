@@ -59,6 +59,10 @@ pub struct HasherConfig {
 
 All defaults are `false` (order independent, current behaviour).
 
+The options are **per call / per digester**, never global: a process can hash Orcapod streams
+unordered and values ordered side by side. Each `ArrowDigester` keeps the config it was created
+with; the one-shot functions take it as an argument.
+
 | Entry point | Change |
 |---|---|
 | `ArrowDigester::new(schema, config)` | honours all four fields |
@@ -103,6 +107,9 @@ today's need, but:
 * a table whose column order is meaningful but whose struct columns come from sources with
   unstable field order (JSON-derived records) is a plausible need, and a single switch can never
   be split later without defining new hashes.
+
+All four combinations are defined, domain separated from each other (§5.1: each combination has
+its own `flags` byte in the options tag) and covered by golden vectors.
 
 Names: `ordered_columns`, `ordered_struct_fields`. Alternatives considered:
 `column_order_sensitive` / `struct_field_order_sensitive` (longer), `preserve_column_order`
@@ -415,9 +422,9 @@ on top of each vector's pinned value.
 * **Struct order depth 1**: `struct<x, y>` vs `struct<y, x>`, schema and data.
 * **Nested struct order**: in struct (`struct<p: struct<b, a>>`, only the inner level permuted),
   in list, in large list (equal to the list variant), list of list of struct.
-* **Switches independent**: columns permuted with only `ordered_struct_fields` (equal), struct
-  fields permuted with only `ordered_columns` (equal); all four flag combinations of one input
-  pairwise different.
+* **All four order combinations** (`ordered_columns` × `ordered_struct_fields`) on one input that
+  has both a column permutation and a struct permutation: each combination equal/different
+  exactly as I3/I4 predict, and all combinations pairwise different (I2).
 * **Domain separation**: one-column table, no structs, under all flag values: pairwise different.
 * **include_metadata**: ordered + field and schema metadata; ordered + no metadata equals the
   same with `include_metadata = false` (I7); extension-type metadata on a struct storage column.
@@ -449,7 +456,44 @@ golden file (no hash to pin).
 
 ---
 
-## 7. What makes this hard, and cost when off
+## 7. Type support (unchanged by this PR)
+
+Ordered mode changes no type support. **Schema hashing** (`hash_schema`, and the schema part of
+every other entry point) accepts every Arrow type that arrow-rs serializes, and the ordered
+struct rule applies inside list, large list, fixed-size list, struct, map and dictionary types.
+
+**Data hashing** (`hash_record_batch`, streaming, `hash_array`, Python `hash_table`) supports:
+
+| Supported | Notes |
+|---|---|
+| `Boolean`, `Int8`–`Int64`, `UInt8`–`UInt64`, `Float16/32/64` | |
+| `Date32`, `Date64`, `Time32`, `Time64`, `Timestamp`, `Duration` | |
+| `Decimal32/64/128/256`, `FixedSizeBinary` | |
+| `Binary`, `LargeBinary`, `Utf8`, `LargeUtf8` | small and large hash the same |
+| `List`, `LargeList` | small and large hash the same |
+| `Struct` | |
+| `Dictionary(_, V)` | for any supported `V`; hashes as plain `V` |
+
+Not supported (Rust panics with `not yet implemented` when data of that type is hashed;
+starfix-python should raise an error rather than invent a layout): **`Null`**, **`FixedSizeList`**,
+`Map`, `Interval`, `BinaryView`, `Utf8View`, `ListView`, `LargeListView`, `Union`,
+`RunEndEncoded`.
+
+Consequences for the Polars consumer:
+
+* **Null-typed (all-null) columns** cannot be data-hashed in any mode, so their position cannot
+  enter an ordered data hash. A consumer that drops them hashes a different table: two tables
+  that differ only in a null-typed column, or in its position, then hash the same. Casting the
+  column to another type instead (e.g. all-null `bool`) keeps the column, its name and its
+  position in the hash. Defining a layout for the `Null` type is a new hash definition (it moves
+  no existing hash, because these inputs panic today) and is proposed as a follow-up, not part of
+  this PR.
+* **`FixedSizeList`**: casting to `LargeList` before hashing remains necessary. Defining it
+  natively is likewise a follow-up.
+
+---
+
+## 8. What makes this hard, and cost when off
 
 * **Order is erased at serialization time.** `serialized_schema` collects into a `BTreeMap`, and
   `data_type_to_value` sorts struct children. A flags-aware variant is needed; the default code
@@ -469,12 +513,13 @@ expected; the existing test suite's timings will be compared before and after.
 
 ---
 
-## 8. Open questions for the developer
+## 9. Open questions for the developer
 
 1. Approve D1 (two order switches) and the names.
 2. Approve D2: `struct_validity` as a separate third switch (versus bundled into
    `ordered_struct_fields`).
 3. Approve D5 strict separation (one-column table hashes differ between modes).
 4. Approve D7 rejection of duplicate names / path aliasing under the new switches.
-5. Zero-column tables: today the row count of a table with no columns is not hashed (in every
+5. `Null` and `FixedSizeList` data hashing stay unsupported in this PR (§7); follow-up issue?
+6. Zero-column tables: today the row count of a table with no columns is not hashed (in every
    mode). Recommendation: leave as is and document; pin it in a golden vector.
