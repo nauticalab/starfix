@@ -46,9 +46,10 @@ Bits 2–7 of `flags` are reserved and always 0. **Bit 2 (`0x04`) must never be 
 selected a never-released provisional option during the format-2 work.
 
 **Entry points never collide.** The SHA-256 input of each public output starts with its own
-header: `hash_schema` outputs `SHA-256(header('S', flags) || ...)`, record batches and streams
-`SHA-256(header('R', flags) || ...)`, and `hash_array` `SHA-256(header('A', flags) || ...)`. Two
-outputs of different entry points therefore hash inputs that differ in byte 11, so they never
+header: `hash_schema` outputs `version || SHA-256(header('S', flags) || ...)`, record batches and
+streams `version || SHA-256(header('R', flags) || ...)`, and `hash_array`
+`version || SHA-256(header('A', flags) || ...)`. Two outputs of different entry points therefore
+hash inputs that differ at byte offset 11 (0-based: the kind byte), so they never
 coincide (modulo SHA-256 collisions), whatever the data; the same holds for different `flags`.
 
 ---
@@ -231,7 +232,9 @@ hash as `false`.
 
 The schema is a tree of **nodes**: each column, each struct child and each list element is a
 node. Node paths: a column is its `name`; a struct child is `p + "/" + name` (always, also when
-`p` or `name` is empty); a list element is `p + "/"`. For `hash_array` the array is the node `""`,
+`p` or `name` is empty); a list, large-list or fixed-size-list element is `p + "/"`; a map `m`
+has the nodes `m/`, `m//key` and `m//value`. Fixed-size-list and map nodes exist for the path
+checks (Section 7) and Phase 2 only, as their data is not supported (Section 8). For `hash_array` the array is the node `""`,
 so a child of a root struct is `"/" + name`. Example: column `items: List<Struct<id, label>>` has
 nodes `items`, `items/`, `items//id`, `items//label`; a struct column `""` with child `x` has
 nodes `""` and `/x` (distinct from a column `x`). A dictionary node is a node of its value type
@@ -264,7 +267,12 @@ valid **and** every enclosing struct value at the same list level is valid (stru
 ANDed downwards; list boundaries reset this). It is computed for **every** node and **written**
 (item 1) only for nullable nodes. Elements whose effective validity is `0` contribute no lengths
 and no values — also for non-nullable nodes, whose nulls can only come from an enclosing struct.
-"Valid" in items 2 and 3 always means effectively valid.
+"Valid" in items 2 and 3 always means effectively valid. For a dictionary node at any depth,
+"valid" refers to the **decoded** array: an element whose index is valid but whose dictionary
+value is null is null (validity bit 0, no value, and a Section 7 item 4 violation if the field is
+non-nullable). pyarrow's `DictionaryArray.null_count` and `is_valid()` look only at the indices;
+decode first. Across the batches of a stream, a node's validity bits form one bit string in row
+order (no per-batch padding), and `bit_count` is the node's total number of elements.
 
 Example: `s: Struct<a: Int32 non-null>` nullable, rows `[{a:1}, null, {a:3}]` (child array
 `[1, 0, 3]`): entry `s` = validity `03 00 00 00 00 00 00 00  05`; entry `s/a` = `SHA-256(01 00 00 00
@@ -275,7 +283,7 @@ Example: `s: Struct<a: Int32 non-null>` nullable, rows `[{a:1}, null, {a:3}]` (c
 | Type | Bytes per valid value |
 |---|---|
 | Int8/UInt8, Int16/UInt16/Float16, Int32/UInt32/Float32/Date32/Time32/Decimal32, Int64/UInt64/Float64/Date64/Time64/Timestamp/Duration/Decimal64, Decimal128, Decimal256 | the value's 1, 2, 4, 8, 16, 32 little-endian bytes (IEEE 754 for floats; NaN payloads and -0.0 are hashed as is) |
-| FixedSizeBinary(n) | the n bytes (none for `n = 0`; validity and the row count still count) |
+| FixedSizeBinary(n) | the n bytes (none for `n = 0`: the values item is then `SHA-256` of the empty string, as for any leaf without valid elements; validity and the row count still count) |
 | Boolean | one byte: `01` for true, `00` for false |
 | Utf8/LargeUtf8, Binary/LargeBinary | `length (u64) || bytes` (UTF-8 for strings) |
 | Dictionary | the bytes of the resolved value (resolved recursively) |
@@ -334,7 +342,8 @@ equal types (`Utf8` vs `LargeUtf8`, dictionary vs plain, `List` vs `LargeList`) 
 
 Options are per call / per digester, never global; all default to false. Every entry point takes
 all of them (`hash_array` ignores `include_metadata`; `ordered_columns` changes only its header).
-The order options change only the headers and Phase 1; entries are identical. Because the flags
+The order options change only the headers, Phase 1 and the `hash_array` `type_json`; entries are
+identical. Because the flags
 byte is part of the header, hashes taken with different order options never coincide (modulo
 SHA-256 collisions), even when order cannot matter.
 
@@ -348,12 +357,15 @@ Rust panics (documented under `# Panics`); Python raises `ValueError`:
    names within a struct, or a name containing `/` that aliases another node (a column `"a/b"`
    next to a struct `a` with child `b`; a struct column `""` with child `a` next to a column
    `"/a"`); a `/` that aliases nothing (`"km/h"`) and empty names that alias nothing are fine.
-   Map nodes count as `m`, `m/`, `m//key`, `m//value`; the `hash_array` root is the node `""`;
+   Map nodes count as `m`, `m/`, `m//key`, `m//value`, a fixed-size list `f` as `f`, `f/`; the
+   `hash_array` root is the node `""`;
 2. a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type anywhere in the schema;
 3. data hashing (record batch, stream, `hash_array`) of a schema containing a type whose data is
    not supported (Section 8) — **whatever the number of rows, also zero rows or no batches**;
 4. a non-nullable field whose array has a null at an element (Section 3.2) that no enclosing
-   struct null masks (arrow-rs already refuses to build such arrays; pyarrow can build them).
+   struct null masks. arrow-rs's validating constructors refuse most such arrays, but not all
+   (a non-nullable dictionary column whose valid index points at a null dictionary value, or
+   IPC data read without validation, reaches the hasher); pyarrow can build them.
    A null in a child slot that is not an element — under a null list value, or outside every
    list value's offset range — is ignored, for `List` and `LargeList` alike;
 5. a streamed batch whose schema does not match (Section 5).
@@ -541,4 +553,6 @@ requires them to be pairwise different.
 ## 13. Platform considerations
 
 All lengths and counts are `u64` little-endian; validity words are `u8` (Lsb0); values are
-little-endian. Hashes are platform-independent.
+little-endian. The hash is defined by these bytes on every platform. The Rust implementation
+hashes Arrow's native value buffers, so it produces them on little-endian hosts (every platform
+arrow-rs supports in practice); a big-endian port would have to byte-swap values.

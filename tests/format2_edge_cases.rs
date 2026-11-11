@@ -265,6 +265,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dictionary_validity_is_that_of_the_decoded_array() {
+        use arrow::array::DictionaryArray;
+        use arrow::datatypes::Int32Type;
+        let dict = || -> ArrayRef {
+            Arc::new(
+                DictionaryArray::<Int32Type>::try_new(
+                    Int32Array::from(vec![0, 1]),
+                    Arc::new(Int32Array::from(vec![Some(5), None])),
+                )
+                .unwrap(),
+            )
+        };
+        // a valid index pointing at a null value is a null
+        let nullable = rb(
+            vec![Field::new("c", dict().data_type().clone(), true)],
+            vec![dict()],
+        );
+        let plain = rb(
+            vec![Field::new("c", DataType::Int32, true)],
+            vec![Arc::new(Int32Array::from(vec![Some(5), None]))],
+        );
+        assert_eq!(
+            ArrowDigester::hash_record_batch(&nullable, HasherConfig::default()),
+            ArrowDigester::hash_record_batch(&plain, HasherConfig::default())
+        );
+        // arrow-rs builds it as a non-nullable column (it counts only null indices); rejected
+        let non_nullable = rb(
+            vec![Field::new("c", dict().data_type().clone(), false)],
+            vec![dict()],
+        );
+        assert!(panics(|| {
+            ArrowDigester::hash_record_batch(&non_nullable, HasherConfig::default());
+        }));
+    }
+
+    #[test]
+    fn fixed_size_list_element_path_collides() {
+        let schema = Schema::new(vec![
+            Field::new(
+                "f",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Int32, true)), 2),
+                false,
+            ),
+            Field::new("f/", DataType::Int32, false),
+        ]);
+        assert!(panics(|| {
+            ArrowDigester::hash_schema(&schema, HasherConfig::default());
+        }));
+    }
+
     fn plain_list() -> ArrayRef {
         Arc::new(ListArray::new(
             Arc::new(Field::new("item", DataType::Int32, true)),
