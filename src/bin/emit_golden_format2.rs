@@ -32,9 +32,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-use std::process::Command;
 use std::sync::Arc;
-use std::{fs, slice};
+use std::{fs, io, slice};
 
 use arrow::array::{
     Array as _, ArrayRef, BooleanArray, DictionaryArray, FixedSizeBinaryArray, Int32Array,
@@ -62,12 +61,11 @@ struct GoldenFixture {
     version: String,
     format: u32,
     generated_by: String,
-    rust_commit: String,
     vectors: Vec<GoldenVector>,
     relations: Vec<Relation>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 struct GoldenVector {
     id: String,
     description: String,
@@ -79,7 +77,7 @@ struct GoldenVector {
     expected_hash: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 struct Relation {
     kind: String,
     ids: Vec<String>,
@@ -88,29 +86,8 @@ struct Relation {
 
 #[derive(Deserialize)]
 struct ExistingFixture {
-    vectors: Vec<ExistingVector>,
-}
-
-#[derive(Deserialize)]
-struct ExistingVector {
-    id: String,
-    expected_hash: String,
-}
-
-fn git_sha() -> String {
-    Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .map_or_else(
-            |_| "unknown".to_owned(),
-            |o| {
-                if o.status.success() {
-                    String::from_utf8_lossy(&o.stdout).trim().to_owned()
-                } else {
-                    "unknown".to_owned()
-                }
-            },
-        )
+    vectors: Vec<GoldenVector>,
+    relations: Vec<Relation>,
 }
 
 /// Config from the flags byte of the spec (bit0 columns, bit1 struct fields).
@@ -1217,6 +1194,7 @@ fn build() -> Builder {
 
     add_boolean_names_types_and_metadata(&mut gen);
     add_format1_metadata_names_and_extensions(&mut gen);
+    add_review_coverage(&mut gen);
 
     gen
 }
@@ -1878,35 +1856,587 @@ fn add_format1_metadata_names_and_extensions(gen: &mut Builder) {
     );
 }
 
-#[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
-fn check_append_only(vectors: &[GoldenVector]) {
-    let Ok(raw) = fs::read_to_string(FIXTURE_PATH) else {
-        return; // no committed fixture yet
+/// Coverage requested in review: nested nulls, data under null parents, dictionaries at depth,
+/// extension metadata forms, empty names (groups 20–25).
+fn add_review_coverage(gen: &mut Builder) {
+    let col = |name: &str, array: ArrayRef, nullable: bool| {
+        batch(
+            vec![Field::new(name, array.data_type().clone(), nullable)],
+            vec![array],
+        )
     };
-    let existing: ExistingFixture = serde_json::from_str(&raw).unwrap();
+    let list = |item_nullable: bool,
+                lengths: Vec<usize>,
+                items: ArrayRef,
+                nulls: Option<NullBuffer>|
+     -> ArrayRef {
+        Arc::new(ListArray::new(
+            Arc::new(Field::new("item", items.data_type().clone(), item_nullable)),
+            OffsetBuffer::<i32>::from_lengths(lengths),
+            items,
+            nulls,
+        ))
+    };
+
+    // 20. A null inner list in a list of nullable lists: [[[1], null, [2]]]
+    {
+        let inner = list(
+            true,
+            vec![1, 0, 1],
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        let outer = list(true, vec![3], inner, None);
+        gen.add(
+            "nested_null_inner_list_rb_f0",
+            "c: List<List<Int32?>?> one row [[1], null, [2]]",
+            0x00,
+            false,
+            &Input::Batch(col("c", outer, false)),
+        );
+        let inner_empty = list(
+            true,
+            vec![1, 0, 1],
+            Arc::new(Int32Array::from(vec![1, 2])),
+            None,
+        );
+        let outer_empty = list(true, vec![3], inner_empty, None);
+        gen.add(
+            "nested_empty_inner_list_rb_f0",
+            "Same with an empty inner list instead of null: [[1], [], [2]]",
+            0x00,
+            false,
+            &Input::Batch(col("c", outer_empty, false)),
+        );
+        gen.relate(
+            "different",
+            &[
+                "nested_null_inner_list_rb_f0",
+                "nested_empty_inner_list_rb_f0",
+            ],
+            "a null list differs from an empty list, also when nested",
+        );
+    }
+
+    // 21. Depth 4: List<Struct<v: List<Struct<x: Int32?>?>?>?>, nulls at every level
+    {
+        let x = StructArray::new(
+            Fields::from(vec![Field::new("x", DataType::Int32, true)]),
+            vec![Arc::new(Int32Array::from(vec![Some(1), None, Some(3)]))],
+            Some(NullBuffer::from(vec![true, true, false])),
+        );
+        let v = list(
+            true,
+            vec![2, 1, 0],
+            Arc::new(x),
+            Some(NullBuffer::from(vec![true, true, false])),
+        );
+        let s = StructArray::new(
+            Fields::from(vec![Field::new("v", v.data_type().clone(), true)]),
+            vec![v],
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        let outer = list(true, vec![2, 1], Arc::new(s), None);
+        gen.add(
+            "depth4_rb_f0",
+            "d: List<Struct<v: List<Struct<x: Int32?>?>?>?> with nulls at every level",
+            0x00,
+            false,
+            &Input::Batch(col("d", Arc::clone(&outer), false)),
+        );
+        gen.add(
+            "depth4_rb_f3",
+            "Same, both order options",
+            0x03,
+            false,
+            &Input::Batch(col("d", outer, false)),
+        );
+    }
+
+    // 22. A nullable list inside a nullable struct, and data under null parents
+    {
+        let l = list(
+            true,
+            vec![1, 0, 2],
+            Arc::new(Int32Array::from(vec![1, 7, 8])),
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        let s = StructArray::new(
+            Fields::from(vec![Field::new("l", l.data_type().clone(), true)]),
+            vec![l],
+            Some(NullBuffer::from(vec![true, true, false])),
+        );
+        gen.add(
+            "list_in_struct_rb_f0",
+            "s: Struct<l: List<Int32>?>? rows [{l:[1]}, {l:null}, null]",
+            0x00,
+            false,
+            &Input::Batch(col("s", Arc::new(s), true)),
+        );
+        // a null list slot that still covers values hashes like an empty one
+        let covered = list(
+            true,
+            vec![1, 2, 1],
+            Arc::new(Int32Array::from(vec![1, 98, 99, 4])),
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        let empty_slot = list(
+            true,
+            vec![1, 0, 1],
+            Arc::new(Int32Array::from(vec![1, 4])),
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        gen.add(
+            "null_list_slot_with_values_rb_f0",
+            "l: List<Int32>? rows [[1], null (slot covers 98, 99), [4]]",
+            0x00,
+            false,
+            &Input::Batch(col("l", covered, true)),
+        );
+        gen.add(
+            "null_list_slot_empty_rb_f0",
+            "l: List<Int32>? rows [[1], null (empty slot), [4]]",
+            0x00,
+            false,
+            &Input::Batch(col("l", empty_slot, true)),
+        );
+        gen.relate(
+            "equal",
+            &[
+                "null_list_slot_with_values_rb_f0",
+                "null_list_slot_empty_rb_f0",
+            ],
+            "values under a null list are not hashed",
+        );
+        let under_null = |hidden: i32| {
+            let s = StructArray::new(
+                Fields::from(vec![Field::new("a", DataType::Int32, false)]),
+                vec![Arc::new(Int32Array::from(vec![1, hidden, 3]))],
+                Some(NullBuffer::from(vec![true, false, true])),
+            );
+            col("s", Arc::new(s), true)
+        };
+        gen.add(
+            "struct_null_hides_5_rb_f0",
+            "s: Struct<a: Int32>? rows [{a:1}, null (a=5 underneath), {a:3}]",
+            0x00,
+            false,
+            &Input::Batch(under_null(5)),
+        );
+        gen.add(
+            "struct_null_hides_6_rb_f0",
+            "Same with a=6 underneath the null struct",
+            0x00,
+            false,
+            &Input::Batch(under_null(6)),
+        );
+        gen.relate("equal", &["struct_null_hides_5_rb_f0", "struct_null_hides_6_rb_f0"], "values under a null struct are not hashed (non-nullable child: no validity bits, no values)");
+        let empty_vs_null = |null: bool| {
+            let l = list(
+                true,
+                vec![0],
+                Arc::new(Int32Array::from(Vec::<i32>::new())),
+                Some(NullBuffer::from(vec![!null])),
+            );
+            col("l", l, true)
+        };
+        gen.add(
+            "empty_list_rb_f0",
+            "l: List<Int32>? one row []",
+            0x00,
+            false,
+            &Input::Batch(empty_vs_null(false)),
+        );
+        gen.add(
+            "null_list_rb_f0",
+            "l: List<Int32>? one row null",
+            0x00,
+            false,
+            &Input::Batch(empty_vs_null(true)),
+        );
+        gen.relate(
+            "different",
+            &["empty_list_rb_f0", "null_list_rb_f0"],
+            "an empty list differs from a null list",
+        );
+    }
+
+    // 23. Dictionaries: null, unused and duplicate dictionary values; at depth; equal to plain
+    {
+        use arrow::array::{DictionaryArray, Float64Array, Int64Array};
+        use arrow::datatypes::Int32Type;
+        let dict64 = |keys: Vec<Option<i32>>, values: Vec<Option<i64>>| -> ArrayRef {
+            Arc::new(
+                DictionaryArray::<Int32Type>::try_new(
+                    Int32Array::from(keys),
+                    Arc::new(Int64Array::from(values)),
+                )
+                .unwrap(),
+            )
+        };
+        // keys -> [30, 10, null (null key), null (key -> null value), 30]
+        let d = dict64(
+            vec![Some(2), Some(0), None, Some(4), Some(3)],
+            vec![Some(10), Some(99), Some(30), Some(30), None],
+        );
+        let plain: ArrayRef = Arc::new(Int64Array::from(vec![
+            Some(30),
+            Some(10),
+            None,
+            None,
+            Some(30),
+        ]));
+        gen.add("dict_null_unused_dup_rb_f0", "v: Dictionary<Int32, Int64> with a null key, a key to a null value, an unused and a duplicated value", 0x00, false, &Input::Batch(col("v", Arc::clone(&d), true)));
+        gen.add(
+            "dict_null_unused_dup_plain_rb_f0",
+            "v: Int64 with the same logical values",
+            0x00,
+            false,
+            &Input::Batch(col("v", Arc::clone(&plain), true)),
+        );
+        gen.relate(
+            "equal",
+            &[
+                "dict_null_unused_dup_rb_f0",
+                "dict_null_unused_dup_plain_rb_f0",
+            ],
+            "a dictionary hashes as its logical values",
+        );
+        let same_keys_other_values = dict64(
+            vec![Some(2), Some(0), None, Some(4), Some(3)],
+            vec![Some(11), Some(99), Some(30), Some(30), None],
+        );
+        gen.add(
+            "dict_same_keys_other_values_rb_f0",
+            "Same keys, dictionary value 10 replaced by 11",
+            0x00,
+            false,
+            &Input::Batch(col("v", same_keys_other_values, true)),
+        );
+        gen.relate(
+            "different",
+            &[
+                "dict_null_unused_dup_rb_f0",
+                "dict_same_keys_other_values_rb_f0",
+            ],
+            "same index pattern, different values",
+        );
+        // list<dictionary<int64>> (nullable items) and sliced
+        gen.add(
+            "list_dict_rb_f0",
+            "l: List<Dictionary<Int32, Int64>?> rows of 2 and 3 items",
+            0x00,
+            false,
+            &Input::Batch(col(
+                "l",
+                list(true, vec![2, 3], Arc::clone(&d), None),
+                false,
+            )),
+        );
+        gen.add(
+            "list_plain_rb_f0",
+            "l: List<Int64?> with the same values",
+            0x00,
+            false,
+            &Input::Batch(col(
+                "l",
+                list(true, vec![2, 3], Arc::clone(&plain), None),
+                false,
+            )),
+        );
+        gen.relate(
+            "equal",
+            &["list_dict_rb_f0", "list_plain_rb_f0"],
+            "dictionary equals plain inside a list",
+        );
+        let sliced_dict = col("l", list(true, vec![2, 3], Arc::clone(&d), None), false).slice(1, 1);
+        let sliced_plain =
+            col("l", list(true, vec![2, 3], Arc::clone(&plain), None), false).slice(1, 1);
+        gen.add(
+            "list_dict_sliced_rb_f0",
+            "Row 1 of list_dict, as a slice (non-zero offsets)",
+            0x00,
+            false,
+            &Input::Batch(sliced_dict),
+        );
+        gen.add(
+            "list_plain_sliced_rb_f0",
+            "Row 1 of list_plain, as a slice",
+            0x00,
+            false,
+            &Input::Batch(sliced_plain),
+        );
+        gen.relate(
+            "equal",
+            &["list_dict_sliced_rb_f0", "list_plain_sliced_rb_f0"],
+            "dictionary equals plain inside a sliced list",
+        );
+        // list<struct<dictionary<float64>>>
+        let fdict: ArrayRef = Arc::new(
+            DictionaryArray::<Int32Type>::try_new(
+                Int32Array::from(vec![1, 0, 1]),
+                Arc::new(Float64Array::from(vec![0.5, -2.25])),
+            )
+            .unwrap(),
+        );
+        let fplain: ArrayRef = Arc::new(Float64Array::from(vec![-2.25, 0.5, -2.25]));
+        let lsd = |values: ArrayRef| {
+            let st = StructArray::new(
+                Fields::from(vec![Field::new("f", values.data_type().clone(), false)]),
+                vec![values],
+                None,
+            );
+            col("l", list(false, vec![1, 2], Arc::new(st), None), false)
+        };
+        gen.add(
+            "list_struct_dict_rb_f0",
+            "l: List<Struct<f: Dictionary<Int32, Float64>>>",
+            0x00,
+            false,
+            &Input::Batch(lsd(fdict)),
+        );
+        gen.add(
+            "list_struct_plain_rb_f0",
+            "l: List<Struct<f: Float64>> with the same values",
+            0x00,
+            false,
+            &Input::Batch(lsd(fplain)),
+        );
+        gen.relate(
+            "equal",
+            &["list_struct_dict_rb_f0", "list_struct_plain_rb_f0"],
+            "dictionary equals plain inside a struct inside a list",
+        );
+        // list<list<dictionary<utf8>>>
+        let sdict: ArrayRef = cast(
+            &StringArray::from(vec![Some("x"), None, Some("y"), Some("x")]),
+            &DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8)),
+        )
+        .unwrap();
+        let splain: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("x"),
+            None,
+            Some("y"),
+            Some("x"),
+        ]));
+        let lls = |values: ArrayRef| {
+            col(
+                "l",
+                list(true, vec![2], list(true, vec![1, 3], values, None), None),
+                false,
+            )
+        };
+        gen.add(
+            "list_list_dict_rb_f0",
+            "l: List<List<Dictionary<Int8, Utf8>?>?>",
+            0x00,
+            false,
+            &Input::Batch(lls(sdict)),
+        );
+        gen.add(
+            "list_list_plain_rb_f0",
+            "l: List<List<Utf8?>?> with the same values",
+            0x00,
+            false,
+            &Input::Batch(lls(splain)),
+        );
+        gen.relate(
+            "equal",
+            &["list_list_dict_rb_f0", "list_list_plain_rb_f0"],
+            "dictionary equals plain two lists deep",
+        );
+        // dictionary of structs and of lists (E5): hashed as the value type
+        let st = StructArray::from(vec![(
+            Arc::new(Field::new("a", DataType::Int32, false)),
+            Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef,
+        )]);
+        let dst: ArrayRef = Arc::new(
+            DictionaryArray::<Int32Type>::try_new(Int32Array::from(vec![1, 0, 1]), Arc::new(st))
+                .unwrap(),
+        );
+        let pst: ArrayRef = Arc::new(StructArray::from(vec![(
+            Arc::new(Field::new("a", DataType::Int32, false)),
+            Arc::new(Int32Array::from(vec![2, 1, 2])) as ArrayRef,
+        )]));
+        gen.add(
+            "dict_of_struct_array_f0",
+            "hash_array of Dictionary<Int32, Struct<a: Int32>>",
+            0x00,
+            false,
+            &Input::Array(dst),
+        );
+        gen.add(
+            "dict_of_struct_plain_array_f0",
+            "hash_array of the equivalent Struct<a: Int32>",
+            0x00,
+            false,
+            &Input::Array(pst),
+        );
+        gen.relate(
+            "equal",
+            &["dict_of_struct_array_f0", "dict_of_struct_plain_array_f0"],
+            "a dictionary of structs hashes as its decoded structs",
+        );
+        // hash_array nullability counts logical nulls (a valid key pointing at a null value) (R4)
+        let dn: ArrayRef = dict64(vec![Some(0), Some(1)], vec![Some(5), None]);
+        let pn: ArrayRef = Arc::new(Int64Array::from(vec![Some(5), None]));
+        gen.add(
+            "dict_key_to_null_array_f0",
+            "hash_array of Dictionary [5, null] where the null comes from the dictionary values",
+            0x00,
+            false,
+            &Input::Array(dn),
+        );
+        gen.add(
+            "dict_key_to_null_plain_array_f0",
+            "hash_array of Int64 [5, null]",
+            0x00,
+            false,
+            &Input::Array(pn),
+        );
+        gen.relate(
+            "equal",
+            &[
+                "dict_key_to_null_array_f0",
+                "dict_key_to_null_plain_array_f0",
+            ],
+            "hash_array nullability counts logical nulls after decoding the dictionary",
+        );
+    }
+
+    // 24. Extension metadata forms (E1); with include_metadata
+    {
+        let ext = |name: &str, pairs: &[(&str, &str)], storage: DataType| {
+            let mut m = meta(&[("ARROW:extension:name", name)]);
+            m.extend(meta(pairs));
+            Arc::new(Schema::new(vec![
+                Field::new("e", storage, true).with_metadata(m)
+            ]))
+        };
+        gen.add(
+            "ext_custom_python_schema_f0_im1",
+            "orcapod.ndarray-style extension with metadata {\"version\":1} over LargeBinary",
+            0x00,
+            true,
+            &Input::Schema(ext(
+                "orcapod.ndarray",
+                &[("ARROW:extension:metadata", "{\"version\":1}")],
+                DataType::LargeBinary,
+            )),
+        );
+        gen.add(
+            "ext_uuid_name_only_schema_f0_im1",
+            "arrow.uuid with ARROW:extension:name only",
+            0x00,
+            true,
+            &Input::Schema(ext("arrow.uuid", &[], DataType::FixedSizeBinary(16))),
+        );
+        gen.add(
+            "ext_uuid_empty_metadata_schema_f0_im1",
+            "arrow.uuid with ARROW:extension:metadata = \"\"",
+            0x00,
+            true,
+            &Input::Schema(ext(
+                "arrow.uuid",
+                &[("ARROW:extension:metadata", "")],
+                DataType::FixedSizeBinary(16),
+            )),
+        );
+        gen.relate(
+            "equal",
+            &[
+                "ext_uuid_name_only_schema_f0_im1",
+                "ext_uuid_empty_metadata_schema_f0_im1",
+            ],
+            "an absent ARROW:extension:metadata equals an empty one",
+        );
+        let tensor =
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), 4);
+        gen.add("ext_tensor_canonical_schema_f0_im1", "arrow.fixed_shape_tensor with canonical metadata {\"shape\":[2,2]} over FixedSizeList<Float32, 4> (schema only)", 0x00, true, &Input::Schema(ext("arrow.fixed_shape_tensor", &[("ARROW:extension:metadata", "{\"shape\":[2,2]}")], tensor)));
+    }
+
+    // 25. Empty names (R7) and the format-2 nullable-struct example with a non-nullable child (E2)
+    {
+        let empty_child = Arc::new(Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(Fields::from(vec![Field::new("", DataType::Int32, false)])),
+            false,
+        )]));
+        gen.add(
+            "empty_name_child_schema_f0",
+            "s: Struct<\"\": Int32>",
+            0x00,
+            false,
+            &Input::Schema(empty_child),
+        );
+        let empty_col = Arc::new(Schema::new(vec![
+            Field::new(
+                "",
+                DataType::Struct(Fields::from(vec![Field::new("x", DataType::Int32, false)])),
+                false,
+            ),
+            Field::new("x", DataType::Int32, false),
+        ]));
+        gen.add(
+            "empty_name_column_schema_f0",
+            "[\"\": Struct<x: Int32>, x: Int32] (child path \"/x\", column \"x\")",
+            0x00,
+            false,
+            &Input::Schema(empty_col),
+        );
+        let s = StructArray::new(
+            Fields::from(vec![Field::new("a", DataType::Int32, false)]),
+            vec![Arc::new(Int32Array::from(vec![1, 0, 3]))],
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        gen.add(
+            "struct_nonnull_child_rb_f0",
+            "s: Struct<a: Int32 non-null>? rows [{a:1}, null, {a:3}] (spec worked example)",
+            0x00,
+            false,
+            &Input::Batch(col("s", Arc::new(s), true)),
+        );
+    }
+}
+
+#[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]
+fn check_append_only(vectors: &[GoldenVector], relations: &[Relation]) {
+    let raw = match fs::read_to_string(FIXTURE_PATH) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return, // no committed fixture yet
+        Err(e) => panic!("append-only guard: cannot read {FIXTURE_PATH}: {e}"),
+    };
+    let existing: ExistingFixture = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("append-only guard: cannot parse {FIXTURE_PATH}: {e}"));
     for old in &existing.vectors {
         match vectors.iter().find(|v| v.id == old.id) {
             None => panic!(
                 "append-only guard: committed vector '{}' is no longer generated",
                 old.id
             ),
-            Some(new) if new.expected_hash != old.expected_hash => panic!(
-                "append-only guard: vector '{}' would change from {} to {}; hash definitions are permanent",
-                old.id, old.expected_hash, new.expected_hash
+            // every field must be identical: input, method, options, description, hash
+            Some(new) if new != old => panic!(
+                "append-only guard: committed vector '{}' would change; vectors are permanent\n  committed: {old:?}\n  generated: {new:?}",
+                old.id
             ),
             Some(_) => {}
         }
+    }
+    for old in &existing.relations {
+        assert!(
+            relations.contains(old),
+            "append-only guard: committed relation {old:?} is no longer generated"
+        );
     }
 }
 
 fn main() {
     let g = build();
-    check_append_only(&g.vectors);
+    check_append_only(&g.vectors, &g.relations);
     let fixture = GoldenFixture {
         version: "0.5".to_owned(),
         format: 2,
         generated_by: "cargo run --bin emit_golden_format2".to_owned(),
-        rust_commit: git_sha(),
         vectors: g.vectors,
         relations: g.relations,
     };

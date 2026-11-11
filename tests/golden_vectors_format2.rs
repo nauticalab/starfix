@@ -156,11 +156,12 @@ mod tests {
     #[test]
     fn default_hash_array_matches_flag0_vectors() {
         let fixture = load_fixture();
-        for v in fixture
-            .vectors
-            .iter()
-            .filter(|v| v.method == "hash_array" && v.id.ends_with("_f0"))
-        {
+        for v in fixture.vectors.iter().filter(|v| {
+            v.method == "hash_array"
+                && !v.include_metadata
+                && !v.ordered_columns
+                && !v.ordered_struct_fields
+        }) {
             let (_, batches) = decode_ipc(&v.ipc_b64);
             let b = batches.first().expect("one batch");
             assert_eq!(
