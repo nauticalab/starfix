@@ -256,7 +256,7 @@ To include metadata, pass `HasherConfig { include_metadata: true }`:
 ```rust
 use starfix::{ArrowDigester, HasherConfig};
 
-let config = HasherConfig { include_metadata: true };
+let config = HasherConfig { include_metadata: true, ..HasherConfig::default() };
 let hash = ArrowDigester::hash_record_batch(&batch, config);
 ```
 
@@ -291,6 +291,52 @@ When a schema has no metadata anywhere, Phase 2 adds nothing. `include_metadata 
 ### Schema equality enforcement
 
 When `include_metadata = true`, `update()` also enforces that incoming record batches have the same metadata as the schema used at construction. Batches with differing metadata are rejected.
+
+## Hashing Options (v0.5): Order Sensitivity and Lossless Layout
+
+**Ordering principle.** By default starfix ignores exactly two orders: the order of the top-level
+columns and the order of struct fields (at every depth). It never sorts or reorders anything
+else: row order, list element order (also for `list<struct<key, value>>`) and the logical values
+of dictionary-encoded arrays are hashed as given.
+
+Three opt-in options (all default `false`; per call, never global) change this:
+
+| Option | Effect |
+|---|---|
+| `ordered_columns` | the order of the top-level columns is part of the hash |
+| `ordered_struct_fields` | the order of struct fields is part of the hash, at every depth (struct in struct, list, large list, fixed-size list, map, dictionary value type) |
+| `nested_validity` (name provisional) | lossless layout: a null struct differs from a struct whose fields are all null, null struct rows are counted, a list of nullable lists keeps its own lengths, and Boolean values are counted and batch-split independent |
+
+```rust
+use starfix::{ArrowDigester, HasherConfig};
+
+// Identity of a table value whose column and struct-field order matter:
+let config = HasherConfig {
+    ordered_columns: true,
+    ordered_struct_fields: true,
+    nested_validity: true,
+    ..HasherConfig::default()
+};
+let hash = ArrowDigester::hash_record_batch(&batch, config);
+let array_hash = ArrowDigester::hash_array_with_config(&array, config);
+```
+
+Guarantees:
+
+- With all three options off, every hash is byte-identical to v0.4.0.
+- Hashes taken with different option values never coincide: when any option is on, a 20-byte
+  options tag (`0x00 "starfix-options-v1" <flags>`) starts the schema digest (and the
+  `hash_array` digest). A one-column table therefore hashes differently with and without
+  `ordered_columns`, although its order cannot matter.
+- Physical-type equivalences (`Utf8`/`LargeUtf8`, `Binary`/`LargeBinary`, `List`/`LargeList`,
+  dictionary/plain) and batch-split independence hold in every mode.
+- With any option on, a streaming digester rejects a batch whose column or struct-field order
+  differs where that order is part of the hash, and schemas with duplicate field names or
+  `/`-aliased names (a column `"a/b"` next to a struct `a` with child `b`) are rejected.
+
+The exact bytes are specified in `docs/byte-layout-spec.md`, Section 9. Rust-generated golden
+vectors that other implementations (starfix-python) must match are in
+`tests/golden/ordered_v0.5.json` (`cargo run --bin emit_golden_ordered`, append-only).
 
 ## Collision Prevention
 
@@ -370,6 +416,7 @@ Process:
 
 The hashing algorithm ensures deterministic output because:
 
+0. **Only column order and struct field order are ignored** (by default; see "Hashing Options") - nothing else is ever sorted
 1. **Schema fields are sorted** - BTreeMap maintains alphabetical order
 2. **Field order is deterministic** - Always process in alphabetical field name order
 3. **Data types are consistent** - Each type uses the same hashing strategy
@@ -406,24 +453,31 @@ The hashing algorithm ensures deterministic output because:
 
 ## Known Limitations
 
-The current implementation marks the following data types as `todo!()`:
+Data hashing does not support the following types (they panic with `not yet implemented`; their
+schemas can still be hashed):
 
 - `Null` - Null data type itself
-- `Timestamp` - Timestamp variants
-- `Duration` - Duration types
 - `Interval` - Interval types
-- `BinaryView` - Binary view type
-- `Utf8View` - UTF-8 view type
-- `ListView` - List view type
+- `BinaryView` / `Utf8View` - View types
+- `ListView` / `LargeListView` - List view types
 - `FixedSizeList` - Fixed-size lists
-- `LargeListView` - Large list view type
-- `Struct` - Struct types (partial support for nested fields)
 - `Union` - Union types
-- `Dictionary` - Dictionary-encoded types
 - `Map` - Map types
 - `RunEndEncoded` - Run-end encoded types
 
-These types will panic if encountered during hashing and should be implemented in future versions.
+The default layout (all options off) is frozen and loses information in a few cases, which the
+`nested_validity` option (provisional name) removes:
+
+- a null struct hashes like a struct whose fields are all null; when the struct's fields are
+  non-nullable, null struct rows contribute nothing;
+- in `list<nullable list<..>>` the outer per-row lengths are lost, and in
+  `list<nullable struct<..>>` a null element hashes like an element with all-null fields;
+- non-nullable Boolean data is bit-packed without a count (`[true]` hashes like
+  `[true, false, false]` in a one-column table), and Boolean data is packed per batch, so a
+  Boolean column's hash depends on how rows are split into batches.
+
+The row count of a table with zero columns is not hashed (in every mode).
+
 ## SHA-256 Hashing Implementation
 
 ### Overview

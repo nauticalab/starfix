@@ -163,17 +163,25 @@ JSON is self-delimiting, so no length prefixes are needed.
 ```rust
 pub struct HasherConfig {
     pub include_metadata: bool,
+    pub ordered_columns: bool,       // v0.5
+    pub ordered_struct_fields: bool, // v0.5
+    pub nested_validity: bool,       // v0.5, provisional name
 }
 ```
 
-`HasherConfig::default()` sets `include_metadata = false`, preserving backward-compatible behavior.
+`HasherConfig::default()` sets every option to `false`, preserving backward-compatible behavior.
+The three v0.5 options are specified in `docs/byte-layout-spec.md` Section 9 (design rationale:
+`docs/metamorphic/specs/2026-11-11-ordered-hashing-design.md`): `ordered_columns` and
+`ordered_struct_fields` make column order and struct field order part of the hash;
+`nested_validity` selects a lossless layout (nested validity and counted Booleans). When any of
+them is on, an options tag domain-separates the hash.
 
 `HasherConfig` is passed as a parameter to the following public methods:
 - `ArrowDigester::new(schema: &Schema, config: HasherConfig)`
 - `ArrowDigester::hash_schema(schema: &Schema, config: HasherConfig) -> Vec<u8>`
 - `ArrowDigester::hash_record_batch(rb: &RecordBatch, config: HasherConfig) -> Vec<u8>`
 
-`hash_array()` is **not** affected — it operates on a single array without a schema context and never calls `hash_schema`.
+`hash_array()` is **not** affected — it operates on a single array without a schema context and never calls `hash_schema`. `hash_array_with_config(array, config)` (v0.5) applies the three v0.5 options; `include_metadata` has no effect there.
 
 Future options (e.g., per-key filters, separate schema-level vs. field-level toggles) will be added as new fields on `HasherConfig`. Because `HasherConfig` is a plain public struct, adding a new field is a source-breaking change for callers that construct it with an exhaustive literal (e.g., `HasherConfig { include_metadata: true }`). Callers should construct configs using the struct-update syntax to stay forward-compatible:
 
@@ -375,8 +383,9 @@ When `update(record_batch)` is called, the record batch's schema is compared aga
 
 ## 10. Invariants and Guarantees
 
-1. **Column-order independence:** Top-level fields are sorted alphabetically via `BTreeMap`.
-2. **Struct field-order independence:** Struct children are sorted by name during schema serialization and during composite hashing in `array_digest_update`.
+0. **Ordering principle:** only column order and struct field order are ignored (by default); nothing else (rows, list elements, dictionary values) is ever sorted.
+1. **Column-order independence:** Top-level fields are sorted alphabetically via `BTreeMap` (unless `ordered_columns`).
+2. **Struct field-order independence:** Struct children are sorted by name during schema serialization and during composite hashing in `array_digest_update` (unless `ordered_struct_fields`).
 3. **Batch-split independence:** Streaming `update()` calls produce the same hash as a single combined batch.
 4. **Encoding independence:** Dictionary-encoded arrays are resolved before hashing.
 5. **Physical type independence:** `Binary`/`LargeBinary`, `Utf8`/`LargeUtf8`, `List`/`LargeList` are canonicalized to their large variants in the schema and use identical data serialization.
