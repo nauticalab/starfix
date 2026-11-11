@@ -2,544 +2,166 @@
 
 ## Overview
 
-StarFix is a cryptographic hashing library for Apache Arrow data tables. It provides a deterministic way to compute unique digests for Arrow data structures, enabling efficient identification and comparison of data regardless of storage order or location.
-
-The hashing system is built on top of SHA-256 (configurable to other digest algorithms via the `Digest` trait) and uses a hierarchical approach to hash different components of an Arrow table: schema metadata and field values.
-
-## Core Architecture
-
-### Main Components
-
-The hashing system consists of three main hashing levels:
-
-1. **Schema Digest** - Hash of the table schema (field names, types, and nullability)
-2. **Field Digests** - Individual hashes for each field's data
-3. **Final Digest** - Combined hash from schema + all field digests
-
-### DigestBufferType
-
-The codebase uses a `DigestBufferType` struct to differentiate between nullable and non-nullable fields:
-
-```rust
-struct DigestBufferType<D: Digest> {
-    null_bits: Option<BitVec<u8, Lsb0>>,  // Present for nullable entries
-    structural: Option<D>,                  // Present for list-type entries
-    data: Option<D>,                        // Present for leaf and list-leaf entries
-}
-```
-
-This separation is crucial because nullable and non-nullable fields must be hashed differently to ensure data integrity and distinguish between actual nulls and missing data.
-
-## Hashing Flow
-
-### Record Batch Hashing
-
-When hashing a complete `RecordBatch`, the process follows these steps:
-
-```
-1. Create ArrowDigester with schema
-   ├─ Hash the schema (JSON serialized)
-   └─ Initialize field digest buffers
-        └─ Flatten nested struct fields with "/" delimiter
-        └─ Mark each field as Nullable or NonNullable
-
-2. Update with record batch data
-   ├─ For each field:
-   │  └─ Match on data type and call appropriate hashing function
-   │  └─ Update both null bits (if nullable) and data digest
-   └─ Accumulate all digests
-
-3. Finalize
-   ├─ Combine schema digest
-   ├─ Process each field digest in alphabetical order
-   │  ├─ If nullable: hash (null_bits.len + raw_null_bits + data)
-   │  └─ If non-nullable: hash data only
-   └─ Return final digest
-```
-
-### Direct Array Hashing
-
-Arrays can also be hashed independently without schema context:
-
-```
-1. Hash the data type metadata (JSON serialized)
-2. Initialize digest buffer based on array nullability
-3. Call array_digest_update with appropriate handler
-4. Finalize and combine digests
-```
-
-## Null Bits Handling
-
-### Why Null Bits Matter
-
-Null bits are essential to the hashing algorithm because:
-- They distinguish between actual null values and valid data
-- They enable reliable hashing of nullable vs non-nullable fields
-- They preserve data integrity across different representations
-
-### Null Bits Processing
-
-For nullable fields, the system maintains a `BitVec` (bitvector) where each bit represents whether a value at that index is valid (`true`) or null (`false`).
-
-#### Processing Steps:
-
-1. **If null buffer exists:**
-   ```
-   - Iterate through each element
-   - Set bit to true if value is valid
-   - Set bit to false if value is null
-   - For data digest: only hash valid values
-   - For null values: hash the NULL_BYTES constant (b"NULL")
-   ```
-
-2. **If no null buffer (all values valid):**
-   ```
-   - Extend bitvector with all true values (one per element)
-   - Hash all data normally
-   ```
-
-### Finalization of Nullable Fields
-
-When finalizing a nullable field digest:
-
-```rust
-final_digest.update(null_bits.len().to_le_bytes());      // Size of bitvector
-for &word in null_bits.as_raw_slice() {
-    final_digest.update(word.to_le_bytes());              // Actual null bits
-}
-final_digest.update(data_digest.finalize());              // Data values
-```
-
-This ensures the null bit pattern is part of the final hash, making nullable arrays with actual nulls hash differently from arrays without nulls.
-
-
-### Nullable Array with No Null Values
-
-As demonstrated in the `nullable_vs_non_nullable_array_produces_same_hash` test in `/tests/arrow_digester.rs`:
-
-When an Arrow array is created with a nullable type but contains no actual null values, Arrow optimizes the internal representation by removing the null buffer. This means the **hasher treats the array identically to a non-nullable array, producing the same hash result.**
-
-
-## Supported Data Types
-
-### Fixed-Size Types
-
-These types have consistent byte widths and can be hashed directly:
-
-| Data Type | Size | Handling |
-|-----------|------|----------|
-| Boolean | Variable | Bit-packed into bytes |
-| Int8, UInt8 | 1 byte | Direct buffer hashing |
-| Int16, UInt16, Float16 | 2 bytes | Direct buffer hashing |
-| Int32, UInt32, Float32, Date32 | 4 bytes | Direct buffer hashing |
-| Int64, UInt64, Float64, Date64 | 8 bytes | Direct buffer hashing |
-| Decimal32 | 4 bytes | Direct buffer hashing |
-| Decimal64 | 8 bytes | Direct buffer hashing |
-| Decimal128 | 16 bytes | Direct buffer hashing |
-| Decimal256 | 32 bytes | Direct buffer hashing |
-| Time32 | 4 bytes | Direct buffer hashing |
-| Time64 | 8 bytes | Direct buffer hashing |
-
-**Hashing Strategy:**
-- Get the data buffer from Arrow array
-- Account for array offset
-- For non-nullable: hash the entire slice directly
-- For nullable: iterate element by element, skipping null values
-
-### Boolean Type
-
-Booleans receive special handling because Arrow stores them as bit-packed values (1 bit per value):
-
-```rust
-// For non-nullable:
-- Extract each boolean value
-- Pack into BitVec using Lsb0 ordering
-- Hash the raw bytes
-
-// For nullable:
-- Handle null bits (as described above)
-- Pack only valid boolean values
-- Hash the packed bytes
-```
-
-### Variable-Length Types
-
-#### Binary Arrays
-
-Binary data (raw byte sequences) must include length prefixes to prevent collisions:
-
-```
-For each element:
-  - Hash: value.len().to_le_bytes()  // Length prefix
-  - Hash: value.as_slice()           // Actual data
-```
-
-**Example collision prevention:**
-- Without prefix: `[0x01, 0x02]` + `[0x03]` = `[0x01, 0x02, 0x03]`
-- With prefix: `len=2, 0x01, 0x02, len=1, 0x03` (different!)
-
-#### String Arrays
-
-Strings are similar to binary but UTF-8 encoded:
-
-```
-For each element:
-  - Hash: (value.len() as u32).to_le_bytes()  // Length as u32
-  - Hash: value.as_bytes()                     // UTF-8 data
-```
-
-#### List Arrays
-
-Lists/Array types prefix each sub-array's element count before recursively hashing the nested values, preventing cross-boundary collisions:
-
-```
-For each list element:
-  - Hash: (sub.len() as u64).to_le_bytes()  // Element count prefix
-  - Recursively call array_digest_update
-  - Use the inner field's data type
-  - Skip null list entries
-```
-
-**Example collision prevention:**
-- Without prefix: `[[1,2],[3]]` and `[[1],[2,3]]` both flatten to `01000000 02000000 03000000` — identical!
-- With prefix: `len=2, 1, 2, len=1, 3` vs `len=1, 1, len=2, 2, 3` → different hashes ✓
-
-## Schema Handling
-
-### Schema Flattening
-
-Nested struct fields are flattened into a single-level map using the `/` delimiter:
-
-```
-Original schema:
-  person (struct)
-    ├─ name (string)
-    └─ address (struct)
-        ├─ street (string)
-        └─ zip (int32)
-
-Flattened:
-  person/name
-  person/address/street
-  person/address/zip
-```
-
-### Schema Serialization
-
-The schema is serialized as a JSON string containing:
-- Field names
-- Field types (as DataType serialization)
-- Nullability flags
-
-```rust
-{
-  "address/street": ("string", Utf8),
-  "address/zip": ("int32", Int32),
-  "name": ("string", Utf8)
-}
-```
-
-Fields are stored in a `BTreeMap` to ensure **consistent alphabetical ordering**, which is critical for deterministic hashing.
-
-### Schema Hash Inclusion
-
-The schema digest is always the first component hashed into the final digest. This ensures that changes to schema structure produce different hashes, preventing false collisions.
-
-When `HasherConfig { include_metadata: true }` is passed, Arrow `metadata` attached at the schema level or per-field is also incorporated into the schema digest (see "Metadata Hashing" below).
-
-## Metadata Hashing (v0.1.0)
-
-By default, Arrow `metadata` (key-value string maps attached to schemas and fields) is **not** included in the hash. Two schemas that differ only in metadata produce the same hash. This preserves stability for consumers who do not use metadata.
-
-To include metadata, pass `HasherConfig { include_metadata: true }`:
+StarFix computes deterministic, content-based SHA-256 hashes of Apache Arrow schemas, record
+batches, streams of record batches, and arrays. Inputs that hold the same logical data under the
+same schema get the same hash, regardless of how the data is laid out in memory (chunking,
+offsets, small vs large offset types, dictionary encoding); inputs that differ get different
+hashes, up to SHA-256 collisions (tested exhaustively on small inputs of every supported type).
+
+Every hash is 35 bytes: a 3-byte **hash format version** followed by a SHA-256 digest. This crate
+produces **hash format 2** (`00 00 02`). The exact bytes are specified in
+[`docs/byte-layout-spec.md`](docs/byte-layout-spec.md), precisely enough for an independent
+implementation. [starfix-python](https://github.com/nauticalab/starfix-python) is being updated
+to format 2 in a companion change (its released versions produce format 1); its format-2
+implementation must match the Rust-generated golden vectors in `tests/golden/format2_v0.5.json`
+exactly.
+
+## Usage
 
 ```rust
 use starfix::{ArrowDigester, HasherConfig};
 
-let config = HasherConfig { include_metadata: true };
-let hash = ArrowDigester::hash_record_batch(&batch, config);
-```
-
-### How the schema hash is computed with metadata
-
-Schema hashing is a two-phase process. Both phases feed into a **single SHA-256 hasher**:
-
-**Phase 1 — Structure (always):**
-The canonical JSON of field names, data types, and nullability is fed into the hasher. This is identical to `include_metadata = false`.
-
-**Phase 2 — Metadata (only when `include_metadata = true`):**
-
-A single JSON object is built and fed as one hasher update. It has up to two keys:
-- `"fields"`: a map of field path → metadata map, present when any field (including nested
-  fields in structs/lists) has non-empty metadata. Paths are `/`-delimited and alphabetically ordered.
-- `"schema"`: the schema-level metadata map, present when non-empty.
-
-```rust
-// pseudo-code
-let mut meta_doc = BTreeMap::new();
-if any_field_has_metadata { meta_doc.insert("fields", field_metadata_btreemap); }
-if schema_has_metadata    { meta_doc.insert("schema", schema_metadata_btreemap); }
-if !meta_doc.is_empty()   { hasher.update(serde_json::to_string(&meta_doc)); }
-```
-
-JSON is self-delimiting, so no length prefixes are needed.
-
-### Empty-metadata invariant
-
-When a schema has no metadata anywhere, Phase 2 adds nothing. `include_metadata = true` on a metadata-free schema produces the exact same hash as `include_metadata = false`.
-
-### Schema equality enforcement
-
-When `include_metadata = true`, `update()` also enforces that incoming record batches have the same metadata as the schema used at construction. Batches with differing metadata are rejected.
-
-## Collision Prevention
-
-The hashing algorithm includes multiple safeguards against collisions:
-
-### 1. Length Prefixes (Variable-Length Types)
-
-Binary, string, and list arrays include length prefixes to prevent merging boundaries:
-
-```
-Array1: ["ab", "c"]        → len=2, "ab", len=1, "c"
-Array2: ["a", "bc"]        → len=1, "a", len=2, "bc"
-Result: Different hashes! ✓
-
-List1: [[1,2],[3]]          → len=2, 1, 2, len=1, 3
-List2: [[1],[2,3]]          → len=1, 1, len=2, 2, 3
-Result: Different hashes! ✓
-```
-
-### 2. Null Bit Vectors (Nullable Fields)
-
-Distinguishes between actual nulls and non-nullable fields:
-
-```
-NonNullable [1, 2, 3]   → Only data hash
-Nullable [1, 2, 3]      → Null bits [true, true, true] + data hash
-Result: Different hashes! ✓
-```
-
-### 3. Schema Digests
-
-Encodes the schema structure (field names, data types, nullability) — and optionally Arrow field/schema metadata when `include_metadata = true` — into the hash:
-
-```
-Field "col1" Int32 (non-nullable) ≠ Field "col1" Int32 (nullable)
-Result: Different hashes! ✓
-```
-
-### 4. Recursive Data Type Hashing
-
-Complex types like lists recursively hash their components using the full schema information.
-
-## Data Type Conversion Details
-
-### Fixed-Size Array Processing
-
-When hashing fixed-size types, the algorithm:
-
-1. **Gets the data buffer** - Contains raw bytes for all elements
-2. **Accounts for offset** - Arrow arrays can have offsets; these are applied
-3. **Handles nullability:**
-   - **NonNullable**: Hash entire buffer slice directly
-   - **Nullable with nulls**: Iterate element-by-element, only hashing valid entries
-   - **Nullable without nulls**: Hash entire buffer slice (simpler path)
-
-**Example: Int32Array([1, 2, 3])**
-```
-Size per element: 4 bytes
-Buffer: [0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00]
-Hash entire 12 bytes
-```
-
-**Example: Int32Array([1, null, 3])**
-```
-Size per element: 4 bytes
-Buffer: [0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00]
-Null bits: [true, false, true]
-
-Process:
-  1. Hash null bits [true, false, true]
-  2. Hash bytes 0-3 (index 0, valid)
-  3. Skip bytes 4-7 (index 1, null)
-  4. Hash bytes 8-11 (index 2, valid)
-```
-
-## Determinism Guarantees
-
-The hashing algorithm ensures deterministic output because:
-
-1. **Schema fields are sorted** - BTreeMap maintains alphabetical order
-2. **Field order is deterministic** - Always process in alphabetical field name order
-3. **Data types are consistent** - Each type uses the same hashing strategy
-4. **Byte order is consistent** - Uses little-endian for length prefixes and Lsb0 bit order for bitvectors
-5. **Null handling is predictable** - Same rules applied consistently
-
-**Implication:** The same data in different storage order or location will always produce the same hash.
-
-## Performance Considerations
-
-### Efficient Schema Hashing
-
-- Schema is hashed only once during initialization
-- Uses JSON serialization (fast) rather than alternative formats
-- Schema digest is reused for all record batches
-
-### Incremental Updates
-
-- Each record batch update accumulates into the same digest buffers
-- No need to re-hash previous batches
-- Final digest combines all incremental updates
-
-### Memory Efficiency
-
-- Null bits use bit-packing (1 bit per value, not 1 byte)
-- Streaming approach avoids loading entire dataset into memory
-- Field flattening enables hierarchical processing
-
-### Buffer Slicing
-
-- Fixed-size arrays hash the raw buffer directly when possible
-- Avoids element-by-element iteration for non-nullable arrays
-- Significant speedup for large datasets
-
-## Known Limitations
-
-The current implementation marks the following data types as `todo!()`:
-
-- `Null` - Null data type itself
-- `Timestamp` - Timestamp variants
-- `Duration` - Duration types
-- `Interval` - Interval types
-- `BinaryView` - Binary view type
-- `Utf8View` - UTF-8 view type
-- `ListView` - List view type
-- `FixedSizeList` - Fixed-size lists
-- `LargeListView` - Large list view type
-- `Struct` - Struct types (partial support for nested fields)
-- `Union` - Union types
-- `Dictionary` - Dictionary-encoded types
-- `Map` - Map types
-- `RunEndEncoded` - Run-end encoded types
-
-These types will panic if encountered during hashing and should be implemented in future versions.
-## SHA-256 Hashing Implementation
-
-### Overview
-
-ArrowDigester uses SHA-256 as its default cryptographic hash function, providing a 256-bit (32-byte) digest. The digest algorithm is configurable through the `Digest` trait, allowing alternative implementations, but SHA-256 is the standard choice for production use.
-
-### Versioning Header
-
-Every hash produced by ArrowDigester is prefixed with a 3-byte version identifier:
-
-```
-[Version Byte 0] [Version Byte 1] [Version Byte 2] [SHA-256 Digest (32 bytes)]
-```
-
-This 3-byte header ensures forward compatibility and enables detection of incompatible hash formats across different library versions. If the hashing algorithm or data format changes in future versions, the version bytes allow consumers to:
-- Reject hashes from incompatible versions
-- Implement migration or conversion logic
-- Maintain a stable hash contract with external systems
-
-### SHA-256 Digest Process
-
-The hashing workflow follows this structure:
-
-```
-1. Initialize SHA-256 digester with version header
-    └─ Write 3 version bytes
-
-2. Hash schema component
-    └─ Update digester with schema JSON
-
-3. Hash field digests (alphabetical order)
-    ├─ For each field:
-    │  ├─ Hash null bits (if nullable)
-    │  └─ Hash data digest
-    └─ Accumulate into SHA-256 state
-
-4. Finalize
-    └─ Return 35-byte result: [3 version bytes] + [32-byte SHA-256 hash]
-```
-
-### Implementation Details
-
-- **Hash Algorithm**: SHA-256 (256-bit output)
-- **Version Prefix**: 3 bytes (allows 16.7 million versions)
-- **Total Output**: 35 bytes (3 version + 32 digest)
-- **State Management**: SHA-256 maintains running state across multiple `update()` calls
-- **Finalization**: Single call to `finalize()` produces immutable digest
-
-## Example Usage
-
-### Hashing a Single Array
-
-```rust
-use arrow::array::Int32Array;
-use starfix::ArrowDigester;
-
-let array = Int32Array::from(vec![Some(1), Some(2), Some(3)]);
-let hash = ArrowDigester::hash_array(&array);
-println!("Hash: {}", hex::encode(hash));
-```
-
-### Hashing a Record Batch
-
-```rust
-use arrow::record_batch::RecordBatch;
-use starfix::{ArrowDigester, HasherConfig};
-
-let batch = RecordBatch::try_new(...)?;
+// One batch
 let hash = ArrowDigester::hash_record_batch(&batch, HasherConfig::default());
-println!("Hash: {}", hex::encode(hash));
-```
 
-### Streaming Multiple Batches
-
-```rust
-use starfix::{ArrowDigester, HasherConfig};
-
-let mut digester = ArrowDigester::new(schema, HasherConfig::default());
+// A stream of batches (the result does not depend on how rows are split into batches)
+let mut digester = ArrowDigester::new(&schema, HasherConfig::default());
 digester.update(&batch1);
 digester.update(&batch2);
-digester.update(&batch3);
+let hash = digester.finalize();
 
-let final_hash = digester.finalize();
-println!("Combined hash: {}", hex::encode(final_hash));
+// A schema, or a single array
+let schema_hash = ArrowDigester::hash_schema(&schema, HasherConfig::default());
+let array_hash = ArrowDigester::hash_array(&array);
+let array_hash_ordered = ArrowDigester::hash_array_with_config(
+    &array,
+    HasherConfig { ordered_struct_fields: true, ..HasherConfig::default() },
+);
 ```
 
-## Testing Strategy
+## What is hashed
 
-The codebase includes comprehensive tests covering:
+- **The schema**: column names, canonical types (`Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`,
+  `List`≡`LargeList`, a dictionary is its value type), nullability; with `include_metadata`,
+  schema and field metadata (including extension-type keys).
+- **The row count.**
+- **Every node of the type tree** (each column, struct field and list element): its validity if
+  it is nullable, its lengths if it is a list, its values if it is a leaf. Booleans are hashed one
+  byte per value.
 
-- **Data type coverage** - Tests for each supported data type
-- **Nullable handling** - Arrays with and without null values
-- **Collision prevention** - Length prefix verification
-- **Determinism** - Same data produces same hash
-- **Schema metadata** - Different schemas produce different hashes
-- **Field ordering** - Different field orders produce same hash (commutative)
+**Ordering principle.** By default starfix ignores exactly two orders: the order of the
+top-level columns and the order of struct fields (at every depth). It never sorts or reorders
+anything else: row order, list element order (also for `list<struct<key, value>>`) and the
+logical values of dictionary-encoded arrays are hashed as given.
 
-## Implementation Notes
+Not hashed (they are not part of the logical data, or pyarrow cannot observe them): the list
+element field name, the map entries/key/value field names, the map entries field's metadata, the
+dictionary index type and `ordered` flag, and metadata unless `include_metadata` is set.
 
-### About the Delimiter
+## Options
 
-The code uses `/` as the delimiter for nested field hierarchies. This was chosen to be URL-safe and visually clear while avoiding common naming conflicts.
+All options are per call (or per streaming digester), never global, and default to `false`:
 
-### About Byte Order
+| `HasherConfig` field | Effect |
+|---|---|
+| `include_metadata` | schema-level and field-level metadata are part of the hash |
+| `ordered_columns` | the order of the top-level columns is part of the hash |
+| `ordered_struct_fields` | the order of struct fields is part of the hash, at every depth (struct in struct, list, large list, fixed-size list, map, dictionary value type) |
 
-- **Length prefixes**: Little-endian (`to_le_bytes()`) - standard for Arrow
-- **Validity bitmaps**: u8 words in Lsb0 bit order (endianness is irrelevant for single-byte words)
-- **Size fields**: Little-endian - consistent with Arrow buffers
+```rust
+// Identity of a table value whose column and struct-field order matter:
+let config = HasherConfig {
+    ordered_columns: true,
+    ordered_struct_fields: true,
+    ..HasherConfig::default()
+};
+```
 
-### About Bitpacking
+Hashes taken with different order options never coincide: the options are recorded in the
+header that starts every digest. The header also names the entry point, so a schema hash, a
+record batch or stream hash and an array hash never coincide either. `hash_array` always treats
+the array as nullable (its validity is always hashed). Construct `HasherConfig` with `..HasherConfig::default()` to
+stay compatible with future options.
 
-Boolean values and null indicators use `BitVec<u8, Lsb0>` (Least Significant Bit ordering):
-- Compresses 8 boolean values into 1 byte
-- Reduces hash input size by 8x for boolean arrays
-- Uses Lsb0 for consistent bit ordering
+## Rejected inputs
 
----
+In every mode, the following panic (starfix-python raises `ValueError`):
 
-**For more information, see the main README.md and examine test cases in `tests/arrow_digester.rs`**
+- schemas with two fields at the same path: duplicate column names, duplicate field names in a
+  struct, or a name containing `/` that aliases a nested field (a column `"a/b"` next to a struct
+  column `a` with child `b`);
+- `ListView`, `LargeListView`, `Union` and `RunEndEncoded` types;
+- data hashing of a schema that contains a type whose data is not supported (see below), also
+  with zero rows;
+- a non-nullable field whose array contains nulls not masked by an enclosing null struct (nulls
+  in child slots that are not elements, such as under a null list value, are ignored);
+- a streamed batch whose schema does not match the digester's (with the order options, this
+  includes a different column or struct-field order).
+
+These checks run before any data is hashed, except the null check, which runs while a batch is
+traversed; after a panic, discard the digester.
+
+Metadata that repeats a key (possible in stored Arrow metadata) is not portable: arrow-rs keeps
+the last value when it reads IPC or imports over the C data interface, before starfix sees it,
+while starfix-python rejects such inputs with `include_metadata` (spec Section 7).
+
+## Supported data types
+
+Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
+Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
+List/LargeList, Struct, and Dictionary of any of these (a dictionary of dictionaries resolves
+recursively; `FixedSizeBinary(0)` is supported). Schemas of `Null`, `FixedSizeList`, `Map`,
+`Interval`, `Utf8View` and `BinaryView` can be hashed, but their data cannot yet. Extension types
+hash as their storage type; with `include_metadata`, their `ARROW:extension:*` metadata counts
+too (an absent `ARROW:extension:metadata` equals an empty one).
+
+Performance: dictionary-encoded columns whose values are nested (struct or list) are hashed per
+row; plain nested columns and dictionaries of scalars and strings are unaffected.
+
+## Legacy 0.4 mode (format 1)
+
+`starfix::legacy::v0_4` reproduces the output of starfix **0.4.0** (Rust) byte for byte, with
+the same API as 0.4.0 (`ArrowDigester`, `HasherConfig { include_metadata }`). It exists **only to
+read or match data hashed by starfix 0.4.x** — for example to find stored data under its old
+hash. **Never hash new data with it.** It is frozen: never fixed, never extended (no order
+options), and it keeps every format-1 defect listed below. Migrating code that must keep
+producing 0.4 hashes changes one import:
+
+```rust
+use starfix::legacy::v0_4::{ArrowDigester, HasherConfig}; // hash format 1, as starfix 0.4.0
+```
+
+Exactness is tested against the v0.4.0 test suite and golden files (restored as
+`tests/legacy_v0_4_*.rs`), the format-1 side of `tests/golden/format1_to_format2.json`, and a
+differential test against the published starfix 0.4.0 crate; its source files are pinned by
+`tests/legacy_v0_4_freeze.rs`. It reproduces **Rust** starfix 0.4.0; starfix-python's
+`starfix.legacy.v0_4` reproduces **starfix-python** 0.4.0, which differed from Rust 0.4.0 on a
+few inputs (see the divergence table in starfix-python's documentation).
+
+## Hash format history
+
+- **Format 2** (`00 00 02`, starfix 0.5): the current format.
+- **Format 1** (`00 00 01`, starfix 0.4 and earlier). Every hash changed in format 2. Format 1
+  lost information for some inputs, which format 2 fixes: Booleans were bit-packed without a
+  count (a one-column non-nullable `[true]` equalled `[true, false, false]`, and the hash
+  depended on batch boundaries); a null struct equalled a struct with all-null fields and null
+  struct rows vanished under non-nullable fields; a list whose element is a nullable list lost
+  its own lengths; a list of nullable structs did not distinguish a null element; and the row
+  count of zero-column tables and empty structs was not hashed. Format-1 hashes are computed by
+  the legacy 0.4 mode (`starfix::legacy::v0_4`, above). `tests/golden/format1_to_format2.json` maps every format-1 golden
+  value of this repository to its format-2 value.
+
+See `docs/byte-layout-spec.md`, Section 10, and the [CHANGELOG](CHANGELOG.md).
+
+## Testing
+
+- `tests/format2_bytes.rs`, `tests/digest_bytes.rs`: byte-level conformance with the spec.
+- `tests/golden_vectors_format2.rs`: the golden vectors and their relations.
+- `tests/nested_family.rs`: 420 nested column types, exhaustive small inputs, no collisions.
+- `tests/lossless_properties.rs`: every supported leaf type × nullability × position × row
+  count, batch split, slicing and empty-vs-absent.
+- `tests/ordered_hashing.rs`, `tests/arrow_digester.rs`: options, rejections, invariants.
+
+Regenerate the golden file (append-only) with `cargo run --bin emit_golden_format2`.
+`tests/golden_vectors_format2.rs` also requires a minimum vector and relation count, so a
+regeneration that drops vectors fails even if the generator was edited too.

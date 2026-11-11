@@ -135,7 +135,9 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::new(&schema, HasherConfig::default()).finalize()),
-            "0000012ac1decf89ab7e337d5df56bafd330f7e9a761953c58c39d5a3a8c49f6dfd4ff"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000012ac1decf89ab7e337d5df56bafd330f7e9a761953c58c39d5a3a8c49f6dfd4ff
+            "000002951008748ed8a893f5ea7b6506d3ea8cb8be815956cbdf5ea330ae6a11f49519"
         );
 
         let batch = RecordBatch::try_new(
@@ -209,7 +211,9 @@ mod tests {
                 &batch,
                 HasherConfig::default()
             )),
-            "0000011d2c77a01beb74029cb2a71fe52eac4ac3ef7b31b55df717fc8098dee73735cf"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000011d2c77a01beb74029cb2a71fe52eac4ac3ef7b31b55df717fc8098dee73735cf
+            "000002808e6baa50d385bb8fc28d1a63b5eab6de57d73929e68f33d6422e2989d0a2a2"
         );
     }
 
@@ -219,7 +223,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&bool_array));
         assert_eq!(
             hash,
-            "00000185a9c99eba7bcfd9b14fd529b9534f2289319779270aa4a072f117cf90a6ac8b"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 00000185a9c99eba7bcfd9b14fd529b9534f2289319779270aa4a072f117cf90a6ac8b
+            "0000024c5223c9cdc2fe10fb4362890cfc763e1bea4829a30fa6bfedc7bacad05f783a"
         );
     }
 
@@ -230,7 +236,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&int_array));
         assert_eq!(
             hash,
-            "0000018330f9b8796b9434cbf7bc028c18c58a2a739b980acf9995ce1e5d60b43b0138"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000018330f9b8796b9434cbf7bc028c18c58a2a739b980acf9995ce1e5d60b43b0138
+            "00000264c8fe45cb550e25577276b2af8c1c9c125bc14b8439f5619c1f18c71d4d0078"
         );
     }
 
@@ -241,7 +249,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&time_array));
         assert_eq!(
             hash,
-            "000001aba70469e596c735ec13c3d60a9db2d0e5515eb864f07ad5d24572b35f23eacc"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001aba70469e596c735ec13c3d60a9db2d0e5515eb864f07ad5d24572b35f23eacc
+            "0000026708f2d0b632bf3f324716cd32c7c41dd8b9bc75d326fb5ec3f3900201f08eb7"
         );
     }
 
@@ -252,7 +262,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&time_array));
         assert_eq!(
             hash,
-            "000001c96d705b1278f9ffe1b31fb307408768f14d961c44028a1d0f778dd61786ee26"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001c96d705b1278f9ffe1b31fb307408768f14d961c44028a1d0f778dd61786ee26
+            "0000022ddc0ab9c1cfc0fda9353d66612a504cb63d6ee509c4f56b961f33855f1a82a4"
         );
     }
 
@@ -276,50 +288,66 @@ mod tests {
             hex::encode(ArrowDigester::hash_array(
                 &TimestampSecondArray::from(values.clone()).with_timezone("UTC"),
             )),
-            "0000017cef6166a14741f94906bd3146ffa197d1b5756d594eb46304b678b21e44c40b"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000017cef6166a14741f94906bd3146ffa197d1b5756d594eb46304b678b21e44c40b
+            "00000255a8e82e6e1862a461c70c393f105522ee7fd6f4ed889fd69d21ace4bb54622e"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(
                 &TimestampMillisecondArray::from(values.clone()).with_timezone("UTC"),
             )),
-            "000001fd253a835218d5605ce8bb348699f973b93e29fbe21fe6e532468f988ece4ce5"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001fd253a835218d5605ce8bb348699f973b93e29fbe21fe6e532468f988ece4ce5
+            "0000026b928249c5b3e8a99fff770aa7cff273da347a8dd5ee5c1647e7a03b41aeeac5"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(
                 &TimestampMicrosecondArray::from(values.clone()).with_timezone("UTC"),
             )),
-            "0000013af741ca0fe5bd48d0bd39e1993c60e7c032f23c4cf4be6c11cc4b50ce56013e"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000013af741ca0fe5bd48d0bd39e1993c60e7c032f23c4cf4be6c11cc4b50ce56013e
+            "0000023277d54aec4f229bfd0f21e772c332d2d4851c8af07b3f36be29f655b91b6b48"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(
                 &TimestampNanosecondArray::from(values.clone()).with_timezone("UTC"),
             )),
-            "000001f5b86904b4b7f2c6a18c7c4febda142bf622e4d01752f42b8f832c0a68a4d9c0"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001f5b86904b4b7f2c6a18c7c4febda142bf622e4d01752f42b8f832c0a68a4d9c0
+            "0000022d542c28b882c3e78bd1758a04c628c829efb9c16e78ad4185cd97e45544e988"
         );
         // tz-naive, all 4 units
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&TimestampSecondArray::from(
                 values.clone()
             ),)),
-            "0000016ee5249d352c03cc820af39e98b7043993d467207cb6ca34c8d13cfacf141e30"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000016ee5249d352c03cc820af39e98b7043993d467207cb6ca34c8d13cfacf141e30
+            "00000219b77ac863025bc3a0c519594e873846eaed63ed9d7c16763ad9eb36016623ed"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&TimestampMillisecondArray::from(
                 values.clone()
             ),)),
-            "000001ef46619d2be8259335ed0943f42ea3ced19ff6d75471a64b2f03aea89afa4842"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001ef46619d2be8259335ed0943f42ea3ced19ff6d75471a64b2f03aea89afa4842
+            "000002973baeb308b246159206a6072825f4cb786d05ddff11649199c93df22abdaac7"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&TimestampMicrosecondArray::from(
                 values.clone()
             ),)),
-            "0000017e624eb2847f79f940d7123980b076aea1c1ecd3adaa34bdae24fa00f05afda3"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000017e624eb2847f79f940d7123980b076aea1c1ecd3adaa34bdae24fa00f05afda3
+            "000002fe90da5f713e78f96eed1bf834e6fe2f871aa2c7f28174d8a2dcb3134f5dc4cc"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&TimestampNanosecondArray::from(
                 values
             ),)),
-            "000001f677ef0e42e9e40ea092471f82283212833ab6b4ff9bb45e86e88590f8d15796"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001f677ef0e42e9e40ea092471f82283212833ab6b4ff9bb45e86e88590f8d15796
+            "00000275a347fae688071e8d3d94d6ff48800f3dbbd9d8fc629c871eb4e16dd3e59976"
         );
     }
 
@@ -331,25 +359,33 @@ mod tests {
             hex::encode(ArrowDigester::hash_array(&DurationSecondArray::from(
                 values.clone()
             ),)),
-            "0000013540d23a4abf1dfbc939a9e5514be69e364cec466ef900fa35050dc3cf2994fa"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000013540d23a4abf1dfbc939a9e5514be69e364cec466ef900fa35050dc3cf2994fa
+            "000002ac73fa834511e4de143e7f5da1f2b6bef168f25a6d47f7851dd977328eaf20cc"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&DurationMillisecondArray::from(
                 values.clone()
             ),)),
-            "000001564a87e1e07898af07a4a212e3db83f911ac287134f28c772bf5fb4da683402c"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001564a87e1e07898af07a4a212e3db83f911ac287134f28c772bf5fb4da683402c
+            "000002cfc3e82b4f82cf9a39f2f86fb495acb6f481b91643bd8f5591a2ed34f794ee9a"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&DurationMicrosecondArray::from(
                 values.clone()
             ),)),
-            "0000017904faf3043cf870f0c139cba0282cdaf11c590aeb80f2a0d6b103893ba5da2a"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000017904faf3043cf870f0c139cba0282cdaf11c590aeb80f2a0d6b103893ba5da2a
+            "0000022c8e105be42590d0cd332abcf8330269689cf66767322d1ba799271c6346744d"
         );
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&DurationNanosecondArray::from(
                 values
             ),)),
-            "00000189a38c5a7adf4b19b3e0d467f042ab2389fed8ae5f1d2af8555dd6131478a49b"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 00000189a38c5a7adf4b19b3e0d467f042ab2389fed8ae5f1d2af8555dd6131478a49b
+            "00000257be9b6546267351273ab5c9bd7858c17b17b093f7f65a599bad8bde37ab5c9e"
         );
     }
 
@@ -430,7 +466,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&binary_array));
         assert_eq!(
             hash,
-            "0000018dc3a0e479d1335553546c8f23c36d75335cbd34805a6f96c5d5225b347fbc57"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000018dc3a0e479d1335553546c8f23c36d75335cbd34805a6f96c5d5225b347fbc57
+            "000002e52c6b710b5c6be2cada5b225f0d43d83f2b0a89f117f9210eff746ebcd3f294"
         );
 
         // Large binary array with same data should produce identical hash (type canonicalization)
@@ -494,7 +532,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&string_array));
         assert_eq!(
             hash,
-            "0000016255bde0141ebf26e08c31c96f6112e5e21d101ab8bb90d77f2c3eec02c62d3c"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000016255bde0141ebf26e08c31c96f6112e5e21d101ab8bb90d77f2c3eec02c62d3c
+            "0000020580567a1ed9be7b4dbbc36046e635c7021fb1bda241310cd353a3de5a860bc2"
         );
 
         // Large string array with same data should produce identical hash (type canonicalization)
@@ -520,7 +560,9 @@ mod tests {
         let hash = hex::encode(ArrowDigester::hash_array(&list_array));
         assert_eq!(
             hash,
-            "000001dc359d563a1ed210eb271b314612ea8343f0a0b0955b9053a9eb47962d27163c"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001dc359d563a1ed210eb271b314612ea8343f0a0b0955b9053a9eb47962d27163c
+            "000002baac87674321616f3c4b4ad559df2c5b2492a83ba54fa7e865a51ae56d8f498c"
         );
 
         // Collision test: [[1, 2], [3]] vs [[1], [2, 3]]
@@ -555,7 +597,9 @@ mod tests {
 
         assert_eq!(
             encode(ArrowDigester::hash_array(&decimal32_array)),
-            "0000014f015bd5c4b6ce6e939a8c890333f3e110c2c28ef8014aafd352f8373791e547"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000014f015bd5c4b6ce6e939a8c890333f3e110c2c28ef8014aafd352f8373791e547
+            "0000021480fe62da952e0f819540738817488f0da864a59e70604f88f00f6daec3a7fb"
         );
 
         // Test Decimal64 (precision 10-18)
@@ -569,7 +613,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             encode(ArrowDigester::hash_array(&decimal64_array)),
-            "000001dc08c7b9c583edecec36bc5dee21cd2edec9f402a651014fea5f8834d16ad737"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 000001dc08c7b9c583edecec36bc5dee21cd2edec9f402a651014fea5f8834d16ad737
+            "000002efb97088aa7fc1adc578e6d68d0f2d2dbe5ef25b0999fcd7e7208ede6e7b2a41"
         );
 
         // Test Decimal128 (precision 19-38)
@@ -583,7 +629,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex::encode(ArrowDigester::hash_array(&decimal128_array)),
-            "0000011e3b33d28771b3593fd5dc4b68af8091a1ba9cd493ade374e7368e213bef244e"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000011e3b33d28771b3593fd5dc4b68af8091a1ba9cd493ade374e7368e213bef244e
+            "0000029c8ebfcade372b53f23d669d231eab0dd2dd96805263867e47af72c739e1b455"
         );
     }
 
@@ -666,7 +714,9 @@ mod tests {
         digester.update(&batch2);
         assert_eq!(
             encode(digester.finalize()),
-            "0000019f5fa370d315a4b4f2314be7b7284a0549b70ad4e21e584fdebf441ad02f44f0"
+            // hash format 2 (ITL-898); format 1 (v0.4.0) value was
+            // 0000019f5fa370d315a4b4f2314be7b7284a0549b70ad4e21e584fdebf441ad02f44f0
+            "0000020ba4ed542e67ebc311d160ab54a11f25630a6b5fdd99e5dfc90917cb1d31e968"
         );
     }
 
@@ -2053,6 +2103,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
@@ -2071,6 +2122,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
@@ -2103,6 +2155,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_eq!(
             encode(ArrowDigester::hash_schema(&schema_a, config)),
@@ -2119,6 +2172,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         // ── Field metadata (two fields, keys shuffled per field) ──────────
@@ -2162,6 +2216,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let make_schema = |keys: [(&str, &str); 3]| {
@@ -2191,6 +2246,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let make_schema = |child_keys: [(&str, &str); 2],
@@ -2245,6 +2301,7 @@ mod tests {
         // Swapping the values between fields must produce a different hash.
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let schema_ab = Schema::new(vec![
@@ -2281,7 +2338,8 @@ mod tests {
             encode(ArrowDigester::hash_schema(
                 &schema,
                 HasherConfig {
-                    include_metadata: true
+                    include_metadata: true,
+                    ..HasherConfig::default()
                 }
             )),
         );
@@ -2309,6 +2367,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         let hash_with = ArrowDigester::hash_schema(&schema_with_meta, config);
         let hash_without = ArrowDigester::hash_schema(&schema_no_meta, config);
@@ -2326,6 +2385,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_large, config)),
@@ -2346,6 +2406,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_field_meta, config)),
@@ -2378,6 +2439,7 @@ mod tests {
         )]);
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_eq!(
             encode(ArrowDigester::hash_schema(&schema_item, config)),
@@ -2404,6 +2466,7 @@ mod tests {
         )]);
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
@@ -2437,6 +2500,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),

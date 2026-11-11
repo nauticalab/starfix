@@ -8,17 +8,45 @@ use sha2::Sha256;
 
 use crate::arrow_digester_core::ArrowDigesterCore;
 
-const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8]; // Hash format version 0.0.1 — independent of crate version
+/// Hash format version: the first 3 bytes of every hash, a 24-bit big-endian format number,
+/// independent of the crate version. Format 1 (`00 00 01`): starfix 0.4 and earlier. Format 2
+/// (`00 00 02`): this crate (byte-layout spec Section 1; format history in Section 10).
+pub(crate) const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 2_u8];
 
 /// Configuration for the Arrow hasher.
-#[derive(Clone, Copy, Debug, Default)]
+///
+/// Every option defaults to `false`. Options are per call (or per streaming digester), never
+/// global, so ordered and unordered hashing can be used side by side. Construct with struct-update syntax to stay forward compatible:
+///
+/// ```
+/// use starfix::HasherConfig;
+/// let config = HasherConfig { ordered_columns: true, ..HasherConfig::default() };
+/// ```
+///
+/// The order options are recorded in the header of every digest, so hashes taken with different
+/// order options never coincide; the header also names the entry point (schema, record batch or
+/// stream, array), so outputs of different entry points never coincide either (see
+/// `docs/byte-layout-spec.md`, Sections 1 and 6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HasherConfig {
     /// When `true`, schema-level and per-field Arrow metadata are included in the hash.
-    /// Default is `false`, preserving pre-v0.1.0 hash stability.
+    /// Default is `false`.
     pub include_metadata: bool,
+    /// When `true`, the order of the top-level columns is part of the hash.
+    /// Default is `false`: reordering columns does not change the hash.
+    pub ordered_columns: bool,
+    /// When `true`, the order of struct fields is part of the hash, at every nesting depth
+    /// (struct in struct, list, large list, fixed-size list, map, dictionary value type).
+    /// Default is `false`: reordering struct fields does not change the hash.
+    pub ordered_struct_fields: bool,
 }
 
-/// Maps `ArrowDigesterCore` to a SHA-256 digester with version prefix.
+/// SHA-256 hasher of Arrow data, producing hash format 2 (`00 00 02 || SHA-256`, 35 bytes).
+///
+/// # Panics
+///
+/// The rejections are the same in every mode (`docs/byte-layout-spec.md`, Section 7); each method
+/// lists its own under `# Panics`. After a panic, discard the digester.
 #[derive(Clone)]
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
@@ -26,13 +54,33 @@ pub struct ArrowDigester {
 
 impl ArrowDigester {
     /// Create a new instance of `ArrowDigester` with SHA-256 as the digest algorithm. The schema will be enforced on each update.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
+    ///   names, or a name containing `/` that aliases a nested field);
+    /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - the schema contains a type whose data is not supported (`Null`, `FixedSizeList`, `Map`,
+    ///   `Interval`, `Utf8View`, `BinaryView`).
     pub fn new(schema: &Schema, config: HasherConfig) -> Self {
         Self {
-            digester: ArrowDigesterCore::<Sha256>::new(schema, config.include_metadata),
+            digester: ArrowDigesterCore::<Sha256>::new_with_config(schema, config),
         }
     }
 
     /// Update the digester with a new `RecordBatch`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the batch's schema does not match the digester's under its options (for example a
+    ///   different column order with `ordered_columns`), or has two fields at the same path, or
+    ///   contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - a non-nullable field holds a null at an element that no enclosing null struct masks;
+    /// - the total row count overflows `u64`.
+    ///
+    /// After a panic the digester's state is unspecified: discard it.
     pub fn update(&mut self, record_batch: &RecordBatch) {
         self.digester.update(record_batch);
     }
@@ -42,24 +90,67 @@ impl ArrowDigester {
         Self::prepend_version_bytes(self.digester.finalize())
     }
 
-    /// Hash an array in one go.
+    /// Hash an array in one go with the default configuration.
+    ///
+    /// Equivalent to `hash_array_with_config(array, HasherConfig::default())`.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::hash_array_with_config`].
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
-        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_array(array))
+        Self::hash_array_with_config(array, HasherConfig::default())
+    }
+
+    /// Hash an array in one go with the given configuration.
+    ///
+    /// `include_metadata` has no effect here (there is no schema). `ordered_columns` has no
+    /// effect on the layout, but like every order option it is recorded in the header. The array
+    /// is always treated as nullable: its validity is always hashed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the array's type has two fields at the same path, or contains a `ListView`,
+    ///   `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - the array's type contains a type whose data is not supported (`Null`, `FixedSizeList`,
+    ///   `Map`, `Interval`, `Utf8View`, `BinaryView`);
+    /// - a non-nullable field inside the array holds a null at an element that no enclosing null
+    ///   struct masks.
+    pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_array_with_config(
+            array, config,
+        ))
     }
 
     /// Hash a complete `RecordBatch` in one go.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
+    ///   names, or a name containing `/` that aliases a nested field);
+    /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - the schema contains a type whose data is not supported (`Null`, `FixedSizeList`, `Map`,
+    ///   `Interval`, `Utf8View`, `BinaryView`), whatever the number of rows;
+    /// - a non-nullable field holds a null at an element that no enclosing null struct masks.
     pub fn hash_record_batch(record_batch: &RecordBatch, config: HasherConfig) -> Vec<u8> {
         Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(
             record_batch,
-            config.include_metadata,
+            config,
         ))
     }
 
     /// Hash a schema only.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
+    ///   names, or a name containing `/` that aliases a nested field);
+    /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type.
     pub fn hash_schema(schema: &Schema, config: HasherConfig) -> Vec<u8> {
-        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_schema(
-            schema,
-            config.include_metadata,
+        Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_schema_with_config(
+            schema, config,
         ))
     }
 
@@ -71,6 +162,7 @@ impl ArrowDigester {
 }
 
 pub(crate) mod arrow_digester_core;
+pub mod legacy;
 pub mod pyarrow;
 
 // Write a test to check that int32 digest is consistent

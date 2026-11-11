@@ -23,7 +23,7 @@ mod tests {
     use base64::Engine as _;
     use hex::encode;
     use serde::Deserialize;
-    use starfix::{ArrowDigester, HasherConfig};
+    use starfix::legacy::v0_4::{ArrowDigester, HasherConfig};
 
     #[derive(Deserialize)]
     struct GoldenFixture {

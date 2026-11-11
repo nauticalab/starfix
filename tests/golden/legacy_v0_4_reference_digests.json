@@ -1,0 +1,22 @@
+{
+  "description": "Digests of the legacy 0.4 differential corpus (tests/common/legacy_corpus.rs) computed with the published starfix 0.4.0 crate; tests/legacy_v0_4_differential.rs requires starfix::legacy::v0_4 to produce the same.",
+  "generated_by": "cd tools/legacy_v0_4_reference && cargo run --release",
+  "groups": [
+    {
+      "cases": 598,
+      "digest": "83e4072220f78e4423983d12eb925f1b011f69a746c690959c1859ab3354e0e9",
+      "name": "format1_inputs"
+    },
+    {
+      "cases": 49744,
+      "digest": "ba866dbc4f74e6bb54d79475f13c65913732dba5d870b3d911e739e0d33baf99",
+      "name": "nested_types"
+    },
+    {
+      "cases": 12160,
+      "digest": "df07519cc5181f2f62c7106cf9d07d03ba06238157db7a93077cb00cb762c0a4",
+      "name": "leaf_sweep"
+    }
+  ],
+  "starfix_release": "0.4.0"
+}

@@ -1,0 +1,20 @@
+[package]
+name = "legacy-v0-4-reference"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Computes the reference digests of the legacy 0.4 differential corpus with the published starfix 0.4.0 crate."
+
+# Standalone: not part of the starfix package or its tests (the published 0.4.0 crate cannot be
+# linked into the same binary as this repository's crate).
+[workspace]
+
+[dependencies]
+starfix = "=0.4.0"
+arrow = { version = "57.0.0" }
+arrow-ipc = { version = "57.0.0" }
+arrow-schema = { version = "57.0.0" }
+base64 = "0.22"
+hex = "0.4.3"
+serde_json = "1.0.145"
+sha2 = "0.10.9"
