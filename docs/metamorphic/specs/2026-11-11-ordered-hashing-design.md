@@ -7,6 +7,11 @@
 > `docs/byte-layout-spec.md`. The order options (D1, D3–D6) are unchanged in format 2; the
 > options tag became the always-written format-2 header; D7 rejection applies in every mode.
 
+> **Update (2026-11-11, ITL-927):** §7 and open question 5 are resolved for `FixedSizeList`: its
+> data is supported in format 2 and released in 0.5.0 (design:
+> `2026-11-11-fixed-size-list-design.md`), and casting to `LargeList` is no longer needed (it
+> gives a different hash). `Null` data hashing stays unsupported.
+
 **Status:** D1 and D3–D7 implemented as recommended. **D2 superseded** by the developer's
 ruling of 2026-11-11 (below). The authoritative byte layout is `docs/byte-layout-spec.md`
 (Section 9: order options; Section 10: the v0.5 fix). Version prefix: open, variant (a) or (b).

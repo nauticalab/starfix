@@ -1,7 +1,7 @@
 # FixedSizeList data hashing in hash format 2 (ITL-927) — design
 
-Status: **provisionally approved** by the coordinator (2026-11-11); the layout (FORMAT 1 and 2
-below) is with the maintainer for final confirmation. Implemented on this branch.
+Status: **approved, final.** The maintainer confirmed the layout (FORMAT 1 and 2 below) as final
+on 2026-11-11. Implemented; released in starfix 0.5.0.
 
 Base: PR #20 (hash format 2, `e079d56`). References are to `docs/byte-layout-spec.md` (the
 "spec"). Maintainer decision (2026-11-11), binding: *"Fixed length list is NOT type identical to
@@ -221,3 +221,6 @@ entry structure (one leaf entry `p` vs entries `p` and `p/`). A golden `differen
 2. **[FORMAT]** List semantics for the element (only items of effectively valid slots are
    elements; hidden child positions never hashed; struct mask reset at the FSL boundary) — approve?
 3. Ship placement (0.5.0 vs 0.5.1): the CHANGELOG entry goes under "Unreleased" either way.
+
+> **Resolved (2026-11-11):** the maintainer approved questions 1 and 2 (the layout is final) and
+> placed `FixedSizeList` data hashing in 0.5.0; its CHANGELOG entry is part of the 0.5.0 section.

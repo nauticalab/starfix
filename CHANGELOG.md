@@ -1,28 +1,6 @@
 # Changelog
 
-## Unreleased
-
-Whether this ships inside 0.5.0 or as 0.5.1 is the maintainer's call.
-
-### Added — `FixedSizeList` data hashing (ITL-927)
-
-- Record batches, streams and `hash_array` now accept `FixedSizeList` data (any size, also 0;
-  at any depth, also dictionary-encoded and as extension storage such as
-  `arrow.fixed_shape_tensor`). Previously data hashing of any schema containing a
-  `FixedSizeList` panicked.
-- `FixedSizeList<T, n>` is a different type from `List<T>` / `LargeList<T>` and from
-  `FixedSizeList<T, m>` (`m != n`): equal values hash differently (schema and data). Its schema
-  form was already defined and is unchanged.
-- Layout (byte-layout spec Section 3.2, Example 3b): a fixed-size list node's entry is its
-  validity if nullable and nothing else (no lengths); its element node's elements are the `n`
-  items of every effectively valid value. Items under null values (and child positions past the
-  last value) never affect the hash; a null of a non-nullable element there is accepted, a
-  visible one is rejected.
-- No existing hash changes: every input containing a `FixedSizeList` was rejected before any
-  data was hashed. `tests/golden/format2_v0.5.json` gains 73 `fsl_*` vectors and 34 relations
-  (appended; the 423 earlier vectors and 114 relations are unchanged).
-
-## Unreleased (proposed 0.5.0)
+## 0.5.0 (2026-11-11)
 
 ### Changed — hash format 2 (every hash changes)
 
@@ -49,6 +27,25 @@ These inputs collided, or hashed differently depending on batch boundaries, in f
 - The row count of zero-column tables and empty structs was not hashed. Now the row count is
   hashed.
 
+### Added — `FixedSizeList` data hashing (ITL-927)
+
+- Record batches, streams and `hash_array` now accept `FixedSizeList` data (any size, also 0;
+  at any depth, also dictionary-encoded and as extension storage such as
+  `arrow.fixed_shape_tensor`). starfix 0.4 panicked on `FixedSizeList` data.
+- `FixedSizeList<T, n>` is a different type from `List<T>` / `LargeList<T>` and from
+  `FixedSizeList<T, m>` (`m != n`): equal values hash differently (schema and data).
+- Layout (byte-layout spec Section 3.2, Example 3b): a fixed-size list node's entry is its
+  validity if nullable and nothing else (no lengths); its element node's elements are the `n`
+  items of every effectively valid value. Items under null values (and child positions past the
+  last value) never affect the hash; a null of a non-nullable element there is accepted, a
+  visible one is rejected.
+- A `FixedSizeList` whose element type contains a type whose data is not supported (`Null`,
+  `Map`, `Interval`, view types) is rejected.
+- `FixedSizeList` support moved no other format-2 hash: every input containing `FixedSizeList`
+  data was rejected before any data was hashed. `tests/golden/format2_v0.5.json` gained 73
+  `fsl_*` vectors and 34 relations for it, appended after the 423 earlier vectors and 114
+  relations, which are unchanged.
+
 ### Added
 
 - `starfix::legacy::v0_4`: the frozen **0.4 legacy mode**, reproducing starfix 0.4.0 (hash
@@ -74,9 +71,9 @@ These inputs collided, or hashed differently depending on batch boundaries, in f
   ill-defined hashes).
 - Map types hash without their entries/key/value field names and without the entries field's
   metadata; field metadata is keyed by node path.
-- Data hashing of a schema containing a type whose data is not supported (`Null`,
-  `FixedSizeList`, `Map`, `Interval`, view types) is rejected when the digester is created, also
-  with zero rows; a non-nullable field with unmasked nulls is rejected.
+- Data hashing of a schema containing a type whose data is not supported (`Null`, `Map`,
+  `Interval`, view types; also inside a `FixedSizeList`) is rejected when the digester is
+  created, also with zero rows; a non-nullable field with unmasked nulls is rejected.
 - With `include_metadata`, an extension field without `ARROW:extension:metadata` hashes like one
   with an empty value.
 - `emit_golden_metadata` is removed; `tests/golden/include_metadata_v0.3.json` is kept as the
