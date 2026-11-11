@@ -3519,7 +3519,7 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
             false,
             &Input::Batch(whole.clone()),
         );
-        gen.add("fsl_sliced_rb_f0", "the same rows as a slice (offset 1) of [[0, 0], [1, 2], null, [3, null], [5, 6], [9, 9]]", 0x00, false, &Input::Batch(one_col("f", &padded.slice(1, 4), true)));
+        gen.add("fsl_sliced_rb_f0", "the same rows as a slice (offset 1) of [[0, 0], [1, 2], null, [3, null], [5, 6], [9, 9]] (in memory; the IPC encoding has offset 0)", 0x00, false, &Input::Batch(one_col("f", &padded.slice(1, 4), true)));
         gen.add(
             "fsl_split_stream_f0",
             "the same rows in batches of 1, 0, 2 and 1 rows",
@@ -3537,7 +3537,7 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
         );
         gen.add(
             "fsl_trailing_child_rb_f0",
-            "the same rows over a child with two extra trailing positions [8, null]",
+            "the same rows over a child with two extra trailing positions [8, null] (in memory; the IPC encoding drops them)",
             0x00,
             false,
             &Input::Batch(one_col(
@@ -3572,7 +3572,7 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
         );
         gen.add(
             "fsl_sliced_array_f0",
-            "hash_array of the same values as a slice (offset 1)",
+            "hash_array of the same values as a slice (offset 1; in memory, the IPC encoding has offset 0)",
             0x00,
             false,
             &Input::Array(padded.slice(1, 4)),
@@ -3605,7 +3605,7 @@ fn add_fixed_size_list_vectors(gen: &mut Builder) {
         gen.add("fsl_struct_fresh_rb_f0", "s: Struct<x: FixedSizeList<Int32?, 2>?>? rows [{x: [1, 2]}, {x: null}, {x: [3, null]}, null]", 0x00, false, &Input::Batch(one_col("s", &fresh_struct, true)));
         gen.add(
             "fsl_struct_sliced_rb_f0",
-            "the same rows as a slice (offset 1) of a struct whose masked row holds [5, 6]",
+            "the same rows as a slice (offset 1) of a struct whose masked row holds [5, 6] (in memory; the IPC encoding has offset 0)",
             0x00,
             false,
             &Input::Batch(one_col("s", &sliced_struct.slice(1, 4), true)),

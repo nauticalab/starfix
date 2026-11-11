@@ -4695,7 +4695,7 @@
     },
     {
       "id": "fsl_sliced_rb_f0",
-      "description": "the same rows as a slice (offset 1) of [[0, 0], [1, 2], null, [3, null], [5, 6], [9, 9]]",
+      "description": "the same rows as a slice (offset 1) of [[0, 0], [1, 2], null, [3, null], [5, 6], [9, 9]] (in memory; the IPC encoding has offset 0)",
       "method": "hash_record_batch",
       "include_metadata": false,
       "ordered_columns": false,
@@ -4715,7 +4715,7 @@
     },
     {
       "id": "fsl_trailing_child_rb_f0",
-      "description": "the same rows over a child with two extra trailing positions [8, null]",
+      "description": "the same rows over a child with two extra trailing positions [8, null] (in memory; the IPC encoding drops them)",
       "method": "hash_record_batch",
       "include_metadata": false,
       "ordered_columns": false,
@@ -4735,7 +4735,7 @@
     },
     {
       "id": "fsl_sliced_array_f0",
-      "description": "hash_array of the same values as a slice (offset 1)",
+      "description": "hash_array of the same values as a slice (offset 1; in memory, the IPC encoding has offset 0)",
       "method": "hash_array",
       "include_metadata": false,
       "ordered_columns": false,
@@ -4755,7 +4755,7 @@
     },
     {
       "id": "fsl_struct_sliced_rb_f0",
-      "description": "the same rows as a slice (offset 1) of a struct whose masked row holds [5, 6]",
+      "description": "the same rows as a slice (offset 1) of a struct whose masked row holds [5, 6] (in memory; the IPC encoding has offset 0)",
       "method": "hash_record_batch",
       "include_metadata": false,
       "ordered_columns": false,

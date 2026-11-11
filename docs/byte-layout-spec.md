@@ -589,6 +589,12 @@ The `fsl_*` vectors (ITL-927) pin `FixedSizeList` data. A few earlier vectors de
 fixed-size-list schemas as "schema only: data unsupported"; their descriptions are kept verbatim
 (vectors are permanent) and record the state when they were added.
 
+The IPC encoding of a vector is normalized by the Arrow writer: sliced arrays are written with
+offset 0, and child positions past the last fixed-size-list value are dropped. Vectors such as
+`fsl_sliced_rb_f0` and `fsl_trailing_child_rb_f0` therefore pin the hash of the logical value,
+and their `equal` relations hold for the in-memory Rust inputs; an implementation must test
+slice offsets and trailing child positions on arrays it builds itself.
+
 A relation `equal` requires all listed vectors to have the same `expected_hash`; `different`
 requires them to be pairwise different.
 
