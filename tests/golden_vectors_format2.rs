@@ -193,6 +193,7 @@ mod tests {
 
     #[derive(Deserialize)]
     struct FormatMapEntry {
+        source: String,
         id: String,
         format1_hash: String,
         format2_hash: String,
@@ -228,6 +229,65 @@ mod tests {
                 assert!(e.format2_hash.starts_with("000002"), "{}", e.id);
             }
         }
+    }
+
+    /// Entries without a golden vector are pinned test values: their format-2 value must be the
+    /// value pinned by the current test (`source`), their format-1 value the one pinned by the
+    /// restored v0.4.0 test that runs against `starfix::legacy::v0_4`.
+    #[test]
+    fn format1_to_format2_pinned_entries_match_their_tests() {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let read = |file: &str| fs::read_to_string(format!("{root}/{file}")).expect("source file");
+        let map: FormatMap =
+            serde_json::from_str(&read("tests/golden/format1_to_format2.json")).expect("parse");
+        let mut checked = 0_usize;
+        for e in map.entries.iter().filter(|e| e.format2_vector.is_none()) {
+            let (current, legacy, format2, format1) = match e.source.as_str() {
+                "tests/arrow_digester.rs" => (
+                    "tests/arrow_digester.rs",
+                    "tests/legacy_v0_4_arrow_digester.rs",
+                    e.format2_hash.as_str(),
+                    e.format1_hash.as_str(),
+                ),
+                // raw digests, pinned without the version prefix
+                "src/arrow_digester_core.rs (raw digest, no prefix)" => (
+                    "src/arrow_digester_core.rs",
+                    "src/legacy/v0_4/arrow_digester_core.rs",
+                    e.format2_hash.as_str(),
+                    e.format1_hash.as_str(),
+                ),
+                other => panic!("{}: no golden vector and unknown source {other}", e.id),
+            };
+            assert!(
+                read(current).contains(&format!("\"{format2}\"")),
+                "{}: format-2 value not pinned in {current}",
+                e.id
+            );
+            assert!(
+                read(legacy).contains(&format!("\"{format1}\"")),
+                "{}: format-1 value not pinned in {legacy}",
+                e.id
+            );
+            checked = checked.checked_add(1).unwrap();
+        }
+        assert_eq!(checked, 26);
+    }
+
+    /// The fixture only grows: a regeneration that drops vectors or relations fails here even if
+    /// the generator and the file were edited together.
+    #[test]
+    fn golden_fixture_count_floor() {
+        let fixture = load_fixture();
+        assert!(
+            fixture.vectors.len() >= 339,
+            "{} vectors",
+            fixture.vectors.len()
+        );
+        assert!(
+            fixture.relations.len() >= 96,
+            "{} relations",
+            fixture.relations.len()
+        );
     }
 
     /// The format-1 side of the record, reproduced by the frozen legacy 0.4 mode from the same

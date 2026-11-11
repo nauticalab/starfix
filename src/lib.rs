@@ -24,7 +24,9 @@ pub(crate) const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 2_u8];
 /// ```
 ///
 /// The order options are recorded in the header of every digest, so hashes taken with different
-/// order options never coincide (see `docs/byte-layout-spec.md`, Sections 1 and 6).
+/// order options never coincide; the header also names the entry point (schema, record batch or
+/// stream, array), so outputs of different entry points never coincide either (see
+/// `docs/byte-layout-spec.md`, Sections 1 and 6).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HasherConfig {
     /// When `true`, schema-level and per-field Arrow metadata are included in the hash.
@@ -43,11 +45,8 @@ pub struct HasherConfig {
 ///
 /// # Panics
 ///
-/// Every entry point panics on data of an unsupported type, on a schema (or array type) with two
-/// fields at the same path (duplicate names, or a name containing `/` that aliases a nested
-/// field), and on `ListView`, `LargeListView`, `Union` or `RunEndEncoded` types; `update` panics on
-/// a batch whose schema does not match the digester's under its options (e.g. a different column
-/// order with `ordered_columns`).
+/// The rejections are the same in every mode (`docs/byte-layout-spec.md`, Section 7); each method
+/// lists its own under `# Panics`. After a panic, discard the digester.
 #[derive(Clone)]
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
@@ -55,6 +54,15 @@ pub struct ArrowDigester {
 
 impl ArrowDigester {
     /// Create a new instance of `ArrowDigester` with SHA-256 as the digest algorithm. The schema will be enforced on each update.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
+    ///   names, or a name containing `/` that aliases a nested field);
+    /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - the schema contains a type whose data is not supported (`Null`, `FixedSizeList`, `Map`,
+    ///   `Interval`, `Utf8View`, `BinaryView`).
     pub fn new(schema: &Schema, config: HasherConfig) -> Self {
         Self {
             digester: ArrowDigesterCore::<Sha256>::new_with_config(schema, config),
@@ -62,6 +70,17 @@ impl ArrowDigester {
     }
 
     /// Update the digester with a new `RecordBatch`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the batch's schema does not match the digester's under its options (for example a
+    ///   different column order with `ordered_columns`), or has two fields at the same path, or
+    ///   contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - a non-nullable field holds a null at an element that no enclosing null struct masks;
+    /// - the total row count overflows `u64`.
+    ///
+    /// After a panic the digester's state is unspecified: discard it.
     pub fn update(&mut self, record_batch: &RecordBatch) {
         self.digester.update(record_batch);
     }
@@ -74,6 +93,10 @@ impl ArrowDigester {
     /// Hash an array in one go with the default configuration.
     ///
     /// Equivalent to `hash_array_with_config(array, HasherConfig::default())`.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::hash_array_with_config`].
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
         Self::hash_array_with_config(array, HasherConfig::default())
     }
@@ -81,8 +104,18 @@ impl ArrowDigester {
     /// Hash an array in one go with the given configuration.
     ///
     /// `include_metadata` has no effect here (there is no schema). `ordered_columns` has no
-    /// effect on the layout, but like every order/validity option it is part of the domain
-    /// separation tag.
+    /// effect on the layout, but like every order option it is recorded in the header. The array
+    /// is always treated as nullable: its validity is always hashed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the array's type has two fields at the same path, or contains a `ListView`,
+    ///   `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - the array's type contains a type whose data is not supported (`Null`, `FixedSizeList`,
+    ///   `Map`, `Interval`, `Utf8View`, `BinaryView`);
+    /// - a non-nullable field inside the array holds a null at an element that no enclosing null
+    ///   struct masks.
     pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
         Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_array_with_config(
             array, config,
@@ -90,6 +123,16 @@ impl ArrowDigester {
     }
 
     /// Hash a complete `RecordBatch` in one go.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
+    ///   names, or a name containing `/` that aliases a nested field);
+    /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
+    /// - the schema contains a type whose data is not supported (`Null`, `FixedSizeList`, `Map`,
+    ///   `Interval`, `Utf8View`, `BinaryView`), whatever the number of rows;
+    /// - a non-nullable field holds a null at an element that no enclosing null struct masks.
     pub fn hash_record_batch(record_batch: &RecordBatch, config: HasherConfig) -> Vec<u8> {
         Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(
             record_batch,
@@ -98,6 +141,13 @@ impl ArrowDigester {
     }
 
     /// Hash a schema only.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
+    ///   names, or a name containing `/` that aliases a nested field);
+    /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type.
     pub fn hash_schema(schema: &Schema, config: HasherConfig) -> Vec<u8> {
         Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_schema_with_config(
             schema, config,

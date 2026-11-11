@@ -31,16 +31,25 @@ version = 00 00 02        // hash format number as a 24-bit big-endian integer
 Format 1 (`00 00 01`) is the format of starfix 0.4 and earlier (Section 10). The version is
 independent of the crate version.
 
-Every schema digest and every `hash_array` digest starts with a 12-byte **header**:
+Every digest starts with a 13-byte **header** naming the entry point that produced it:
 
 ```
-header = 0x00 || "starfix" || version || flags          // 1 + 7 + 3 + 1 = 12 bytes
-       = 00 73 74 61 72 66 69 78 00 00 02 <flags>
-flags  = (ordered_columns ? 0x01 : 0) | (ordered_struct_fields ? 0x02 : 0)
+header(kind, flags) = 0x00 || "starfix" || version || kind || flags   // 1 + 7 + 3 + 1 + 1 = 13 bytes
+                    = 00 73 74 61 72 66 69 78 00 00 02 <kind> <flags>
+kind  = 'S' (0x53)  schema digest (Section 2.5)
+      = 'R' (0x52)  record batch / stream final digest (Section 3.3)
+      = 'A' (0x41)  hash_array final digest (Section 4)
+flags = (ordered_columns ? 0x01 : 0) | (ordered_struct_fields ? 0x02 : 0)
 ```
 
 Bits 2–7 of `flags` are reserved and always 0. **Bit 2 (`0x04`) must never be used**: it briefly
 selected a never-released provisional option during the format-2 work.
+
+**Entry points never collide.** The SHA-256 input of each public output starts with its own
+header: `hash_schema` outputs `SHA-256(header('S', flags) || ...)`, record batches and streams
+`SHA-256(header('R', flags) || ...)`, and `hash_array` `SHA-256(header('A', flags) || ...)`. Two
+outputs of different entry points therefore hash inputs that differ in byte 11, so they never
+coincide (modulo SHA-256 collisions), whatever the data; the same holds for different `flags`.
 
 ---
 
@@ -57,7 +66,7 @@ Each type is serialized to a canonical JSON value.
 | `Binary`, `LargeBinary` | `"LargeBinary"` |
 | `Utf8`, `LargeUtf8` | `"LargeUtf8"` |
 | `List(f)`, `LargeList(f)` | `{"LargeList": <element>}` |
-| `Dictionary(k, v)` | canonical form of `v` (index type and `ordered` flag ignored) |
+| `Dictionary(k, v)` | canonical form of `v`, recursively (index type and `ordered` flag ignored) |
 
 **Nested types.**
 
@@ -149,6 +158,7 @@ With `ordered_columns`: a JSON array with one `<child>` object per column, in sc
 meta_doc = {}
 if any field has metadata: meta_doc["fields"] = { <node path>: {key: value, ...}, ... }
 if the schema has metadata: meta_doc["schema"] = {key: value, ...}
+// an empty metadata map counts as absent (no entry, no "schema" key)
 phase2 = JSON(meta_doc) if meta_doc is non-empty, else nothing
 ```
 
@@ -173,7 +183,11 @@ For pyarrow-based implementations: pyarrow removes the two keys from `field.meta
 extension types it has registered. Add them back: `ARROW:extension:name` =
 `type.extension_name`; `ARROW:extension:metadata` = `type.__arrow_ext_serialize__()` decoded as
 UTF-8 for Python-defined `pa.ExtensionType` subclasses (these round-trip their stored bytes).
-pyarrow's natively registered canonical extension types (`arrow.uuid`, `arrow.json`,
+For pyarrow's natively registered canonical extension types, which have no
+`__arrow_ext_serialize__` in Python (pyarrow 23: `UuidType`, `FixedShapeTensorType`, ...), read
+both keys from the field exported through the **Arrow C data interface**
+(`field.__arrow_c_schema__()`): the exported `ArrowSchema` metadata carries them as serialized
+by the extension type. These types (`arrow.uuid`, `arrow.json`,
 `arrow.bool8`, `arrow.fixed_shape_tensor`, `arrow.variable_shape_tensor`, `arrow.opaque`,
 depending on the pyarrow version) expose only their canonical serialization and rebuild their
 storage type from their own definition; their hash is **defined only when both the stored
@@ -197,7 +211,7 @@ Each has an `equal` relation in the golden file.
 ### 2.5 Schema digest
 
 ```
-schema_digest = SHA-256( header || phase1 || phase2 )
+schema_digest = SHA-256( header('S', flags) || phase1 || phase2 )
 hash_schema   = version || schema_digest
 ```
 
@@ -216,7 +230,9 @@ node. Node paths: a column is its `name`; a struct child is `p + "/" + name` (al
 so a child of a root struct is `"/" + name`. Example: column `items: List<Struct<id, label>>` has
 nodes `items`, `items/`, `items//id`, `items//label`; a struct column `""` with child `x` has
 nodes `""` and `/x` (distinct from a column `x`). A dictionary node is a node of its value type
-(children of a dictionary of structs are below it as for a struct).
+(children of a dictionary of structs are below it as for a struct). Dictionaries resolve
+**recursively**: a dictionary whose values are themselves dictionary-encoded is its innermost
+value type, and its data is the fully decoded array (a dictionary of lists is the decoded list).
 
 ### 3.2 The one rule
 
@@ -226,22 +242,24 @@ applicable, of:
 1. **validity** — if the node's field is nullable:
    `bit_count (u64) || validity words (u8 each, bits Lsb0, last word zero-padded)`;
 2. **lengths** — if the node is a list: `SHA-256( length (u64) of every valid element, in order )`;
-3. **values** — if the node is a leaf (neither struct nor list): `SHA-256( value bytes of every valid element, in order )`.
+3. **values** — if the node is a leaf (neither struct nor list): `SHA-256( value bytes of every effectively valid element, in order )`.
 
 A struct has no lengths or values: a non-nullable struct's entry is empty; a nullable struct's
 entry is its validity.
 
 **Elements of a node.** The elements of a column are the rows. A struct child has one element per
 element of its struct (also where the struct value is null; the child's validity bit is then 0).
-A list element node's elements are the items of all **valid** values of its list, in order;
-items of null list values are not visited. The `hash_array` root's elements are the array's
-elements.
+A list element node's elements are the items of all **effectively valid** values of its list
+(below), in order; items of null list values (and child slots outside every list value's offset
+range) are not elements and are never visited, whatever they hold. The `hash_array` root's
+elements are the array's elements.
 
 **Validity bits.** Every node has an *effective validity* per element: `1` iff the element is
 valid **and** every enclosing struct value at the same list level is valid (struct nulls are
 ANDed downwards; list boundaries reset this). It is computed for **every** node and **written**
 (item 1) only for nullable nodes. Elements whose effective validity is `0` contribute no lengths
 and no values — also for non-nullable nodes, whose nulls can only come from an enclosing struct.
+"Valid" in items 2 and 3 always means effectively valid.
 
 Example: `s: Struct<a: Int32 non-null>` nullable, rows `[{a:1}, null, {a:3}]` (child array
 `[1, 0, 3]`): entry `s` = validity `03 00 00 00 00 00 00 00  05`; entry `s/a` = `SHA-256(01 00 00 00
@@ -252,15 +270,15 @@ Example: `s: Struct<a: Int32 non-null>` nullable, rows `[{a:1}, null, {a:3}]` (c
 | Type | Bytes per valid value |
 |---|---|
 | Int8/UInt8, Int16/UInt16/Float16, Int32/UInt32/Float32/Date32/Time32/Decimal32, Int64/UInt64/Float64/Date64/Time64/Timestamp/Duration/Decimal64, Decimal128, Decimal256 | the value's 1, 2, 4, 8, 16, 32 little-endian bytes (IEEE 754 for floats; NaN payloads and -0.0 are hashed as is) |
-| FixedSizeBinary(n) | the n bytes |
+| FixedSizeBinary(n) | the n bytes (none for `n = 0`; validity and the row count still count) |
 | Boolean | one byte: `01` for true, `00` for false |
 | Utf8/LargeUtf8, Binary/LargeBinary | `length (u64) || bytes` (UTF-8 for strings) |
-| Dictionary | the bytes of the resolved value |
+| Dictionary | the bytes of the resolved value (resolved recursively) |
 
 ### 3.3 Final digest of a record batch or stream
 
 ```
-final = SHA-256( schema_digest || row_count (u64) || entry(n_1) || entry(n_2) || ... )
+final = SHA-256( header('R', flags) || schema_digest || row_count (u64) || entry(n_1) || entry(n_2) || ... )
 hash  = version || final
 ```
 
@@ -274,16 +292,18 @@ Python `hash_table(table)` is a stream over `table.to_batches()`.
 ## 4. `hash_array`
 
 ```
-final = SHA-256( header || type_json || length (u64) || entries )
+final = SHA-256( header('A', flags) || type_json || length (u64) || entries )
 hash  = version || final
 ```
 
-`type_json` is the canonical type JSON of the array's type (dictionary arrays: the value type)
-under the `ordered_struct_fields` rule; `include_metadata` has no effect. The array itself is the
-node at path `""`; it is nullable iff it has at least one **logical** null — for a dictionary
-array, counted after decoding (a valid index pointing at a null dictionary value is a null;
-pyarrow: `array.dictionary_decode().null_count`, not `array.null_count`). Its children follow
-Section 3 (a struct child of the root is at `/name`, the element of a root list at `/`).
+`type_json` is the canonical type JSON of the array's type (dictionary arrays: the value type,
+recursively) under the `ordered_struct_fields` rule; `include_metadata` has no effect. The array
+itself is the node at path `""` and is **always nullable**: its entry always starts with its
+validity (`length` bits; all 1 when the array has no nulls or no validity buffer). An array
+therefore hashes the same with or without an all-valid validity buffer. For a dictionary array
+the validity is that of the decoded array (a valid index pointing at a null dictionary value is
+a null). Its children follow Section 3 (a struct child of the root is at `/name`, the element of
+a root list at `/`).
 
 ---
 
@@ -309,7 +329,7 @@ equal types (`Utf8` vs `LargeUtf8`, dictionary vs plain, `List` vs `LargeList`) 
 
 Options are per call / per digester, never global; all default to false. Every entry point takes
 all of them (`hash_array` ignores `include_metadata`; `ordered_columns` changes only its header).
-The order options change only the header and Phase 1; entries are identical. Because the flags
+The order options change only the headers and Phase 1; entries are identical. Because the flags
 byte is part of the header, hashes taken with different order options never coincide (modulo
 SHA-256 collisions), even when order cannot matter.
 
@@ -327,8 +347,10 @@ Rust panics (documented under `# Panics`); Python raises `ValueError`:
 2. a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type anywhere in the schema;
 3. data hashing (record batch, stream, `hash_array`) of a schema containing a type whose data is
    not supported (Section 8) — **whatever the number of rows, also zero rows or no batches**;
-4. a non-nullable field whose array has a null that no enclosing struct null masks (arrow-rs
-   already refuses to build such arrays; pyarrow can build them);
+4. a non-nullable field whose array has a null at an element (Section 3.2) that no enclosing
+   struct null masks (arrow-rs already refuses to build such arrays; pyarrow can build them).
+   A null in a child slot that is not an element — under a null list value, or outside every
+   list value's offset range — is ignored, for `List` and `LargeList` alike;
 5. a streamed batch whose schema does not match (Section 5).
 
 **When the checks run.** 1–3 run before any data is hashed: in `hash_schema` (1, 2), when a
@@ -340,8 +362,8 @@ be discarded (a `Result`-returning API is a proposed follow-up).
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
 Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
-List/LargeList, Struct, Dictionary of any of these (also of structs and lists), and extension
-types over any of these. Schemas of `Null`, `FixedSizeList`, `Map`, `Interval`, `Utf8View` and
+List/LargeList, Struct, Dictionary of any of these (also of structs and lists; a dictionary of
+dictionaries resolves recursively), and extension types over any of these. Schemas of `Null`, `FixedSizeList`, `Map`, `Interval`, `Utf8View` and
 `BinaryView` hash, but data hashing of a schema that contains them is rejected (Section 7, item 3;
 Rust panics with `not yet implemented`; Python raises).
 
@@ -354,21 +376,23 @@ All values below are pinned by `tests/format2_bytes.rs`.
 **Example 1 — record batch.** `a: Int32 non-null [1, 2]`, `b: LargeUtf8 nullable ["x", null]`.
 
 ```
-schema_digest = SHA-256( header(0x00) || {"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"LargeUtf8","nullable":true}} )
+schema_digest = SHA-256( header('S', 0x00) || {"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"LargeUtf8","nullable":true}} )
 final = SHA-256(
+    header('R', 0x00)
     schema_digest
     02 00 00 00 00 00 00 00                       // row count
     SHA-256(01 00 00 00  02 00 00 00)             // entry "a": values
     02 00 00 00 00 00 00 00  01                   // entry "b": validity [1,0]
     SHA-256(01 00 00 00 00 00 00 00  78)          //           values: len 1, "x"
 )
-hash = 00 00 02 || final = 00000232bdf93232887698a4ec193cd978e6617c3d64a85be5d26c2853fcf82a42f3b6
+hash = 00 00 02 || final = 0000028934d60de8eb8c21ca04b859c02d21015032cb53ee029a4702281f2b0d5822bd
 ```
 
 **Example 2 — list.** `c: List<Int32 nullable>` nullable, rows `[[1, null], null, []]`.
 
 ```
 final = SHA-256(
+    header('R', 0x00)
     schema_digest(c)
     03 00 00 00 00 00 00 00                       // row count
     03 00 00 00 00 00 00 00  05                   // entry "c": validity [1,0,1]
@@ -383,6 +407,7 @@ final = SHA-256(
 
 ```
 final = SHA-256(
+    header('R', 0x00)
     schema_digest(s)
     03 00 00 00 00 00 00 00                       // row count
     03 00 00 00 00 00 00 00  06                   // entry "s": validity [0,1,1]
@@ -399,16 +424,18 @@ because `a` is non-nullable; the value under the null element is skipped).
 **Example 5 — `hash_array`.** `Int32Array [1, 2, 3]`:
 
 ```
-SHA-256( header(0x00) || "Int32" (with quotes) || 03 00 00 00 00 00 00 00 || SHA-256(01 00 00 00 02 00 00 00 03 00 00 00) )
-hash = 0000024c470976f10386fad05c0ef8ac4d3f82c4fd656c3ea6255ef8a21180ce53597a
+SHA-256( header('A', 0x00) || "Int32" (with quotes) || 03 00 00 00 00 00 00 00
+         || 03 00 00 00 00 00 00 00 07            // root validity [1,1,1]: the root is always nullable
+         || SHA-256(01 00 00 00 02 00 00 00 03 00 00 00) )
+hash = 0000028e4c60ec932ba53b9f514d4f6953091bed36d7295ad1d4cdde10907b83bf550f
 ```
 
-`BooleanArray [true, null, false]`: `SHA-256( header(0x00) || "Boolean" || 03 00.. (length) || 03 00.. 05 (validity) || SHA-256(01 00) )`.
+`BooleanArray [true, null, false]`: `SHA-256( header('A', 0x00) || "Boolean" || 03 00.. (length) || 03 00.. 05 (validity) || SHA-256(01 00) )`.
 
 **Example 6 — options.** `hash_schema` of `[b: Int32, a: Utf8 nullable]` with `ordered_columns`:
-`SHA-256( header(0x01) || [{"data_type":"Int32","name":"b","nullable":false},{"data_type":"LargeUtf8","name":"a","nullable":true}] )`.
+`SHA-256( header('S', 0x01) || [{"data_type":"Int32","name":"b","nullable":false},{"data_type":"LargeUtf8","name":"a","nullable":true}] )`.
 
-**Example 7 — zero columns.** A batch with no columns and 3 rows: `SHA-256( SHA-256(header(0x00) || {}) || 03 00 00 00 00 00 00 00 )`.
+**Example 7 — zero columns.** A batch with no columns and 3 rows: `SHA-256( header('R', 0x00) || SHA-256(header('S', 0x00) || {}) || 03 00 00 00 00 00 00 00 )`.
 
 ---
 
@@ -448,6 +475,7 @@ format-2 value.
 |---|---|
 | I1 | Order: without `ordered_columns`, permuting columns does not change the hash; with it, it does. The same for struct fields at every depth and `ordered_struct_fields`. |
 | I2 | Hashes taken with different order options never coincide. |
+| I2a | Outputs of different entry points (`hash_schema`, record batch / stream, `hash_array`) never coincide (each starts its SHA-256 input with its own kind byte, Section 1). |
 | I3 | `Utf8`≡`LargeUtf8`, `Binary`≡`LargeBinary`, `List`≡`LargeList`, dictionary≡plain, in every mode. |
 | I4 | For every supported type: splitting rows into batches, slicing (non-zero offsets) and empty batches do not change the hash; adding or removing rows does; logically different data never collides (tested exhaustively on small inputs). |
 | I5 | Within one `flags` value, `include_metadata = true` without metadata equals `false`. |
@@ -458,7 +486,10 @@ format-2 value.
 
 `tests/golden/format2_v0.5.json` is generated by Rust (`cargo run --bin emit_golden_format2`;
 append-only: the generator aborts if any committed vector changes in any field, or any committed
-relation disappears) and must be matched exactly by every implementation:
+relation disappears; every vector must hash the same after its IPC round trip) and must be
+matched exactly by every implementation. Before the 0.5.0 release it was regenerated in full
+once, when the entry-point kind byte was added (every value changed; ids, inputs and relations
+were kept). From the release on it is append-only:
 
 ```json
 {
@@ -481,6 +512,10 @@ relation disappears) and must be matched exactly by every implementation:
 | `hash_record_batch` | the single batch |
 | `hash_stream` | `new(schema)`, `update` with each batch in order (possibly none), `finalize` |
 | `hash_array` | column 0 of the single batch, as an array |
+
+The vectors `hidden_null_list_rb_f0` and `hidden_null_large_list_rb_f0` hold nulls under null list
+values of a non-nullable element (Section 7, item 4): decode them without full validation
+(arrow-rs's validating IPC reader rejects them; pyarrow reads them).
 
 A relation `equal` requires all listed vectors to have the same `expected_hash`; `different`
 requires them to be pairwise different.

@@ -153,3 +153,23 @@ unregistered extension type, with and without `include_metadata`.
 1. Approve S1–S6 and A1–A4.
 2. Format-1 compatibility: no legacy mode in the crate (recommended), or keep one?
 3. Boolean encoding: one byte per value (recommended) or continuous bit packing with a count.
+
+## 7. Amendment after the second independent review (approved)
+
+Two changes to the layout above, both approved before the 0.5.0 release; the golden file was
+regenerated in full once (every value changed; ids, inputs and relations kept).
+`docs/byte-layout-spec.md` is authoritative.
+
+- **Entry-point kind byte (N1).** The header is 13 bytes:
+  `0x00 || "starfix" || 00 00 02 || kind || flags`, with kind `S` (schema digest), `R` (record
+  batch / stream final, which now starts with `header('R', flags)` before the schema digest) and
+  `A` (`hash_array`). Each public output hashes an input that starts with its own kind, so outputs
+  of different entry points never coincide by construction, not merely by input shape.
+- **`hash_array` root always nullable (S1).** The root's validity is always written, so an array
+  hashes the same with or without an all-valid validity buffer, and the rule "nullable iff it has
+  a logical null" (which made the hash depend on a property of the data rather than the type) is
+  gone.
+
+Also specified in the same pass: dictionaries resolve recursively; `FixedSizeBinary(0)` hashes
+(no value bytes); nulls in list child slots that are not elements are ignored for `List` and
+`LargeList` alike, while a null at an element of a non-nullable list element is rejected.

@@ -3,7 +3,7 @@
 //! Every column type built from list / large list / struct / struct-with-a-second-field, each
 //! nullable or not, around `Int32` and `Dictionary<Int8, Utf8>` leaves, up to three container
 //! levels (420 types). For each type, ~60 small tables (0–3 rows) are hashed; two tables with
-//! different logical values must never share a hash. v0.4.0 lost information in 262 of these
+//! different logical values must never share a hash. v0.4.0 lost information in 268 of these
 //! types (nullable structs; lists whose element is a nullable list or struct); v0.5 fixes them
 //! (byte-layout spec Section 10). Checked in the default mode and with both order options on.
 

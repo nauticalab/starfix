@@ -528,7 +528,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Hash the schema in two phases.
     ///
-    /// Phase 1 (always): canonical JSON of field names, data types, nullability — identical to v0.0.x.
+    /// Phase 1 (always): canonical JSON of field names, data types, nullability (byte-layout spec Section 2.2).
     /// Phase 2 (when `include_metadata` is `true`): per-field and schema-level metadata fed into the
     /// same hasher via `update_metadata_hash`. Phase 2 adds nothing when all metadata maps are empty,
     /// preserving the empty-metadata invariant.
@@ -689,7 +689,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Build a canonical string key for schema identity enforcement in `update()`.
     ///
     /// When `include_metadata` is `false`, or when the schema has no metadata anywhere
-    /// (including nested fields), returns the structure-only JSON (v0.0.x format) — preserving
+    /// (including nested fields), returns the structure-only JSON (Phase 1) — preserving
     /// the empty-metadata invariant.
     ///
     /// When `include_metadata` is `true` and metadata is present, appends `|` followed by the

@@ -117,6 +117,11 @@ mod tests {
             ArrowDigester::hash_record_batch(&b, HasherConfig::default()),
             expected
         );
+        // spec Section 9, Example 1
+        assert_eq!(
+            hex::encode(&expected),
+            "0000028934d60de8eb8c21ca04b859c02d21015032cb53ee029a4702281f2b0d5822bd"
+        );
     }
 
     #[test]
@@ -213,6 +218,11 @@ mod tests {
             ]),
         ]));
         assert_eq!(ArrowDigester::hash_array(&a), expected);
+        // spec Section 9, Example 5
+        assert_eq!(
+            hex::encode(&expected),
+            "0000028e4c60ec932ba53b9f514d4f6953091bed36d7295ad1d4cdde10907b83bf550f"
+        );
     }
 
     #[test]

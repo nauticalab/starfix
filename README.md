@@ -3,9 +3,10 @@
 ## Overview
 
 StarFix computes deterministic, content-based SHA-256 hashes of Apache Arrow schemas, record
-batches, streams of record batches, and arrays. Two inputs get the same hash iff they hold the
-same logical data under the same schema, regardless of how the data is laid out in memory
-(chunking, offsets, small vs large offset types, dictionary encoding).
+batches, streams of record batches, and arrays. Inputs that hold the same logical data under the
+same schema get the same hash, regardless of how the data is laid out in memory (chunking,
+offsets, small vs large offset types, dictionary encoding); inputs that differ get different
+hashes, up to SHA-256 collisions (tested exhaustively on small inputs of every supported type).
 
 Every hash is 35 bytes: a 3-byte **hash format version** followed by a SHA-256 digest. This crate
 produces **hash format 2** (`00 00 02`). The exact bytes are specified in
@@ -77,7 +78,9 @@ let config = HasherConfig {
 ```
 
 Hashes taken with different order options never coincide: the options are recorded in the
-header that starts every digest. Construct `HasherConfig` with `..HasherConfig::default()` to
+header that starts every digest. The header also names the entry point, so a schema hash, a
+record batch or stream hash and an array hash never coincide either. `hash_array` always treats
+the array as nullable (its validity is always hashed). Construct `HasherConfig` with `..HasherConfig::default()` to
 stay compatible with future options.
 
 ## Rejected inputs
@@ -90,7 +93,8 @@ In every mode, the following panic (starfix-python raises `ValueError`):
 - `ListView`, `LargeListView`, `Union` and `RunEndEncoded` types;
 - data hashing of a schema that contains a type whose data is not supported (see below), also
   with zero rows;
-- a non-nullable field whose array contains nulls not masked by an enclosing null struct;
+- a non-nullable field whose array contains nulls not masked by an enclosing null struct (nulls
+  in child slots that are not elements, such as under a null list value, are ignored);
 - a streamed batch whose schema does not match the digester's (with the order options, this
   includes a different column or struct-field order).
 
@@ -101,7 +105,8 @@ traversed; after a panic, discard the digester.
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
 Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
-List/LargeList, Struct, and Dictionary of any of these. Schemas of `Null`, `FixedSizeList`, `Map`,
+List/LargeList, Struct, and Dictionary of any of these (a dictionary of dictionaries resolves
+recursively; `FixedSizeBinary(0)` is supported). Schemas of `Null`, `FixedSizeList`, `Map`,
 `Interval`, `Utf8View` and `BinaryView` can be hashed, but their data cannot yet. Extension types
 hash as their storage type; with `include_metadata`, their `ARROW:extension:*` metadata counts
 too (an absent `ARROW:extension:metadata` equals an empty one).
@@ -151,3 +156,5 @@ See `docs/byte-layout-spec.md`, Section 10, and the [CHANGELOG](CHANGELOG.md).
 - `tests/ordered_hashing.rs`, `tests/arrow_digester.rs`: options, rejections, invariants.
 
 Regenerate the golden file (append-only) with `cargo run --bin emit_golden_format2`.
+`tests/golden_vectors_format2.rs` also requires a minimum vector and relation count, so a
+regeneration that drops vectors fails even if the generator was edited too.
