@@ -265,7 +265,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         Self::hash_array_with_config(array, HasherConfig::default())
     }
 
-    /// `hash_array` with options (byte-layout spec Section 6). `include_metadata` has no effect.
+    /// `hash_array` with options (byte-layout spec Section 4). `include_metadata` has no effect.
     pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
         let flags = option_flags(config);
         // Resolve dictionary arrays to their plain value type
@@ -392,7 +392,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         serde_json::to_string(&fields_digest).expect("Failed to serialize field_digest to bytes")
     }
 
-    /// Phase 1 canonical schema JSON under `config` (byte-layout spec Sections 2.1 and 9.3).
+    /// Phase 1 canonical schema JSON under `config` (byte-layout spec Sections 2.1 and 2.2).
     ///
     /// With both order options off this is exactly `serialized_schema` (v0.4.0). With
     /// `ordered_columns` the top level is a JSON array of `{data_type, name, nullable}` in schema
@@ -882,7 +882,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
         // A nullable struct records its own (combined) validity at its path — in its
         // validity-only entry, or, for a list element, in the list's element entry
-        // (byte-layout spec Section 3.5; v0.4.0 recorded nothing, fixed in v0.5).
+        // (byte-layout spec Section 3.2; format 1 recorded nothing).
         if nullable {
             let null_bits = fields
                 .get_mut(path)
@@ -1057,7 +1057,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 // One byte (0x00 / 0x01) per VALID value (byte-layout spec Section 3.2), so the
                 // value count is hashed and batches can be split anywhere. Nulls are skipped.
                 // (v0.4.0 bit-packed per call, which lost trailing false values and depended
-                // on batch boundaries; fixed in v0.5, Section 10.)
+                // on batch boundaries; fixed in format 2, Section 10.)
                 if let Some(ref mut null_bits) = digest.null_bits {
                     Self::handle_null_bits(bool_array, null_bits);
                 }

@@ -1,7 +1,7 @@
 //! Tests for the order-sensitive options of `HasherConfig` and the v0.5 lossless-layout fixes
 //! (ITL-898).
 //!
-//! The byte layout is specified in `docs/byte-layout-spec.md`, Section 9.
+//! The byte layout is specified in `docs/byte-layout-spec.md` (options: Section 6).
 
 #[cfg(test)]
 mod tests {

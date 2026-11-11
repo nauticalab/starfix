@@ -1516,7 +1516,7 @@ fn add_boolean_names_types_and_metadata(gen: &mut Builder) {
         );
     }
 
-    // 15. Phase 2 metadata field paths (byte-layout spec Section 2.2.1).
+    // 15. Phase 2 metadata field paths (byte-layout spec Section 2.3).
     {
         let kv = |key_meta: bool, value_meta: bool, entries_meta: bool| {
             let mut key = Field::new("key", DataType::Utf8, false);

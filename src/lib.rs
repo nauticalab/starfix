@@ -15,21 +15,20 @@ pub(crate) const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 2_u8];
 
 /// Configuration for the Arrow hasher.
 ///
-/// Every option defaults to `false`, which reproduces the v0.4.0 hashes byte for byte. Options are
-/// per call (or per streaming digester), never global, so ordered and unordered hashing can be
-/// used side by side. Construct with struct-update syntax to stay forward compatible:
+/// Every option defaults to `false`. Options are per call (or per streaming digester), never
+/// global, so ordered and unordered hashing can be used side by side. Construct with struct-update syntax to stay forward compatible:
 ///
 /// ```
 /// use starfix::HasherConfig;
 /// let config = HasherConfig { ordered_columns: true, ..HasherConfig::default() };
 /// ```
 ///
-/// When `ordered_columns` or `ordered_struct_fields` is `true`, the hash is domain separated from
-/// every other combination of those options (see `docs/byte-layout-spec.md`, Section 9).
+/// The order options are recorded in the header of every digest, so hashes taken with different
+/// order options never coincide (see `docs/byte-layout-spec.md`, Sections 1 and 6).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HasherConfig {
     /// When `true`, schema-level and per-field Arrow metadata are included in the hash.
-    /// Default is `false`, preserving pre-v0.1.0 hash stability.
+    /// Default is `false`.
     pub include_metadata: bool,
     /// When `true`, the order of the top-level columns is part of the hash.
     /// Default is `false`: reordering columns does not change the hash.
@@ -40,14 +39,15 @@ pub struct HasherConfig {
     pub ordered_struct_fields: bool,
 }
 
-/// Maps `ArrowDigesterCore` to a SHA-256 digester with version prefix.
+/// SHA-256 hasher of Arrow data, producing hash format 2 (`00 00 02 || SHA-256`, 35 bytes).
 ///
 /// # Panics
 ///
-/// Besides unsupported data types, when `ordered_columns` or `ordered_struct_fields` is on, every entry point panics on a schema (or array type) with two fields
-/// at the same path (duplicate names, or a name containing `/` that aliases a nested field), and
-/// `update` panics on a batch whose schema does not match the digester's under its options
-/// (e.g. a different column order with `ordered_columns`).
+/// Every entry point panics on data of an unsupported type, on a schema (or array type) with two
+/// fields at the same path (duplicate names, or a name containing `/` that aliases a nested
+/// field), and on `ListView`, `LargeListView`, `Union` or `RunEndEncoded` types; `update` panics on
+/// a batch whose schema does not match the digester's under its options (e.g. a different column
+/// order with `ordered_columns`).
 #[derive(Clone)]
 pub struct ArrowDigester {
     digester: ArrowDigesterCore<Sha256>,
