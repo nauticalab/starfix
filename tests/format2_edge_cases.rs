@@ -4,6 +4,11 @@
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
+    #![expect(clippy::indexing_slicing, reason = "Okay in test")]
+    #![expect(
+        clippy::integer_division_remainder_used,
+        reason = "Okay in test: alternating values"
+    )]
 
     use std::collections::HashMap;
     use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -14,6 +19,7 @@ mod tests {
         StructArray,
     };
     use arrow::buffer::{NullBuffer, OffsetBuffer};
+    use arrow::compute::concat;
     use arrow_schema::{DataType, Field, Fields, Schema};
     use starfix::{ArrowDigester, HasherConfig};
 
@@ -60,7 +66,7 @@ mod tests {
             let sliced = whole.slice(offset, len);
             let fresh = rb(
                 vec![sliced.schema().field(0).clone()],
-                vec![arrow::compute::concat(&[sliced.column(0).as_ref()]).unwrap()],
+                vec![concat(&[sliced.column(0).as_ref()]).unwrap()],
             );
             assert_eq!(
                 ArrowDigester::hash_record_batch(&sliced, HasherConfig::default()),

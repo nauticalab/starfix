@@ -304,26 +304,33 @@ mod tests {
             }
             out.batch_split = split_ok;
 
-            // 3. slice / offset independence
-            let mut padded = vec![Some(9)];
-            padded.extend(seeds.iter().copied());
-            padded.push(Some(9));
-            let sliced_leaf = make(dt, &padded).slice(1, seeds.len());
+            // 3. slice / offset independence, at bit offsets around byte and word boundaries
             let fresh_leaf = concat(&[whole_leaf.as_ref()]).unwrap();
-            let mut slice_ok = ArrowDigester::hash_record_batch(
-                &wrap(position, &sliced_leaf, nullable, &seeds),
-                cfg(flags),
-            ) == ArrowDigester::hash_record_batch(
-                &wrap(position, &fresh_leaf, nullable, &seeds),
-                cfg(flags),
-            );
-            // also slice the wrapped column itself (struct / list offsets)
-            let padded_batch = wrap(position, &make(dt, &padded), nullable, &padded);
-            let sliced_batch = padded_batch.slice(1, seeds.len());
-            slice_ok &= ArrowDigester::hash_record_batch(&sliced_batch, cfg(flags)) == expected;
-            if position == Position::Top {
-                slice_ok &= ArrowDigester::hash_array_with_config(sliced_leaf.as_ref(), cfg(flags))
-                    == ArrowDigester::hash_array_with_config(fresh_leaf.as_ref(), cfg(flags));
+            let mut slice_ok = true;
+            for offset in [1_usize, 7, 8, 9, 16, 63, 64, 65] {
+                let mut padded = vec![Some(9); offset];
+                padded.extend(seeds.iter().copied());
+                padded.push(Some(9));
+                let sliced_leaf = make(dt, &padded).slice(offset, seeds.len());
+                slice_ok &= ArrowDigester::hash_record_batch(
+                    &wrap(position, &sliced_leaf, nullable, &seeds),
+                    cfg(flags),
+                ) == ArrowDigester::hash_record_batch(
+                    &wrap(position, &fresh_leaf, nullable, &seeds),
+                    cfg(flags),
+                );
+                // also slice the wrapped column itself (struct / list offsets)
+                let padded_batch = wrap(position, &make(dt, &padded), nullable, &padded);
+                let sliced_batch = padded_batch.slice(offset, seeds.len());
+                slice_ok &= ArrowDigester::hash_record_batch(&sliced_batch, cfg(flags)) == expected;
+                if position == Position::Top {
+                    slice_ok &=
+                        ArrowDigester::hash_array_with_config(sliced_leaf.as_ref(), cfg(flags))
+                            == ArrowDigester::hash_array_with_config(
+                                fresh_leaf.as_ref(),
+                                cfg(flags),
+                            );
+                }
             }
             out.slice = slice_ok;
 

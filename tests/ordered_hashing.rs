@@ -129,13 +129,9 @@ mod tests {
         }
     }
 
-    fn assert_all_distinct(hashes: &[String], what: &str) {
+    fn all_distinct(hashes: &[String]) -> bool {
         let set: HashSet<&String> = hashes.iter().collect();
-        assert_eq!(
-            set.len(),
-            hashes.len(),
-            "{what}: hashes not pairwise distinct"
-        );
+        set.len() == hashes.len()
     }
 
     // ── defaults are unchanged ──────────────────────────────────────────────
@@ -301,7 +297,7 @@ mod tests {
             .iter()
             .map(|&f| rb_hash(&cols_and_struct_batch(true, true), cfg(f)))
             .collect();
-        assert_all_distinct(&all, "four order combinations");
+        assert!(all_distinct(&all), "four order combinations");
     }
 
     #[test]
@@ -511,15 +507,15 @@ mod tests {
             vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
         );
         let rbs: Vec<String> = (0x00_u8..=0x03).map(|f| rb_hash(&b, cfg(f))).collect();
-        assert_all_distinct(&rbs, "one-column record batch");
+        assert!(all_distinct(&rbs), "one-column record batch");
         let schemas: Vec<String> = (0x00_u8..=0x03)
             .map(|f| schema_hash(&b.schema(), cfg(f)))
             .collect();
-        assert_all_distinct(&schemas, "one-column schema");
+        assert!(all_distinct(&schemas), "one-column schema");
         let arrays: Vec<String> = (0x00_u8..=0x03)
             .map(|f| array_hash(b.column(0).as_ref(), cfg(f)))
             .collect();
-        assert_all_distinct(&arrays, "hash_array");
+        assert!(all_distinct(&arrays), "hash_array");
     }
 
     #[test]
@@ -674,29 +670,20 @@ mod tests {
     }
 
     #[test]
-    fn metadata_is_keyed_by_node_path() {
-        // struct column "" with child "a" (node path "a") next to column "/a" (node path "/a"):
-        // distinct paths, so moving the metadata between them changes the hash
-        let mk = |on_child: bool| {
-            let m: HashMap<String, String> = [("u".to_owned(), "kg".to_owned())].into();
-            let mut child = Field::new("a", DataType::Int32, false);
-            let mut column = Field::new("/a", DataType::Int32, false);
-            if on_child {
-                child = child.with_metadata(m);
-            } else {
-                column = column.with_metadata(m);
-            }
-            Schema::new(vec![
-                Field::new("", DataType::Struct(Fields::from(vec![child])), false),
-                column,
-            ])
-        };
+    fn empty_name_parent_aliasing_rejected_in_every_mode() {
+        // struct column "" with child "a" has node path "/a", the same as a column "/a"
+        let schema = Schema::new(vec![
+            Field::new(
+                "",
+                DataType::Struct(Fields::from(vec![Field::new("a", DataType::Int32, false)])),
+                false,
+            ),
+            Field::new("/a", DataType::Int32, false),
+        ]);
         for flags in 0x00_u8..=0x03 {
-            let c = HasherConfig {
-                include_metadata: true,
-                ..cfg(flags)
-            };
-            assert_ne!(schema_hash(&mk(true), c), schema_hash(&mk(false), c));
+            assert!(panics(|| {
+                ArrowDigester::hash_schema(&schema, cfg(flags));
+            }));
         }
     }
 
@@ -1130,6 +1117,6 @@ mod tests {
         let all: Vec<String> = (0x00_u8..=0x03)
             .map(|f| schema_hash(&schema, cfg(f)))
             .collect();
-        assert_all_distinct(&all, "map schema");
+        assert!(all_distinct(&all), "map schema");
     }
 }

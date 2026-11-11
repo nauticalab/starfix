@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn metadata_paths_are_node_paths() {
-        // struct column "" with child "a": node path of the child is "a"
+        // struct column "" with child "a": node path of the child is "" + "/" + "a" = "/a"
         let schema = Schema::new(vec![Field::new(
             "",
             DataType::Struct(Fields::from(vec![
@@ -312,7 +312,7 @@ mod tests {
             false,
         )]);
         let json = r#"{"":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":false}]},"nullable":false}}"#;
-        let phase2 = r#"{"fields":{"a":{"u":"m"}}}"#;
+        let phase2 = r#"{"fields":{"/a":{"u":"m"}}}"#;
         assert_eq!(
             ArrowDigester::hash_schema(&schema, with_metadata()),
             out(&sha(&[&header(0), json.as_bytes(), phase2.as_bytes()]))
