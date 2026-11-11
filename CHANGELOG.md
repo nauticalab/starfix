@@ -40,5 +40,15 @@ These inputs collided, or hashed differently depending on batch boundaries, in f
   ill-defined hashes).
 - Map types hash without their entries/key/value field names and without the entries field's
   metadata; field metadata is keyed by node path.
+- Data hashing of a schema containing a type whose data is not supported (`Null`,
+  `FixedSizeList`, `Map`, `Interval`, view types) is rejected when the digester is created, also
+  with zero rows; a non-nullable field with unmasked nulls is rejected.
+- With `include_metadata`, an extension field without `ARROW:extension:metadata` hashes like one
+  with an empty value.
+
+### Fixed
+
+- A panic when hashing a Boolean under a nullable struct at a byte-aligned array offset ≥ 8
+  (present since 0.4).
 - `emit_golden_metadata` is removed; `tests/golden/include_metadata_v0.3.json` is kept as the
   historical format-1 record.

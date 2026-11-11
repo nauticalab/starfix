@@ -87,15 +87,23 @@ In every mode, the following panic (starfix-python raises `ValueError`):
   struct, or a name containing `/` that aliases a nested field (a column `"a/b"` next to a struct
   column `a` with child `b`);
 - `ListView`, `LargeListView`, `Union` and `RunEndEncoded` types;
+- data hashing of a schema that contains a type whose data is not supported (see below), also
+  with zero rows;
+- a non-nullable field whose array contains nulls not masked by an enclosing null struct;
 - a streamed batch whose schema does not match the digester's (with the order options, this
   includes a different column or struct-field order).
+
+These checks run before any data is hashed, except the null check, which runs while a batch is
+traversed; after a panic, discard the digester.
 
 ## Supported data types
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
 Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
 List/LargeList, Struct, and Dictionary of any of these. Schemas of `Null`, `FixedSizeList`, `Map`,
-`Interval`, `Utf8View` and `BinaryView` can be hashed, but their data cannot yet.
+`Interval`, `Utf8View` and `BinaryView` can be hashed, but their data cannot yet. Extension types
+hash as their storage type; with `include_metadata`, their `ARROW:extension:*` metadata counts
+too (an absent `ARROW:extension:metadata` equals an empty one).
 
 ## Hash format history
 

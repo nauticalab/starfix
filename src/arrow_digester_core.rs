@@ -344,8 +344,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         digester.finalize()
     }
 
-    /// This will consume the `ArrowDigester` and produce the final combined digest where the schema
-    /// digest is fed in first, followed by each field digest in alphabetical order of field names.
+    /// Consume the digester and produce the final digest: the schema digest, the row count, then
+    /// every node's entry in byte-wise order of node paths (byte-layout spec Section 3.3).
     pub fn finalize(self) -> Vec<u8> {
         // Finalize all the sub digest and combine them into a single digest
         let mut final_digest = D::new();
@@ -404,7 +404,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// Phase 1 canonical schema JSON under `config` (byte-layout spec Sections 2.1 and 2.2).
     ///
-    /// With both order options off this is exactly `serialized_schema` (v0.4.0). With
+    /// With both order options off this is exactly `serialized_schema`. With
     /// `ordered_columns` the top level is a JSON array of `{data_type, name, nullable}` in schema
     /// order; with `ordered_struct_fields` struct children keep their declaration order.
     fn canonical_schema_json(schema: &Schema, config: HasherConfig) -> String {
@@ -1135,15 +1135,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         }
     }
 
-    /// Recursively extract field entries from the type tree.
-    ///
-    /// - **List**: creates a structural-only entry at `path/`, then recurses into
-    ///   the value type. If the column field is nullable, also creates a
-    ///   validity-only entry at the field path (before the `/`).
-    /// - **Struct**: transparent — recurses into each child field with `path/childname`.
-    ///   No entry for the struct itself. Struct null propagation is handled at
-    ///   traversal time.
-    /// - **Leaf (non-list, non-struct)**: creates a data entry at the current path.
+    /// Create the entries of a column (the node at its bare name) and of every node below it;
+    /// see `extract_type_entries`.
     fn extract_fields_name(
         field: &Field,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
@@ -2591,9 +2584,8 @@ mod tests {
 
     // ── List<Int32> / LargeList<Int32> ─────────────────────────────────────
     //
-    // With recursive decomposition, a non-nullable List<Int32 nullable> column
-    // creates a single entry at "col/" (list_leaf) with structural (element counts),
-    // data (leaf values), and null_bits (item nullability).
+    // Format 2: a non-nullable List<Int32 nullable> column has the list node "col" (lengths)
+    // and the element node "col/" (item validity and values).
 
     #[test]
     fn digest_list_non_nullable_bytes() {

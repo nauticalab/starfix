@@ -153,21 +153,32 @@ phase2 = JSON(meta_doc) if meta_doc is non-empty, else nothing
 ```
 
 All maps are sorted by key (UTF-8 bytes); keys and values are JSON strings. A field's metadata is
-recorded under its **node path** (Section 3.1): column `c`, struct child `join(p, name)`, list /
-fixed-size-list element `p/`, map key `p//key`, map value `p//value` (fixed names). The map's
+recorded under its **node path** (Section 3.1): column `c`, struct child `p + "/" + name`, list
+/ fixed-size-list element `p/`, map key `p//key`, map value `p//value` (fixed names). The map's
 entries field contributes **nothing** (pyarrow drops its metadata). Dictionary types are replaced
 by their value type before the walk.
 
 Example, `m: Map<Utf8, Int32>` with value-field metadata `{"unit":"kg"}`: `{"fields":{"m//value":{"unit":"kg"}}}`.
 
 **Extension types** are Arrow fields whose metadata holds `ARROW:extension:name` (and usually
-`ARROW:extension:metadata`). They are hashed as their **storage type** in Phase 1, and with
-`include_metadata` their metadata, **including both `ARROW:extension:*` keys exactly as stored in
-the Arrow field metadata**, is hashed in Phase 2 like any other field metadata. pyarrow removes
-these two keys from `field.metadata` for extension types it has registered (e.g. `arrow.uuid`);
-a pyarrow-based implementation must add them back: `ARROW:extension:name` = `type.extension_name`,
-`ARROW:extension:metadata` = `type.__arrow_ext_serialize__()` decoded as UTF-8. Without
-`include_metadata`, an extension type hashes exactly like its storage type.
+`ARROW:extension:metadata`). Everywhere — Phase 1, node paths, rejection checks, data, and the
+`hash_array` type JSON — an extension type is its **storage type**, and its data is the storage
+array. With `include_metadata`, the field's metadata is hashed in Phase 2 like any other field
+metadata, **including both `ARROW:extension:*` keys**, with one normalization: if
+`ARROW:extension:name` is present and `ARROW:extension:metadata` is absent, it is hashed as
+`"ARROW:extension:metadata": ""` (absent and empty are the same). Otherwise the values are
+hashed verbatim, as stored in the Arrow field metadata.
+
+For pyarrow-based implementations: pyarrow removes the two keys from `field.metadata` for
+extension types it has registered. Add them back: `ARROW:extension:name` =
+`type.extension_name`; `ARROW:extension:metadata` = `type.__arrow_ext_serialize__()` decoded as
+UTF-8 for Python-defined `pa.ExtensionType` subclasses (these round-trip their stored bytes).
+pyarrow's natively registered canonical extension types (`arrow.uuid`, `arrow.json`,
+`arrow.bool8`, `arrow.fixed_shape_tensor`, `arrow.variable_shape_tensor`, `arrow.opaque`,
+depending on the pyarrow version) expose only their canonical serialization; their hash is
+**defined only when the stored metadata is already in that canonical form** (as every Arrow
+implementation writes it). Unregistered extension types keep both keys in `field.metadata`.
+Without `include_metadata`, an extension type hashes exactly like its storage type.
 
 ### 2.4 Names that are not hashed
 
@@ -197,9 +208,12 @@ hash as `false`.
 ### 3.1 Nodes and node paths
 
 The schema is a tree of **nodes**: each column, each struct child and each list element is a
-node. Node paths: a column is `name`; a struct child is `join(p, name)`; a list element is
-`p + "/"`, where `join(p, n)` is `n` if `p` is empty, else `p + "/" + n`. Example: column `items:
-List<Struct<id, label>>` has nodes `items`, `items/`, `items//id`, `items//label`.
+node. Node paths: a column is its `name`; a struct child is `p + "/" + name` (always, also when
+`p` or `name` is empty); a list element is `p + "/"`. For `hash_array` the array is the node `""`,
+so a child of a root struct is `"/" + name`. Example: column `items: List<Struct<id, label>>` has
+nodes `items`, `items/`, `items//id`, `items//label`; a struct column `""` with child `x` has
+nodes `""` and `/x` (distinct from a column `x`). A dictionary node is a node of its value type
+(children of a dictionary of structs are below it as for a struct).
 
 ### 3.2 The one rule
 
@@ -220,9 +234,15 @@ A list element node's elements are the items of all **valid** values of its list
 items of null list values are not visited. The `hash_array` root's elements are the array's
 elements.
 
-**Validity bits.** One bit per element: `1` iff the element is valid **and** every enclosing
-struct value at the same list level is valid (struct nulls are ANDed downwards; list boundaries
-reset this). Elements whose bit is `0` contribute no lengths and no values.
+**Validity bits.** Every node has an *effective validity* per element: `1` iff the element is
+valid **and** every enclosing struct value at the same list level is valid (struct nulls are
+ANDed downwards; list boundaries reset this). It is computed for **every** node and **written**
+(item 1) only for nullable nodes. Elements whose effective validity is `0` contribute no lengths
+and no values — also for non-nullable nodes, whose nulls can only come from an enclosing struct.
+
+Example: `s: Struct<a: Int32 non-null>` nullable, rows `[{a:1}, null, {a:3}]` (child array
+`[1, 0, 3]`): entry `s` = validity `03 00 00 00 00 00 00 00  05`; entry `s/a` = `SHA-256(01 00 00 00
+03 00 00 00)` (no validity, values 1 and 3 only).
 
 **Leaf value bytes** (valid elements only):
 
@@ -257,8 +277,10 @@ hash  = version || final
 
 `type_json` is the canonical type JSON of the array's type (dictionary arrays: the value type)
 under the `ordered_struct_fields` rule; `include_metadata` has no effect. The array itself is the
-node at path `""`; it is nullable iff it contains at least one null. Its children follow
-Section 3 (a struct child of the root is at `name`, the element of a root list at `/`).
+node at path `""`; it is nullable iff it has at least one **logical** null — for a dictionary
+array, counted after decoding (a valid index pointing at a null dictionary value is a null;
+pyarrow: `array.dictionary_decode().null_count`, not `array.null_count`). Its children follow
+Section 3 (a struct child of the root is at `/name`, the element of a root list at `/`).
 
 ---
 
@@ -296,18 +318,29 @@ Rust panics (documented under `# Panics`); Python raises `ValueError`:
 
 1. two nodes with the same node path (Section 3.1) — duplicate column names, duplicate field
    names within a struct, or a name containing `/` that aliases another node (a column `"a/b"`
-   next to a struct `a` with child `b`); a `/` that aliases nothing (`"km/h"`) is fine. Map nodes
-   count as `m`, `m/`, `m//key`, `m//value`; the `hash_array` root is the node `""`;
+   next to a struct `a` with child `b`; a struct column `""` with child `a` next to a column
+   `"/a"`); a `/` that aliases nothing (`"km/h"`) and empty names that alias nothing are fine.
+   Map nodes count as `m`, `m/`, `m//key`, `m//value`; the `hash_array` root is the node `""`;
 2. a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type anywhere in the schema;
-3. a streamed batch whose schema does not match (Section 5).
+3. data hashing (record batch, stream, `hash_array`) of a schema containing a type whose data is
+   not supported (Section 8) — **whatever the number of rows, also zero rows or no batches**;
+4. a non-nullable field whose array has a null that no enclosing struct null masks (arrow-rs
+   already refuses to build such arrays; pyarrow can build them);
+5. a streamed batch whose schema does not match (Section 5).
+
+**When the checks run.** 1–3 run before any data is hashed: in `hash_schema` (1, 2), when a
+digester is created (1–3), in `hash_array` (1–3), and on each streamed batch before it changes
+the digester (1, 2, 5). Check 4 runs while a batch is traversed; after any panic a digester must
+be discarded (a `Result`-returning API is a proposed follow-up).
 
 ## 8. Type support
 
 Data hashing supports Boolean, all integer and float types, Date32/64, Time32/64, Timestamp,
 Duration, Decimal32/64/128/256, FixedSizeBinary, Binary/LargeBinary, Utf8/LargeUtf8,
-List/LargeList, Struct, and Dictionary of any of these. Schemas of `Null`, `FixedSizeList`, `Map`,
-`Interval`, `Utf8View` and `BinaryView` hash, but their data does not (Rust panics with
-`not yet implemented`; Python raises).
+List/LargeList, Struct, Dictionary of any of these (also of structs and lists), and extension
+types over any of these. Schemas of `Null`, `FixedSizeList`, `Map`, `Interval`, `Utf8View` and
+`BinaryView` hash, but data hashing of a schema that contains them is rejected (Section 7, item 3;
+Rust panics with `not yet implemented`; Python raises).
 
 ---
 
@@ -419,15 +452,14 @@ format-2 value.
 ## 12. Golden vectors
 
 `tests/golden/format2_v0.5.json` is generated by Rust (`cargo run --bin emit_golden_format2`;
-append-only: the generator aborts if a committed value would change) and must be matched
-exactly by every implementation:
+append-only: the generator aborts if any committed vector changes in any field, or any committed
+relation disappears) and must be matched exactly by every implementation:
 
 ```json
 {
   "version": "0.5",
   "format": 2,
   "generated_by": "cargo run --bin emit_golden_format2",
-  "rust_commit": "<git sha>",
   "vectors": [
     { "id": "...", "description": "...",
       "method": "hash_schema | hash_record_batch | hash_stream | hash_array",
