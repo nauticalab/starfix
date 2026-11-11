@@ -22,13 +22,13 @@ use arrow_schema::Field;
 use bitvec::prelude::*;
 use digest::Digest;
 
-use crate::HasherConfig;
+use crate::{HasherConfig, VERSION_BYTES};
 
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
-/// Domain-separation tag prefix (byte-layout spec Section 9.1): `0x00 "starfix-options-v1"`.
-/// Canonical JSON never starts with `0x00`, so tagged inputs never equal untagged ones.
-const OPTIONS_TAG_PREFIX: &[u8; 19] = b"\x00starfix-options-v1";
+/// Format-2 header magic (byte-layout spec Section 1): `0x00 "starfix"`, followed by the 3-byte
+/// format version and the flags byte. Canonical JSON never starts with `0x00`.
+const HEADER_MAGIC: &[u8; 8] = b"\x00starfix";
 
 /// The option flags byte: bit 0 `ordered_columns`, bit 1 `ordered_struct_fields`.
 /// Bits 2–7 are reserved and always 0 (bit 2 was briefly a provisional, never released switch;
@@ -37,18 +37,13 @@ const fn option_flags(config: HasherConfig) -> u8 {
     (config.ordered_columns as u8) | ((config.ordered_struct_fields as u8) << 1_u8)
 }
 
-/// `OPTIONS_TAG_PREFIX || flags` — written only when `flags != 0`.
-fn options_tag(flags: u8) -> Vec<u8> {
-    let mut tag = OPTIONS_TAG_PREFIX.to_vec();
-    tag.push(flags);
-    tag
-}
-
-/// Node paths and metadata paths claimed so far by the schema validator.
-#[derive(Default)]
-struct PathSets {
-    node: HashSet<String>,
-    metadata: HashSet<String>,
+/// `0x00 "starfix" || format version (3 bytes) || flags` — the first input of every schema
+/// digest and every `hash_array` digest, in every mode.
+fn header(flags: u8) -> Vec<u8> {
+    let mut h = HEADER_MAGIC.to_vec();
+    h.extend_from_slice(&VERSION_BYTES);
+    h.push(flags);
+    h
 }
 
 #[derive(Clone)]
@@ -68,8 +63,8 @@ impl<D: Digest> DigestBufferType<D> {
         }
     }
 
-    /// Create a buffer for a list-level-only entry (structural + optional `null_bits`, no data).
-    fn new_structural_only(nullable: bool) -> Self {
+    /// Create a buffer for a list node (lengths + optional `null_bits`).
+    fn new_list(nullable: bool) -> Self {
         Self {
             null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
             structural: Some(D::new()),
@@ -77,16 +72,7 @@ impl<D: Digest> DigestBufferType<D> {
         }
     }
 
-    /// Create a buffer for a leaf that is itself a list type (structural + data + optional `null_bits`).
-    fn new_list_leaf(nullable: bool) -> Self {
-        Self {
-            null_bits: nullable.then(BitVec::<u8, Lsb0>::new),
-            structural: Some(D::new()),
-            data: Some(D::new()),
-        }
-    }
-
-    /// Create a buffer for a column-level nullable entry (`null_bits` only).
+    /// Create a buffer for a nullable struct node (`null_bits` only).
     fn new_validity_only() -> Self {
         Self {
             null_bits: Some(BitVec::<u8, Lsb0>::new()),
@@ -167,6 +153,7 @@ pub struct ArrowDigesterCore<D: Digest> {
     schema_equality_key: String,
     fields_digest_buffer: BTreeMap<String, DigestBufferType<D>>,
     config: HasherConfig,
+    row_count: u64,
 }
 
 impl<D: Digest> ArrowDigesterCore<D> {
@@ -204,6 +191,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             schema_equality_key,
             fields_digest_buffer,
             config,
+            row_count: 0,
         }
     }
 
@@ -236,11 +224,13 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 "Record batch schema does not match ArrowDigester schema"
             );
         }
-        if flags != 0 {
-            // An unordered top level is keyed by name, so a batch with duplicate column names
-            // can match the digester's key; reject it like the digester's own schema.
-            Self::validate_schema_paths(&rb_schema);
-        }
+        // An unordered top level is keyed by name, so a batch with duplicate column names
+        // can match the digester's key; reject it like the digester's own schema.
+        Self::validate_schema_paths(&rb_schema);
+        self.row_count = self
+            .row_count
+            .checked_add(record_batch.num_rows() as u64)
+            .expect("row count overflow");
 
         let schema = record_batch.schema();
         for col_idx in 0..record_batch.num_columns() {
@@ -275,8 +265,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         Self::hash_array_with_config(array, HasherConfig::default())
     }
 
-    /// `hash_array` with options (byte-layout spec Sections 6 and 9). `include_metadata` has
-    /// no effect; with any other option on, the options tag is the first input.
+    /// `hash_array` with options (byte-layout spec Section 6). `include_metadata` has no effect.
     pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
         let flags = option_flags(config);
         // Resolve dictionary arrays to their plain value type
@@ -295,14 +284,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Normalize to canonical large types
         let normalized_type = normalize_data_type(&effective_type);
 
-        if flags != 0 {
-            Self::validate_type_paths(&normalized_type);
-        }
+        Self::validate_type_paths(&normalized_type);
 
         let mut final_digest = D::new();
-        if flags != 0 {
-            final_digest.update(options_tag(flags));
-        }
+        final_digest.update(header(flags));
 
         // Use canonical type serialization for metadata (data_type_to_value also normalizes,
         // but we pass the already-normalized type for consistency)
@@ -311,8 +296,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
         let data_type_serialized = serde_json::to_string(&canonical_type)
             .expect("Failed to serialize data type to string");
 
-        // Update the digest with array metadata
+        // Update the digest with array metadata, then the element count
         final_digest.update(data_type_serialized);
+        final_digest.update((effective_array.len() as u64).to_le_bytes());
 
         // Build BTreeMap entries from the type tree (same decomposition as record-batch path)
         let mut fields = BTreeMap::new();
@@ -320,7 +306,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
             &effective_type,
             effective_array.is_nullable(),
             "",
-            false,
             &mut fields,
         );
 
@@ -355,8 +340,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Finalize all the sub digest and combine them into a single digest
         let mut final_digest = D::new();
 
-        // digest the schema first
+        // digest the schema first, then the number of rows
         final_digest.update(&self.schema_digest);
+        final_digest.update(self.row_count.to_le_bytes());
 
         // Then digest each field digest in order
         self.fields_digest_buffer
@@ -470,8 +456,19 @@ impl<D: Digest> ArrowDigesterCore<D> {
             DataType::FixedSizeList(field, size) => {
                 serde_json::json!({ "FixedSizeList": [Self::element_type_to_value(field, ordered_struct_fields), size] })
             }
-            DataType::Map(field, sorted) => {
-                serde_json::json!({ "Map": [Self::inner_field_to_value(field, ordered_struct_fields), sorted] })
+            // Map: key and value element forms by position; the entries/key/value field names
+            // and the entries field's metadata are not hashed (byte-layout spec Section 2.1).
+            DataType::Map(field, keys_sorted) => {
+                let DataType::Struct(kv) = field.data_type() else {
+                    unreachable!("Arrow map entries are a struct")
+                };
+                let key = kv.first().expect("map key field");
+                let value = kv.get(1).expect("map value field");
+                serde_json::json!({ "Map": {
+                    "key": Self::element_type_to_value(key, ordered_struct_fields),
+                    "keys_sorted": keys_sorted,
+                    "value": Self::element_type_to_value(value, ordered_struct_fields),
+                } })
             }
             // For all non-nested types (including LargeUtf8, LargeBinary after normalization),
             // Arrow's default serde is sufficient
@@ -529,14 +526,10 @@ impl<D: Digest> ArrowDigesterCore<D> {
     pub fn hash_schema_with_config(schema: &Schema, config: HasherConfig) -> Vec<u8> {
         let include_metadata = config.include_metadata;
         let flags = option_flags(config);
-        if flags != 0 {
-            Self::validate_schema_paths(schema);
-        }
+        Self::validate_schema_paths(schema);
         let normalized = normalize_schema(schema);
         let mut hasher = D::new();
-        if flags != 0 {
-            hasher.update(options_tag(flags));
-        }
+        hasher.update(header(flags));
         hasher.update(Self::canonical_schema_json(&normalized, config));
         if include_metadata {
             Self::update_metadata_hash(&mut hasher, &normalized);
@@ -564,7 +557,16 @@ impl<D: Digest> ArrowDigesterCore<D> {
         path: &str,
     ) -> BTreeMap<String, BTreeMap<String, String>> {
         let mut result: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        Self::collect_field_metadata(field, path, &mut result);
+        result
+    }
 
+    /// Record `field`'s metadata (if any) at `path`, then recurse into its type.
+    fn collect_field_metadata(
+        field: &Field,
+        path: &str,
+        result: &mut BTreeMap<String, BTreeMap<String, String>>,
+    ) {
         if !field.metadata().is_empty() {
             let sorted_meta: BTreeMap<String, String> = field
                 .metadata()
@@ -573,28 +575,40 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 .collect();
             result.insert(path.to_owned(), sorted_meta);
         }
+        Self::collect_type_metadata(field.data_type(), path, result);
+    }
 
-        match field.data_type() {
+    /// Metadata of the fields nested in `data_type`, keyed by node path (byte-layout spec
+    /// Section 2.3): struct child `join(path, name)`, list element `path/`, map key and value
+    /// `path//key` and `path//value` (fixed names; the map's entries field contributes nothing).
+    fn collect_type_metadata(
+        data_type: &DataType,
+        path: &str,
+        result: &mut BTreeMap<String, BTreeMap<String, String>>,
+    ) {
+        match data_type {
+            DataType::Dictionary(_, value) => Self::collect_type_metadata(value, path, result),
             DataType::Struct(children) => {
                 for child in children {
-                    // Struct children: append "/" + child name, matching extract_type_entries.
-                    let child_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}{}", child.name());
-                    result.extend(Self::collect_nested_field_metadata(child, &child_path));
+                    let child_path = Self::construct_field_name_hierarchy(path, child.name());
+                    Self::collect_field_metadata(child, &child_path, result);
                 }
             }
-            DataType::List(inner)
-            | DataType::LargeList(inner)
-            | DataType::FixedSizeList(inner, _)
-            | DataType::Map(inner, _) => {
-                // List/map element fields use a trailing-slash path (no element field name),
-                // matching the convention in traverse_list: `format!("{path}/")`.
+            DataType::List(inner) | DataType::LargeList(inner) | DataType::FixedSizeList(inner, _) => {
                 let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
-                result.extend(Self::collect_nested_field_metadata(inner, &element_path));
+                Self::collect_field_metadata(inner, &element_path, result);
+            }
+            DataType::Map(entries, _) => {
+                let entries_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                if let DataType::Struct(kv) = entries.data_type() {
+                    for (child, name) in kv.iter().zip(["key", "value"]) {
+                        let child_path = Self::construct_field_name_hierarchy(&entries_path, name);
+                        Self::collect_field_metadata(child, &child_path, result);
+                    }
+                }
             }
             _ => {}
         }
-
-        result
     }
 
     /// Feed per-field and schema-level metadata into `hasher` for Phase 2 of schema hashing.
@@ -817,8 +831,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 let sub_array = list_array.value(i);
                 let sub_len = sub_array.len() as u64;
 
-                // Write list length to structural digest at list_path
-                if let Some(entry) = fields.get_mut(&list_path) {
+                // Write the list length to the list node's own entry (at `path`)
+                if let Some(entry) = fields.get_mut(path) {
                     if let Some(ref mut structural) = entry.structural {
                         structural.update(sub_len.to_le_bytes());
                     }
@@ -1249,147 +1263,84 @@ impl<D: Digest> ArrowDigesterCore<D> {
             field.data_type(),
             field.is_nullable(),
             &path,
-            false,
             fields_digest_buffer,
         );
     }
 
-    /// Core recursive type walker — creates `BTreeMap` entries based on the type tree.
-    ///
-    /// `nullable` reflects whether the current position is nullable (from the `Field`).
-    ///
-    /// `list_element` is true when this node is the element of a list: its validity then goes
-    /// into the list's element entry at `path` (created by the caller, with `null_bits` when the
-    /// element is nullable), which keeps the list lengths.
+    /// Core recursive type walker — one entry per node of the type tree (byte-layout spec
+    /// Section 3): a leaf gets [validity] + values, a list gets [validity] + lengths and its
+    /// element is the node at `path/`, a nullable struct gets validity, and its children are
+    /// the nodes at `join(path, name)`. `nullable` comes from the node's `Field`.
     fn extract_type_entries(
         data_type: &DataType,
         nullable: bool,
         path: &str,
-        list_element: bool,
         fields_digest_buffer: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
-        let canonical = normalize_data_type(data_type);
-
-        match &canonical {
+        match normalize_data_type(data_type) {
             DataType::Struct(fields) => {
-                // Struct children become entries; a nullable struct also gets a validity-only
-                // entry at its path (unless it is a list element, see above).
-                if nullable && !list_element {
+                if nullable {
                     fields_digest_buffer
                         .insert(path.to_owned(), DigestBufferType::new_validity_only());
                 }
-                for child_field in fields {
+                for child_field in &fields {
                     let child_path = Self::construct_field_name_hierarchy(path, child_field.name());
                     Self::extract_type_entries(
                         child_field.data_type(),
                         child_field.is_nullable(),
                         &child_path,
-                        false,
                         fields_digest_buffer,
                     );
                 }
             }
-            DataType::LargeList(value_field) | DataType::List(value_field) => {
-                // For a nullable field that is a list, create a validity-only entry
-                // at the field path (column-level or field-level null tracking).
-                // A list element reuses the outer list's element entry instead (v0.4.0
-                // replaced it, losing the outer lengths; fixed in v0.5).
-                if nullable && !list_element {
-                    fields_digest_buffer
-                        .insert(path.to_owned(), DigestBufferType::new_validity_only());
-                }
-
-                // List level: create entry at path + "/"
-                let list_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
-                let inner_type = value_field.data_type();
-                let inner_canonical = normalize_data_type(inner_type);
-
-                match &inner_canonical {
-                    DataType::Struct(_) => {
-                        // List<Struct<...>>: list entry is structural-only,
-                        // struct children become separate entries
-                        fields_digest_buffer.insert(
-                            list_path.clone(),
-                            DigestBufferType::new_structural_only(value_field.is_nullable()),
-                        );
-                        // Recurse into the struct's children
-                        Self::extract_type_entries(
-                            inner_type,
-                            value_field.is_nullable(),
-                            &list_path,
-                            true,
-                            fields_digest_buffer,
-                        );
-                    }
-                    DataType::LargeList(_) | DataType::List(_) => {
-                        // List<List<...>>: list entry is structural-only,
-                        // recurse into the inner list
-                        fields_digest_buffer.insert(
-                            list_path.clone(),
-                            DigestBufferType::new_structural_only(value_field.is_nullable()),
-                        );
-                        Self::extract_type_entries(
-                            inner_type,
-                            value_field.is_nullable(),
-                            &list_path,
-                            true,
-                            fields_digest_buffer,
-                        );
-                    }
-                    _ => {
-                        // List<Primitive>: list entry is both structural + data (leaf)
-                        fields_digest_buffer.insert(
-                            list_path,
-                            DigestBufferType::new_list_leaf(value_field.is_nullable()),
-                        );
-                    }
-                }
+            DataType::LargeList(value_field) => {
+                fields_digest_buffer.insert(path.to_owned(), DigestBufferType::new_list(nullable));
+                let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                Self::extract_type_entries(
+                    value_field.data_type(),
+                    value_field.is_nullable(),
+                    &element_path,
+                    fields_digest_buffer,
+                );
             }
             _ => {
-                // Leaf type (non-struct, non-list): create data entry
                 fields_digest_buffer
                     .insert(path.to_owned(), DigestBufferType::new_data_only(nullable));
             }
         }
     }
 
-    /// Reject schemas that the order options cannot hash unambiguously (byte-layout spec 9.6).
+    /// Reject schemas that cannot be hashed unambiguously (byte-layout spec Section 7), in every
+    /// mode.
     ///
     /// # Panics
     /// When two nodes of the type tree share a node path (duplicate names, or a name containing
-    /// `/` that aliases a nested field), when two fields share a metadata path (Section 2.2.1;
-    /// differs from the node path only under a column named `""`), or when the schema contains a
-    /// `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type.
+    /// `/` that aliases a nested field), or when the schema contains a `ListView`,
+    /// `LargeListView`, `Union` or `RunEndEncoded` type.
     fn validate_schema_paths(schema: &Schema) {
-        let mut seen = PathSets::default();
+        let mut seen = HashSet::new();
         for field in schema.fields() {
-            Self::claim_paths(field.name(), field.name(), &mut seen);
-            Self::collect_node_paths(field.data_type(), field.name(), field.name(), &mut seen);
+            Self::claim_node_path(field.name(), &mut seen);
+            Self::collect_node_paths(field.data_type(), field.name(), &mut seen);
         }
     }
 
     /// `hash_array` variant of `validate_schema_paths`: the array itself is the node at `""`.
     fn validate_type_paths(data_type: &DataType) {
-        let mut seen = PathSets::default();
-        Self::claim_paths("", "", &mut seen);
-        Self::collect_node_paths(data_type, "", "", &mut seen);
+        let mut seen = HashSet::new();
+        Self::claim_node_path("", &mut seen);
+        Self::collect_node_paths(data_type, "", &mut seen);
     }
 
-    fn claim_paths(node_path: &str, metadata_path: &str, seen: &mut PathSets) {
+    fn claim_node_path(path: &str, seen: &mut HashSet<String>) {
         assert!(
-            seen.node.insert(node_path.to_owned()) && seen.metadata.insert(metadata_path.to_owned()),
-            "Ambiguous field path {node_path:?}: duplicate field names, or a field name containing \
-             {DELIMITER_FOR_NESTED_FIELD:?} that collides with a nested field, are not supported \
-             when ordered_columns or ordered_struct_fields is enabled"
+            seen.insert(path.to_owned()),
+            "Ambiguous field path {path:?}: duplicate field names, or a field name containing \
+             {DELIMITER_FOR_NESTED_FIELD:?} that collides with a nested field, cannot be hashed"
         );
     }
 
-    fn collect_node_paths(
-        data_type: &DataType,
-        node_path: &str,
-        metadata_path: &str,
-        seen: &mut PathSets,
-    ) {
+    fn collect_node_paths(data_type: &DataType, path: &str, seen: &mut HashSet<String>) {
         let canonical = normalize_data_type(data_type);
         assert!(
             !matches!(
@@ -1399,28 +1350,31 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     | DataType::Union(_, _)
                     | DataType::RunEndEncoded(_, _)
             ),
-            "ListView, LargeListView, Union and RunEndEncoded types are not supported when \
-             ordered_columns or ordered_struct_fields is enabled"
+            "ListView, LargeListView, Union and RunEndEncoded types cannot be hashed"
         );
         match canonical {
             DataType::Struct(children) => {
                 for child in &children {
-                    let child_node = Self::construct_field_name_hierarchy(node_path, child.name());
-                    let child_meta = format!(
-                        "{metadata_path}{DELIMITER_FOR_NESTED_FIELD}{}",
-                        child.name()
-                    );
-                    Self::claim_paths(&child_node, &child_meta, seen);
-                    Self::collect_node_paths(child.data_type(), &child_node, &child_meta, seen);
+                    let child_path = Self::construct_field_name_hierarchy(path, child.name());
+                    Self::claim_node_path(&child_path, seen);
+                    Self::collect_node_paths(child.data_type(), &child_path, seen);
                 }
             }
-            DataType::LargeList(element)
-            | DataType::FixedSizeList(element, _)
-            | DataType::Map(element, _) => {
-                let element_node = format!("{node_path}{DELIMITER_FOR_NESTED_FIELD}");
-                let element_meta = format!("{metadata_path}{DELIMITER_FOR_NESTED_FIELD}");
-                Self::claim_paths(&element_node, &element_meta, seen);
-                Self::collect_node_paths(element.data_type(), &element_node, &element_meta, seen);
+            DataType::LargeList(element) | DataType::FixedSizeList(element, _) => {
+                let element_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                Self::claim_node_path(&element_path, seen);
+                Self::collect_node_paths(element.data_type(), &element_path, seen);
+            }
+            DataType::Map(entries, _) => {
+                let entries_path = format!("{path}{DELIMITER_FOR_NESTED_FIELD}");
+                Self::claim_node_path(&entries_path, seen);
+                if let DataType::Struct(kv) = entries.data_type() {
+                    for (child, name) in kv.iter().zip(["key", "value"]) {
+                        let child_path = Self::construct_field_name_hierarchy(&entries_path, name);
+                        Self::claim_node_path(&child_path, seen);
+                        Self::collect_node_paths(child.data_type(), &child_path, seen);
+                    }
+                }
             }
             _ => {}
         }

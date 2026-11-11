@@ -8,13 +8,10 @@ use sha2::Sha256;
 
 use crate::arrow_digester_core::ArrowDigesterCore;
 
-/// Hash format version prefix — independent of the crate version.
-///
-/// OPEN DECISION (ITL-898, the developer's): v0.5 fixes information losses of the v0.4.0 layout.
-/// Variant (a): keep `0.0.1`; hashes of unaffected types stay byte-identical to v0.4.0 and only
-/// affected inputs move. Variant (b): bump to `0.0.2` so every hash moves and old and new hashes
-/// can always be told apart. Switching is this one line: `[0_u8, 0_u8, 2_u8]`.
-pub(crate) const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 1_u8];
+/// Hash format version: the first 3 bytes of every hash, a 24-bit big-endian format number,
+/// independent of the crate version. Format 1 (`00 00 01`): starfix 0.4 and earlier. Format 2
+/// (`00 00 02`): this crate (byte-layout spec Section 1; format history in Section 10).
+pub(crate) const VERSION_BYTES: [u8; 3] = [0_u8, 0_u8, 2_u8];
 
 /// Configuration for the Arrow hasher.
 ///
