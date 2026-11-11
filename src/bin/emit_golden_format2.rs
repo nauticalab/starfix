@@ -1195,6 +1195,7 @@ fn build() -> Builder {
     add_boolean_names_types_and_metadata(&mut gen);
     add_format1_metadata_names_and_extensions(&mut gen);
     add_review_coverage(&mut gen);
+    add_python_literal_inputs(&mut gen);
 
     gen
 }
@@ -2396,6 +2397,73 @@ fn add_review_coverage(gen: &mut Builder) {
             0x00,
             false,
             &Input::Batch(col("s", Arc::new(s), true)),
+        );
+    }
+}
+
+/// Group 26: the inputs of starfix-python's hand-coded format-1 test literals
+/// (`tests/golden/python_literals_format1_inputs.json`, recovered on the Python side and checked
+/// against starfix 0.4), re-hashed in format 2 so that every such literal has a Rust value.
+/// A test with several literals gets ids `pylit_<test>`, `pylit_<test>_2`, ...
+#[expect(
+    clippy::panic,
+    reason = "CLI tool — an unknown method in the inputs file aborts"
+)]
+fn add_python_literal_inputs(gen: &mut Builder) {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/python_literals_format1_inputs.json"
+    );
+    let inputs: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for e in inputs
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .unwrap()
+    {
+        let field = |name: &str| e.get(name).unwrap();
+        let test = field("test").as_str().unwrap();
+        let name = test
+            .split_once("::")
+            .map_or(test, |(_, rest)| rest)
+            .to_lowercase();
+        let raw_slug: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let slug = raw_slug
+            .split('_')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("_");
+        let count = seen.entry(slug.clone()).or_insert(0);
+        *count = count.checked_add(1).unwrap();
+        let id = if *count == 1 {
+            format!("pylit_{slug}")
+        } else {
+            format!("pylit_{slug}_{count}")
+        };
+        let ipc = BASE64_STANDARD
+            .decode(field("ipc_b64").as_str().unwrap())
+            .unwrap();
+        let reader = StreamReader::try_new(Cursor::new(ipc), None).unwrap();
+        let schema = reader.schema();
+        let batches: Vec<RecordBatch> = reader.map(Result::unwrap).collect();
+        let input = match field("method").as_str().unwrap() {
+            "hash_schema" => Input::Schema(schema),
+            "hash_array" => Input::Array(Arc::clone(batches.first().unwrap().column(0))),
+            "hash_stream" => Input::Stream(schema, batches),
+            other => panic!("unknown method {other}"),
+        };
+        let flags = u8::from(field("ordered_columns").as_bool().unwrap())
+            | (u8::from(field("ordered_struct_fields").as_bool().unwrap()) << 1_u8);
+        gen.add(
+            &id,
+            &format!("starfix-python test literal input: {test}"),
+            flags,
+            field("include_metadata").as_bool().unwrap(),
+            &input,
         );
     }
 }

@@ -1,5 +1,5 @@
 {
-  "description": "Every format-1 golden or pinned value of this repository and its format-2 value (ITL-898, hash format bump 00 00 01 -> 00 00 02). Every value moves. Entries with format2_vector refer to tests/golden/format2_v0.5.json (same input). format1_defects lists the format-1 information losses that affected that input (byte-layout spec Section 10).",
+  "description": "Every format-1 golden or pinned value of this repository and its format-2 value (ITL-898, hash format bump 00 00 01 -> 00 00 02). Every value moves. Entries with format2_vector refer to tests/golden/format2_v0.5.json (same input). format1_defects lists the format-1 information losses that affected that input (byte-layout spec Section 10). Entries whose source is a starfix-python test were recovered by the Python side (tests/golden/python_literals_format1_inputs.json) and their format-1 values reproduced with starfix 0.4.",
   "entries": [
     {
       "source": "tests/golden/include_metadata_v0.3.json",
@@ -1067,6 +1067,489 @@
       "id": "nested_fields",
       "format1_hash": "9b52ad7430dea81b35f14a04d828b2424080fbc210570081c6e6cb62b6566c42",
       "format2_hash": "8038c003912adbecc339cd6b1c1e9a62f59dc68a684c00cc1b29cff72d193361"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestTemporalTypes::test_date64",
+      "format1_hash": "00000106dde92a47a5a0db64ce2c83c1de96868b8f55868003fb6e894be0751d10beeb",
+      "format2_hash": "00000243d93d2e644621c13ea350b6ce991e5183713cce06cccc78fa67bd45f28bfec8",
+      "format2_vector": "pylit_testtemporaltypes_test_date64"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestMultiTypeBatch::test_multi_type_schema_only",
+      "format1_hash": "0000010e62b3f3317d25413b7a4dc6e7a8a6e7c73a73c513cdbe9f9b1f5e5ec56f0e94",
+      "format2_hash": "00000237415d17fd5904b31ed46c94418a47339c656e6270fb1a065479cf153d4641ee",
+      "format2_vector": "pylit_testmultitypebatch_test_multi_type_schema_only"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestMultiTypeBatch::test_multi_type_record_batch",
+      "format1_hash": "0000010f8bb471cb34975f20c4b221abff1a90b2d98f24217a2257e3298ee3d4e9f9c4",
+      "format2_hash": "000002915edae36a72a8337dd20f2536739344a71fb6d12cfbd7e15ba5813d9399f8ce",
+      "format2_vector": "pylit_testmultitypebatch_test_multi_type_record_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_d_non_nullable_binary",
+      "format1_hash": "0000010fbc627fc7ad9d5f2e96fec8fa57b56b364a04a8af7e374015a07b26bd1ac80d",
+      "format2_hash": "000002c1577257ed34403943a24dcf25bb9f89a4034cc197e7d6ae03d68d46aacfebb1",
+      "format2_vector": "pylit_testspecexamples_test_example_d_non_nullable_binary"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestTemporalTypes::test_date32",
+      "format1_hash": "000001103053df817a93502fae8bd8d052c57e48acc76fc65db9316c2425805f2f7ef6",
+      "format2_hash": "0000027ee217bff78ba6d2162a3db9a312cda38eab812fa04b2bdae45c44caef53310a",
+      "format2_vector": "pylit_testtemporaltypes_test_date32"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint8",
+      "format1_hash": "00000130328e5fa11093ea36a10554afdb07fa718453f41a113dbdbdefc5baf06d1ffd",
+      "format2_hash": "000002d4b5b7d8d8cdff6578c2ab3548ac28820d55e4bae62546c06cfb783eb96c7e0d",
+      "format2_vector": "pylit_testprimitivetypes_test_uint8"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestTemporalTypes::test_time64_nanoseconds",
+      "format1_hash": "0000013236ab3ffd9de453dc2a7613731108b132583249f2d42eb7a102dd430e66175f",
+      "format2_hash": "0000025ba5fbd24942a70134a20ba575e71d66d54d3144872745d3239864baf8378aa1",
+      "format2_vector": "pylit_testtemporaltypes_test_time64_nanoseconds"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint16",
+      "format1_hash": "00000133e15d7b6d806f8c121f9683e1f6b62674b0f48710f7f6dc3155262e0fc84357",
+      "format2_hash": "0000025c7c3b1ecd630160eb0cee63321bd7135b4eef454e147691b3c5877c219781fc",
+      "format2_vector": "pylit_testprimitivetypes_test_uint16"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint64",
+      "format1_hash": "00000144997caad273e039ba4919a2f1db91f05b6546271121619bb1fc97d8757f180b",
+      "format2_hash": "00000200b680c62c236f5ff1b973b82177922da1b1de2565c2ab051fe41ac7ada7520a",
+      "format2_vector": "pylit_testprimitivetypes_test_uint64"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestStructTypes::test_struct_with_nullable_children",
+      "format1_hash": "0000015f1992c5f9130aaa64aa1360e53ddd00b427855ae02e380f534a629353135680",
+      "format2_hash": "000002ae1910889fd81f51e1506c4d911e04df5ac428834f4acd3a8e91ae4a65809351",
+      "format2_vector": "pylit_teststructtypes_test_struct_with_nullable_children"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_int16",
+      "format1_hash": "00000163dac968f9f62a036126abe3e53404b69a40f2cf02872a1fc970c7428c5869b4",
+      "format2_hash": "000002be4d10e5334ca6eddf6ef2a97068569ee8b4dbac275cfd025716bc845ad7fe73",
+      "format2_vector": "pylit_testprimitivetypes_test_int16"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_a_two_column_table",
+      "format1_hash": "0000018020e47f4462f26b0bc73ad110ea0f9198c2745c04ce23335093d2b78ef51c88",
+      "format2_hash": "00000292eeae0418072b559ac1b864e6a7e249749582ab32239ffc9443a00dcc18946f",
+      "format2_vector": "pylit_testspecexamples_test_example_a_two_column_table"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_int64",
+      "format1_hash": "000001950cf62cd41a3cfb936bcaeb2af16e4b9010e72e6201af4755c016b7b9466acf",
+      "format2_hash": "0000023aab6936af9bf10b02d01c46db095dd95e78d19b61cbdf5719f751f12a6a4d05",
+      "format2_vector": "pylit_testprimitivetypes_test_int64"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_int8",
+      "format1_hash": "0000019ab12c5c219df0b745b77bb592945dfd5a8d8bf6c20752cb601cc554bde708bc",
+      "format2_hash": "0000021fa6009005695174467a940479ad60dff4c4c25215b67eb6b9fbce06a39e9d7a",
+      "format2_vector": "pylit_testprimitivetypes_test_int8"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_n_list_of_struct",
+      "format1_hash": "0000019c9cc6230a42e646a475ec1c8125fe396dcace351d64ff6e63e8f53d329c4895",
+      "format2_hash": "00000287065f0798e1fac05078eded05303f6046343a29cd1315c3ae2dd60cffa40361",
+      "format2_vector": "pylit_testspecexamples_test_example_n_list_of_struct"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestTemporalTypes::test_time32_milliseconds",
+      "format1_hash": "000001abd6f51bd0ca68584a4ae73f4f9351cfe97fe6f3f85ed315f9b3628650a97564",
+      "format2_hash": "00000246464b1335534e9caa69343551ad1f7eefe77df8a8201468eb1f5f8a469892dd",
+      "format2_vector": "pylit_testtemporaltypes_test_time32_milliseconds"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_float64",
+      "format1_hash": "000001b0e2b1cc3668a42dbc98d3b7246f7e8cdf2d5e6a38cc0510e463d36cbeecff0b",
+      "format2_hash": "0000028e4f1d81093e5dc9803b9ff7ba4272fbef115c7f5b79ce27ba1d607cec28abda",
+      "format2_vector": "pylit_testprimitivetypes_test_float64"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint32",
+      "format1_hash": "000001c3d60c88f4842be618c85a09d604cbc0d87d8ea27c164fc2acb387ca50bbfa2e",
+      "format2_hash": "0000025b3440e7326d5cf3dc08560b5db09d7c7099ff9578114eedf5e8721cc308c389",
+      "format2_vector": "pylit_testprimitivetypes_test_uint32"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_i_empty_table",
+      "format1_hash": "000001df8887d2ebb6968ba1dd994b1c663e0539f218f6045996a03dd20209c40d0922",
+      "format2_hash": "0000026bc41a0a4c6ef5d3b5168cac73a2961607896ad6f6801c632390662b48f03b84",
+      "format2_vector": "pylit_testspecexamples_test_example_i_empty_table"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_k_struct_column",
+      "format1_hash": "000001e3516302d68fd1fc4860fa4b7e0d4a6d60d500a9d7ccae79e445c5980021e4ec",
+      "format2_hash": "000002be47c5bd05462dc3c4bbf0f62e5c14c2797f5ac40126e455342b5ff0c24e53d0",
+      "format2_vector": "pylit_testspecexamples_test_example_k_struct_column"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_o_nested_struct",
+      "format1_hash": "000001e732b8458782d9a331722698883617eec7cd1492028947b4ce3e97c7d6201550",
+      "format2_hash": "00000260e109b8c08b6265051d1f339801898ab5abc4dd6d874e628ef8bd6219492e0c",
+      "format2_vector": "pylit_testspecexamples_test_example_o_nested_struct"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_bool",
+      "format1_hash": "000001e752bea45ed48352e104fb24919ea68b1af64281231aff3a52b51a5fcabe7fb1",
+      "format2_hash": "00000259cf85678c3695d3ed17046b5a42d629606ab496949b33e9c96f675514a7937f",
+      "format2_vector": "pylit_testprimitivetypes_test_bool"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_f_utf8_equivalence",
+      "format1_hash": "000001f14d076ffc02533c6560f867b86cde7e15b1a0ac5a892b53697a609191cf307f",
+      "format2_hash": "00000217476a036ab2e8fecbae7ec4587d41fb06aef8bf552cf8f0b368dc41857d4286",
+      "format2_vector": "pylit_testspecexamples_test_example_f_utf8_equivalence"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_float32",
+      "format1_hash": "000001f5c04a8a43027a04f68de9f71b99b3075459c9c296f68aecdc92bac8ef506baa",
+      "format2_hash": "0000022b6984cbc7c3f8087433f36e850b77185e90f4b8874d5cdf5b4835fd05ee1fd2",
+      "format2_vector": "pylit_testprimitivetypes_test_float32"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_e_column_order_independence",
+      "format1_hash": "000001f68bf6319f8ec4aa938e52dd911974348289fbdfb9b5ebed5e14e239a6d8a3a9",
+      "format2_hash": "00000259305d2093f85b576989659d7bbdb725b33653d8b4cffd65049ba88ac7d1b5ae",
+      "format2_vector": "pylit_testspecexamples_test_example_e_column_order_independence"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestBinaryVariedSizes::test_binary_varied_sizes",
+      "format1_hash": "0000010213a24d1014bb90e20f339fccab30ca699f2ca916d190f9a7f50077f5734b05",
+      "format2_hash": "000002148db3622e92806eff4feafa117c429c052588ccc7b9120b03f02ff7ef26f6a1",
+      "format2_vector": "pylit_testbinaryvariedsizes_test_binary_varied_sizes"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestAllNullArrays::test_all_null_int32",
+      "format1_hash": "00000104fd65cf73bc1d8e787a6940b749777eddb28285d7bfc90e832212afb6fdea65",
+      "format2_hash": "000002047d4c739f64e9d20e876901a967f19b17e7c3f749e30342f03f798d51e04d33",
+      "format2_vector": "pylit_testallnullarrays_test_all_null_int32"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListOfList::test_list_of_list_hash_array",
+      "format1_hash": "0000010843e52522d6435df07140b616e2cce64d55fc0dd4ee798a1f8dab86edf7bedc",
+      "format2_hash": "00000223c18487aa7dcb5bfb673a0d69dc41ba597febefe1c241ff26ebc4679bbf31fa",
+      "format2_vector": "pylit_testlistoflist_test_list_of_list_hash_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListOfStruct::test_list_of_struct_hash_array",
+      "format1_hash": "0000010d5f9a58c3122935886c0de076b8a90400dc9a1b3885154c734ab4616c52b626",
+      "format2_hash": "0000028264b7ca05055fba21aca4d148535baf3012f3d651999744c16a51327d5fada2",
+      "format2_vector": "pylit_testlistofstruct_test_list_of_struct_hash_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestRealisticBatch::test_realistic_batch",
+      "format1_hash": "0000010d6dda2bffa3477ea97d880b38e018f8ae083e3059db77876b48e9a14a8f17ac",
+      "format2_hash": "000002d334ea76f2a30807791177def39034f19caf4e6bd142c23ec05cc192298893de",
+      "format2_vector": "pylit_testrealisticbatch_test_realistic_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestAllNullArrays::test_all_null_string",
+      "format1_hash": "00000115a6af4eb6fdb3419afebadf58a9f184f0a1fffa09ffa56600237f501db71070",
+      "format2_hash": "000002879ade9f01775e3d97277fbd1ec3c48e0281c39847f96869d3a94dd3e8d355fc",
+      "format2_vector": "pylit_testallnullarrays_test_all_null_string"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestSingleElementArrays::test_single_bool_false",
+      "format1_hash": "00000117655fca3764c8082b61b9de7186594bdcc58b86934176bea4b12d95becc54df",
+      "format2_hash": "00000240973c422a2b514e91f409638b9caa9b490e84022e4c85cc7ebc438b08603155",
+      "format2_vector": "pylit_testsingleelementarrays_test_single_bool_false"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestRealisticBatch::test_realistic_schema",
+      "format1_hash": "0000011c85d47bb95c90c6aa05b8ab930cfbb369136fffd8e120cee5d94dd84ed3c356",
+      "format2_hash": "00000254036eae7a3edfdcd5960c95be8600f4db97f52b8100c47c4a92d79f8b444792",
+      "format2_vector": "pylit_testrealisticbatch_test_realistic_schema"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestThreeLevelStruct::test_three_level_struct_hash_array",
+      "format1_hash": "0000011dc18344fc9e0c026561c3a38ca128e5afa90d7b66df2cffac51a18bf106d0d0",
+      "format2_hash": "000002c390050372191220b574a0f88980a7cdf8a7982c25c3d5c6d2352e744e200b26",
+      "format2_vector": "pylit_testthreelevelstruct_test_three_level_struct_hash_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestNullableStructHashArray::test_nullable_struct_hash_array",
+      "format1_hash": "0000011ea07bf87d5b03b132e46a169df25352cb2e3c5a5f8b067138e0bd2a2023e6d5",
+      "format2_hash": "0000021cff2f979e54cd49abdd8d43a19929b0e023ea98a78b7c45700c0d4de7fb5d21",
+      "format2_vector": "pylit_testnullablestructhasharray_test_nullable_struct_hash_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestMixedStructListBatch::test_mixed_struct_list_schema",
+      "format1_hash": "0000011eb0482c51f8fb95dfae3c5ae83253a1e695dcf546fe5a3b6d75df172c5c2a45",
+      "format2_hash": "000002fb461efa00640c67b76df00f79bc3428908daaba4ac1232368eb43bf96e616da",
+      "format2_vector": "pylit_testmixedstructlistbatch_test_mixed_struct_list_schema"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestStructEmptyBatch::test_struct_empty_batch",
+      "format1_hash": "00000120a2341ffaf6b2413ebdb36aa062aec7c9468e946cbbba353b1ab5c5f6d1a773",
+      "format2_hash": "0000028a33a2eeedd0ab0c78292441615250f4e2dd5d37da6d1bd98ed43ee003ea1f93",
+      "format2_vector": "pylit_teststructemptybatch_test_struct_empty_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestBatchAllNullColumn::test_batch_all_null_column",
+      "format1_hash": "000001266d1fd64c44cf1f18ccc395bd2c712459e43807095d78115ff78497cd7ec494",
+      "format2_hash": "0000023f845b906c1a04b464b662ae67a64229b9790930e69de6cc72d395e4ee8b4752",
+      "format2_vector": "pylit_testbatchallnullcolumn_test_batch_all_null_column"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestMixedStructListBatch::test_mixed_struct_list_batch",
+      "format1_hash": "00000128fd142d16920be401eb33abf71143977164eb8952a7da20ae6673a8d1d3707a",
+      "format2_hash": "000002fb371b308310a0003de7e0175d54abb92e3792573fb3afbd322e35b544ee87b0",
+      "format2_vector": "pylit_testmixedstructlistbatch_test_mixed_struct_list_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListStructNullableInnerField::test_nullable_inner_field",
+      "format1_hash": "0000012c2b1c1d5b4c3dc46ed5335834dbf0d7386c38e607a398a2897fdaf1df387e1c",
+      "format2_hash": "000002880d5a883711e8de86c09cd3bdc4a2da0390e9ae93947c5de4d42675f1033f5a",
+      "format2_vector": "pylit_testliststructnullableinnerfield_test_nullable_inner_field"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestStructWithListChild::test_struct_with_list_child_schema",
+      "format1_hash": "000001310788c527cc1f9b997d616ada011d9c3790a22d17dcc4e4cf0f043539f4c0ed",
+      "format2_hash": "0000025fcffef6ce20bf6df0f21b8943b4b11045662c09d8d0770b8fa842d662a013f2",
+      "format2_vector": "pylit_teststructwithlistchild_test_struct_with_list_child_schema"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestNullableStructBatch::test_nullable_struct_batch",
+      "format1_hash": "000001374a7e10ae3d1b9b46aa33f43988d5015290286e7236a3acbcd028462016e048",
+      "format2_hash": "0000022f9448c97edd56a482426bafca4eccd64ccbec8640970e98f0425ffc0dc95a0b",
+      "format2_vector": "pylit_testnullablestructbatch_test_nullable_struct_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListOfList::test_list_of_list_schema",
+      "format1_hash": "00000141016034ea375b62e02305da3756a08f63bdfa572a285858a15b1d6d0bb66330",
+      "format2_hash": "000002021a0c07c4ba2f2c8c3185b66e0010ca100b17294188249024aee83cdcca6835",
+      "format2_vector": "pylit_testlistoflist_test_list_of_list_schema"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestSingleElementArrays::test_single_string",
+      "format1_hash": "0000014db35cf6860dda66df959cd2b4882a4cddaa6d17e74cf389e71c5553e4cceadb",
+      "format2_hash": "00000204f74cfa9c23214afb9bc7a19fd6815b1c87115bbd295fbd47078e1b90814648",
+      "format2_vector": "pylit_testsingleelementarrays_test_single_string"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestNonNullableList::test_list_non_nullable",
+      "format1_hash": "00000150f18fb7ba1d34afe3f1b721a1ce10d1466dd55c228119449703ccf5ab771a5b",
+      "format2_hash": "000002153518ab6f2ec6777784fcf99acfd96dbf8d2941929284676875ae5d1bad1b96",
+      "format2_vector": "pylit_testnonnullablelist_test_list_non_nullable"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestEmptyArrays::test_empty_int32_array",
+      "format1_hash": "0000015b41cb9aa8a4c79da8859ae00ce976d8184bdf5426060292b69717c6f28ed38a",
+      "format2_hash": "0000023d78a36c387f0a44f74de1ccfde1cf2d8c0fc078b4d1f47d16e5810cffd3be7f",
+      "format2_vector": "pylit_testemptyarrays_test_empty_int32_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListOfList::test_list_of_list_batch",
+      "format1_hash": "000001644acff58777778402bb96ee8aa5e8fac1b3ffe7c58fe3a27860d0e93581ed10",
+      "format2_hash": "000002d4a91c629161ff8126db429572a4cd20c19ffa1d1f31db8c6eec0489d668216f",
+      "format2_vector": "pylit_testlistoflist_test_list_of_list_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListStructNullableInnerField::test_non_nullable_inner_field",
+      "format1_hash": "000001713fa0e500c9aebea61039b30371fd84c0dff8cd3b96b4266978658bf73e4d8c",
+      "format2_hash": "000002d7423b057587e976fe344330d7b29694dd4a709d66cf4217ed8d8e1ccc69a39f",
+      "format2_vector": "pylit_testliststructnullableinnerfield_test_non_nullable_inner_field"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestSchema4LevelNestedStruct::test_schema_4_level_nested_struct",
+      "format1_hash": "0000017e33cfc98b4338141e1d5dae0eef992e2c22ff89fbb9be054f7fae96f1b8577e",
+      "format2_hash": "0000023b39cd00c1b1edbe305fcdddaf7e954d288584bfc8e08752098b408920c81162",
+      "format2_vector": "pylit_testschema4levelnestedstruct_test_schema_4_level_nested_struct"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestSchemaListOfStructWithList::test_schema_list_of_struct_with_list",
+      "format1_hash": "0000017f5258ff48e85b2a63cd1a29590ff3bfca39bf718365200ad74a8232bb654ec6",
+      "format2_hash": "0000029ed92e6613925ec60e34390bae6bf243e8ceac257139e08b62fd7fdd759c85eb",
+      "format2_vector": "pylit_testschemalistofstructwithlist_test_schema_list_of_struct_with_list"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestEmptyBatchComplexSchema::test_empty_batch_complex_schema",
+      "format1_hash": "000001837b0cc525983aca21f8979b3c2ed7c77d22728fb3b9a56df6ed4aee540dfa83",
+      "format2_hash": "000002f6f2c584b8001599fb6a07e4e30663a931be6b269c552f7b98d717536fbcccfd",
+      "format2_vector": "pylit_testemptybatchcomplexschema_test_empty_batch_complex_schema"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestNullableListStructNullableChildren::test_nullable_list_struct_nullable_children_batch",
+      "format1_hash": "0000018a03ac4fd279a17240cb084cef23b1dbda814a60dba70f2147cb468f9c44af96",
+      "format2_hash": "000002b5fde83bc94e02aa663fe4c1aad59a5280c6f0d487decd0b66801abe35d43104",
+      "format2_vector": "pylit_testnullableliststructnullablechildren_test_nullable_list_struct_nullable_children_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestFloatSpecialValues::test_float64_special_values",
+      "format1_hash": "000001947acf002083724864f155cf2857b1c9107749f6c8bfec13ea84c20fa9f20b5a",
+      "format2_hash": "0000027660de0bf00761a94c7aa2c6550cce417d9c14e5476ae787e24d555236a973bc",
+      "format2_vector": "pylit_testfloatspecialvalues_test_float64_special_values"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestEmptyBatchComplexSchema::test_empty_batch_complex_schema_hash",
+      "format1_hash": "00000194e104ebfea3ba38467c883d05a71884f8a1d0eace1c0dcfb00ab2d1203aa654",
+      "format2_hash": "000002985afdc0c320fdd4641d7bb5cb3eebec474dac7c2aa5679eceba6c53e24186fe",
+      "format2_vector": "pylit_testemptybatchcomplexschema_test_empty_batch_complex_schema_hash"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestStructMixedTypes::test_struct_mixed_types_hash_array",
+      "format1_hash": "0000019f925992104e467b68e68e7dfa64ac7d39c82b002cb8c06f1c5bec19156107a3",
+      "format2_hash": "0000024e525a6930337eb2b8ce95fe8af77f0afd021b3e5513d9d4d0cddae8acc5e590",
+      "format2_vector": "pylit_teststructmixedtypes_test_struct_mixed_types_hash_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestEmptyArrays::test_empty_bool_array",
+      "format1_hash": "000001b93f053f60f756b3d47a304889daa8011b9d09b4c83efbfe10ca7f073d59d4ea",
+      "format2_hash": "0000020a3aed926ea2ae4c757b1505aa0c887ff47d1af823b1acc601036a4310ede4b4",
+      "format2_vector": "pylit_testemptyarrays_test_empty_bool_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestListOfStruct::test_nullable_list_of_struct_hash_array",
+      "format1_hash": "000001bb51997ac0fe67d4b08c5ced13b763c0ff5a532c9f9c8932fa2a4dd96fe57ea8",
+      "format2_hash": "000002fa2beb54d6af22cf565ee84f090ad7b3d097a2381302adb44f6067f56e63a7ca",
+      "format2_vector": "pylit_testlistofstruct_test_nullable_list_of_struct_hash_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestStructFieldOrderIndependence::test_struct_3field_order_independence",
+      "format1_hash": "000001c3c2f4d6414b062973fa8277701f8e0689f7656405d03cd7fef1e1ef7c05ac25",
+      "format2_hash": "000002df24f48f927ab26711c1db497b5892eae8779a146bdd9eae7784d49f01593283",
+      "format2_vector": "pylit_teststructfieldorderindependence_test_struct_3field_order_independence"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestUnicodeStrings::test_unicode_string_array",
+      "format1_hash": "000001d3f64ee0c7dac33e00445c2dd3edbb4b14cf61608682e4aae20d034dcaa3af40",
+      "format2_hash": "000002f996fdd3ff03ad6faefd5ad734dc7c06d8719ec05794db6b5acae5ff694f5486",
+      "format2_vector": "pylit_testunicodestrings_test_unicode_string_array"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestNestedNullableInnerStruct::test_nested_nullable_inner_struct",
+      "format1_hash": "000001d43e8fb43a96546aa158c8defdcf186e1f15e42cf12fb2439902374d320f503c",
+      "format2_hash": "000002e046c146668f0f34a7a9d212d17df6dfc55adad063b1e60b0256fb4b2fdec820",
+      "format2_vector": "pylit_testnestednullableinnerstruct_test_nested_nullable_inner_struct"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestLargeSchema::test_large_schema_12_fields",
+      "format1_hash": "000001d4b6edc1304b0e981460aefa31813af93631c46558569a5ba8d5613cdbd722bd",
+      "format2_hash": "0000021bd0ecec5be7d78beaa0f9af537a44d47b1a7fa9035d0f7fd0050a435b3d277d",
+      "format2_vector": "pylit_testlargeschema_test_large_schema_12_fields"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestMultiBatchStruct::test_multi_batch_struct",
+      "format1_hash": "000001d6b36c3858d63ed06e99de401b83e6255070da784f2d88c376b15e53bacbe86c",
+      "format2_hash": "0000023aa02f66b4e83360ebc47d3c74f6dd9c3ed9fde617a8218bfaaa48817f3f2da2",
+      "format2_vector": "pylit_testmultibatchstruct_test_multi_batch_struct"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestSingleElementArrays::test_single_int64",
+      "format1_hash": "000001e1cb4b7821c4238f0c53befd313280ff45a74b301e7044957b01a701108c5b7f",
+      "format2_hash": "000002ae4689b3dd6b1e4371f832a8df5b1aee55482f8fc995866e09adf37e3a80b770",
+      "format2_vector": "pylit_testsingleelementarrays_test_single_int64"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestStructWithListChild::test_struct_with_list_child_batch",
+      "format1_hash": "000001e4173182e5596f68ac3a1013caea1fc4aa3003ebc5c434bdab8db83c9173635d",
+      "format2_hash": "000002a8d980079fe57b52e69f297f5614ec02e45fdb53fdabc08cf05caa92c6064a83",
+      "format2_vector": "pylit_teststructwithlistchild_test_struct_with_list_child_batch"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestThreeLevelStruct::test_three_level_struct_schema",
+      "format1_hash": "000001f5e018be18625769644d2f10aa06d52a50df75ade8872248f7dc4b296ce997f7",
+      "format2_hash": "0000024884c452f6c13da2080e1e9213a74a9dab3b12a0f710e9721d74a12881971bb8",
+      "format2_vector": "pylit_testthreelevelstruct_test_three_level_struct_schema"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestBooleanArrays::test_bool_17_elements",
+      "format1_hash": "000001f8ad377be621fd278f5590c7cab06ca42e2b4ed6867d363f9fbf28f6f3d7582a",
+      "format2_hash": "000002f8e53d6dd8d7337e07b15dc8dc83d0636c3a1007d936ffa058279d614c08b068",
+      "format2_vector": "pylit_testbooleanarrays_test_bool_17_elements"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestMultiBatchList::test_multi_batch_list",
+      "format1_hash": "000001fcf529d339593cb8537af4c1ed7d02aae69cfbbd2608b02e811035edb6ba4ec3",
+      "format2_hash": "000002a13b117b286d47ac47a1f53af3dfacb479530fb59152da40b8213429ec310519",
+      "format2_vector": "pylit_testmultibatchlist_test_multi_batch_list"
+    },
+    {
+      "source": "starfix-python tests/test_golden_parity_r2.py",
+      "id": "tests/test_golden_parity_r2.py::TestThreeLevelStruct::test_three_level_struct_batch",
+      "format1_hash": "000001fdd123a2cceb977b1448eaba26039de58f3a782244bf1cff70a6742e2f6f220a",
+      "format2_hash": "000002009faf5f41303751117910475f04c0c6685450681ca6f45daf01446040b984db",
+      "format2_vector": "pylit_testthreelevelstruct_test_three_level_struct_batch"
+    },
+    {
+      "source": "starfix-python tests/test_metadata_hashing.py",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_a_two_column_table",
+      "format1_hash": "0000018020e47f4462f26b0bc73ad110ea0f9198c2745c04ce23335093d2b78ef51c88",
+      "format2_hash": "00000292eeae0418072b559ac1b864e6a7e249749582ab32239ffc9443a00dcc18946f",
+      "format2_vector": "pylit_testspecexamples_test_example_a_two_column_table_2"
     }
   ]
 }
