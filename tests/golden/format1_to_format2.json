@@ -1,74 +1,74 @@
 {
-  "description": "Every format-1 golden or pinned value of this repository and its format-2 value (ITL-898, hash format bump 00 00 01 -> 00 00 02). Every value moves. Entries with format2_vector refer to tests/golden/format2_v0.5.json (same input). format1_defects lists the format-1 information losses that affected that input (byte-layout spec Section 10). Entries whose source is a starfix-python test were recovered by the Python side (tests/golden/python_literals_format1_inputs.json) and their format-1 values reproduced with starfix 0.4.",
+  "description": "Every format-1 golden or pinned value of this repository and its format-2 value (ITL-898, hash format bump 00 00 01 -> 00 00 02). Every value moves. Entries with format2_vector refer to tests/golden/format2_v0.5.json (same input). format1_defects lists the format-1 information losses that affected that input (byte-layout spec Section 10). Entries whose source is a starfix-python test were recovered by the Python side (tests/golden/python_literals_format1_inputs.json) and their format-1 values reproduced with starfix 0.4. Ids are unique: a source with several literals of the same test numbers the later ones #2, #3, ...",
   "entries": [
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "no_metadata_include_false",
       "format1_hash": "00000131f10e388ffb366939a37d877568320d681eb2c6e81793259274afd3b10ae38d",
-      "format2_hash": "0000022d143e0d93a0eceafb6a0e24e3645eb92ea97bc77975408c7ec66035c75e93f1",
+      "format2_hash": "0000024f090f0f6acbddfa47488c84eaf9e5afbf323c3040fed95e0a26200e5aa0fda3",
       "format2_vector": "no_metadata_include_false"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "schema_level_metadata",
       "format1_hash": "00000185971192458c11308853f8647b688810b7efd3afb5e1a3811ebf1c449969b18d",
-      "format2_hash": "000002c2cd6a73cf9a5cf24ce01fd184b7485e55a2c443e543fd981bf32929fb0cf234",
+      "format2_hash": "000002947adb029bfa2139d1cf5c2c34c2aeb4798be4154484f01368d3a4b0e9f3cbcc",
       "format2_vector": "schema_level_metadata"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "field_metadata_single_field",
       "format1_hash": "000001d1490be52114b6a5284a89e91522b111f3e6ee1534edf2e472956f07360df020",
-      "format2_hash": "0000020b130367ff66564f4f9978ca3e506e3e305d12cb6ff6ae2c4fe747a2cc7bd5f2",
+      "format2_hash": "000002ae0dd1f0e4e372edb7c1c2e03cad21aaf0fca9e1a8415016218242cc5d83b0ab",
       "format2_vector": "field_metadata_single_field"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "field_metadata_multiple_fields",
       "format1_hash": "000001fdaa74e60eec18b816ac8e732f943fe405aaa9465ad3b788c083322b0bf16757",
-      "format2_hash": "000002e03369228220921177c5c578c461e3916b6ef44bb21e32c216ef6c0925429e88",
+      "format2_hash": "000002557839de98aded74876685e0bee6cf73f79ec9ade25ce0767505720fe453881d",
       "format2_vector": "field_metadata_multiple_fields"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "schema_and_field_metadata",
       "format1_hash": "000001dd9181cde304d1e39d424283c46d0b63126fa12e1272ce92ca34d7d4389dec65",
-      "format2_hash": "0000027eda76a93d2e60bc24c6eaee85eb53a24199dc58a9e15cfb483df94f2ecfef02",
+      "format2_hash": "00000269fa67810dd0ffea5b7f22d32ba797bf4e1213d935d782046442334f9186ef9b",
       "format2_vector": "schema_and_field_metadata"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "unicode_metadata",
       "format1_hash": "00000155498f11ff0803127d60f8c6daa18b8c8dbb3411d2962e08ee0dfbce7054706b",
-      "format2_hash": "000002d82b81b3e7338563c258ad4df581c4033d24fa73ca8c533d943b2f6890e7c9bf",
+      "format2_hash": "0000027a667866945ffee424dec01ad00c7d6661329182b0991c28226f22e7ecf4c641",
       "format2_vector": "unicode_metadata"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "key_reorder_canonical",
       "format1_hash": "0000016a68d96d5c89d9b5de01d104c7ad1f51f9956bd8758691c9241ecacf32c701bf",
-      "format2_hash": "000002abd761907e2c74305cebc235664ae08543b4d481ec4c968f30edbd456cc2a94e",
+      "format2_hash": "00000214b3230640f4b409f5f8e74ec4c8d02889c3c02bdf4a6f48013340381c7219ed",
       "format2_vector": "key_reorder_canonical"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "key_reorder_shuffled",
       "format1_hash": "0000016a68d96d5c89d9b5de01d104c7ad1f51f9956bd8758691c9241ecacf32c701bf",
-      "format2_hash": "000002abd761907e2c74305cebc235664ae08543b4d481ec4c968f30edbd456cc2a94e",
+      "format2_hash": "00000214b3230640f4b409f5f8e74ec4c8d02889c3c02bdf4a6f48013340381c7219ed",
       "format2_vector": "key_reorder_shuffled"
     },
     {
       "source": "tests/golden/include_metadata_v0.3.json",
       "id": "empty_metadata_invariant",
       "format1_hash": "00000131f10e388ffb366939a37d877568320d681eb2c6e81793259274afd3b10ae38d",
-      "format2_hash": "0000022d143e0d93a0eceafb6a0e24e3645eb92ea97bc77975408c7ec66035c75e93f1",
+      "format2_hash": "0000024f090f0f6acbddfa47488c84eaf9e5afbf323c3040fed95e0a26200e5aa0fda3",
       "format2_vector": "empty_metadata_invariant"
     },
     {
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "cols_ab_rb_f0",
       "format1_hash": "000001de18d228593820186a858bad9fc4f8ffaddd33ee73531fcd2a72b6ac2ce2f01d",
-      "format2_hash": "00000232bdf93232887698a4ec193cd978e6617c3d64a85be5d26c2853fcf82a42f3b6",
+      "format2_hash": "0000028934d60de8eb8c21ca04b859c02d21015032cb53ee029a4702281f2b0d5822bd",
       "format2_vector": "cols_ab_rb_f0",
       "format1_defects": []
     },
@@ -76,7 +76,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "cols_ba_rb_f0",
       "format1_hash": "000001de18d228593820186a858bad9fc4f8ffaddd33ee73531fcd2a72b6ac2ce2f01d",
-      "format2_hash": "00000232bdf93232887698a4ec193cd978e6617c3d64a85be5d26c2853fcf82a42f3b6",
+      "format2_hash": "0000028934d60de8eb8c21ca04b859c02d21015032cb53ee029a4702281f2b0d5822bd",
       "format2_vector": "cols_ba_rb_f0",
       "format1_defects": []
     },
@@ -84,7 +84,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "cols_ab_schema_f0",
       "format1_hash": "0000012cf4307c187fb3bff39b94d42d85ca4fef5d46203082b014486f98423aa6fef9",
-      "format2_hash": "0000021244ae884a7522607bc7e671ebc8b935e2a4ee0f5dc88827d0fa4d0fd3aaff78",
+      "format2_hash": "00000268dbb8a2d5842f0e3064faf0fc52f687cb0d0706e110aee3d07d6c6a4b3a6864",
       "format2_vector": "cols_ab_schema_f0",
       "format1_defects": []
     },
@@ -92,7 +92,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "cols_ba_schema_f0",
       "format1_hash": "0000012cf4307c187fb3bff39b94d42d85ca4fef5d46203082b014486f98423aa6fef9",
-      "format2_hash": "0000021244ae884a7522607bc7e671ebc8b935e2a4ee0f5dc88827d0fa4d0fd3aaff78",
+      "format2_hash": "00000268dbb8a2d5842f0e3064faf0fc52f687cb0d0706e110aee3d07d6c6a4b3a6864",
       "format2_vector": "cols_ba_schema_f0",
       "format1_defects": []
     },
@@ -100,7 +100,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "combo_ns_xy_f0",
       "format1_hash": "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
-      "format2_hash": "0000025e411c5e9318b7483d9fe382f815c5b20c9e7d878b19109d142994c1beef8674",
+      "format2_hash": "0000028a3ab36cc0b6536ddbd1c89db07eba14f8aec16b5f609d93f15b63e1f28c20ea",
       "format2_vector": "combo_ns_xy_f0",
       "format1_defects": [
         "boolean_packing"
@@ -110,7 +110,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "combo_sn_xy_f0",
       "format1_hash": "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
-      "format2_hash": "0000025e411c5e9318b7483d9fe382f815c5b20c9e7d878b19109d142994c1beef8674",
+      "format2_hash": "0000028a3ab36cc0b6536ddbd1c89db07eba14f8aec16b5f609d93f15b63e1f28c20ea",
       "format2_vector": "combo_sn_xy_f0",
       "format1_defects": [
         "boolean_packing"
@@ -120,7 +120,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "combo_ns_yx_f0",
       "format1_hash": "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
-      "format2_hash": "0000025e411c5e9318b7483d9fe382f815c5b20c9e7d878b19109d142994c1beef8674",
+      "format2_hash": "0000028a3ab36cc0b6536ddbd1c89db07eba14f8aec16b5f609d93f15b63e1f28c20ea",
       "format2_vector": "combo_ns_yx_f0",
       "format1_defects": [
         "boolean_packing"
@@ -130,7 +130,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "combo_sn_yx_f0",
       "format1_hash": "00000104a7fc5a264db0cda632bf4ac856e8c2f1285af97c65430cfb361446ec0216cd",
-      "format2_hash": "0000025e411c5e9318b7483d9fe382f815c5b20c9e7d878b19109d142994c1beef8674",
+      "format2_hash": "0000028a3ab36cc0b6536ddbd1c89db07eba14f8aec16b5f609d93f15b63e1f28c20ea",
       "format2_vector": "combo_sn_yx_f0",
       "format1_defects": [
         "boolean_packing"
@@ -140,7 +140,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nested_struct_ab_schema_f0",
       "format1_hash": "00000120a933e10f38c3793842e19452e62d42567ba293cdc57d48d1b33f5d8e6f6dad",
-      "format2_hash": "000002a566fd4383d6aa887f3d313d78b2d21eb46e66e206e3909839e3077611790ca2",
+      "format2_hash": "00000213918ec5e2c0405005fabe4318402d87cfa38b3e14db3b88ba4307bcbbc7451e",
       "format2_vector": "nested_struct_ab_schema_f0",
       "format1_defects": []
     },
@@ -148,7 +148,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nested_struct_ba_schema_f0",
       "format1_hash": "00000120a933e10f38c3793842e19452e62d42567ba293cdc57d48d1b33f5d8e6f6dad",
-      "format2_hash": "000002a566fd4383d6aa887f3d313d78b2d21eb46e66e206e3909839e3077611790ca2",
+      "format2_hash": "00000213918ec5e2c0405005fabe4318402d87cfa38b3e14db3b88ba4307bcbbc7451e",
       "format2_vector": "nested_struct_ba_schema_f0",
       "format1_defects": []
     },
@@ -156,7 +156,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "list_struct_ab_rb_f0",
       "format1_hash": "000001ef7a82cdbf533f8f10c07b716c56be4aa9959fa0a3542ccd15baf974a04feafb",
-      "format2_hash": "0000025c4b5fef978e579e96f94e3777eb01b875f6b901ece27ec07eca8e2f1144b203",
+      "format2_hash": "00000201efd772ff081a74dd5d8d76a367bd6e1c8b5fbbea75cd8297e4d29bb2050ff9",
       "format2_vector": "list_struct_ab_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -166,7 +166,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "list_struct_ba_rb_f0",
       "format1_hash": "000001ef7a82cdbf533f8f10c07b716c56be4aa9959fa0a3542ccd15baf974a04feafb",
-      "format2_hash": "0000025c4b5fef978e579e96f94e3777eb01b875f6b901ece27ec07eca8e2f1144b203",
+      "format2_hash": "00000201efd772ff081a74dd5d8d76a367bd6e1c8b5fbbea75cd8297e4d29bb2050ff9",
       "format2_vector": "list_struct_ba_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -176,7 +176,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "large_list_struct_ab_rb_f0",
       "format1_hash": "000001ef7a82cdbf533f8f10c07b716c56be4aa9959fa0a3542ccd15baf974a04feafb",
-      "format2_hash": "0000025c4b5fef978e579e96f94e3777eb01b875f6b901ece27ec07eca8e2f1144b203",
+      "format2_hash": "00000201efd772ff081a74dd5d8d76a367bd6e1c8b5fbbea75cd8297e4d29bb2050ff9",
       "format2_vector": "large_list_struct_ab_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -186,7 +186,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "fsl_struct_ab_schema_f0",
       "format1_hash": "000001b77e167c5c284296608fb9bce12713821184d75c0bed506e30cd77fcf45ecec5",
-      "format2_hash": "00000246b33c9ed0926cbf79d864c4473193402e1ac18c5f21c352437dbea53dadeacc",
+      "format2_hash": "000002f8585c3990131b7e2c44ce2400e6e7282cbc97a3568eee7ece9390790797bc33",
       "format2_vector": "fsl_struct_ab_schema_f0",
       "format1_defects": []
     },
@@ -194,7 +194,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "fsl_struct_ba_schema_f0",
       "format1_hash": "000001b77e167c5c284296608fb9bce12713821184d75c0bed506e30cd77fcf45ecec5",
-      "format2_hash": "00000246b33c9ed0926cbf79d864c4473193402e1ac18c5f21c352437dbea53dadeacc",
+      "format2_hash": "000002f8585c3990131b7e2c44ce2400e6e7282cbc97a3568eee7ece9390790797bc33",
       "format2_vector": "fsl_struct_ba_schema_f0",
       "format1_defects": []
     },
@@ -202,7 +202,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "map_struct_ab_schema_f0",
       "format1_hash": "000001c1f31d6085f292672bab0eb0523dbc5e8e6eb9a5fde5090dac8c81a2c830ac7c",
-      "format2_hash": "0000029ce6a87ebf7f0e2d64ce941179a308f10fde9ffc767e85c643cae837025e12c2",
+      "format2_hash": "000002711005dc0113ca2ef82b8b5db8096b53d3e256289b4429583467cbdeee35a777",
       "format2_vector": "map_struct_ab_schema_f0",
       "format1_defects": []
     },
@@ -210,7 +210,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "map_struct_ba_schema_f0",
       "format1_hash": "000001c1f31d6085f292672bab0eb0523dbc5e8e6eb9a5fde5090dac8c81a2c830ac7c",
-      "format2_hash": "0000029ce6a87ebf7f0e2d64ce941179a308f10fde9ffc767e85c643cae837025e12c2",
+      "format2_hash": "000002711005dc0113ca2ef82b8b5db8096b53d3e256289b4429583467cbdeee35a777",
       "format2_vector": "map_struct_ba_schema_f0",
       "format1_defects": []
     },
@@ -218,7 +218,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "one_col_rb_f0",
       "format1_hash": "000001d4efb209fd319c8b418662caad5922b154003d0425fa722060b44e6d5eb0d857",
-      "format2_hash": "000002a87ff648c2385327185b77630ffff50ae4470f90542582a783aa6740dcccb68b",
+      "format2_hash": "0000027d2ac950396ddef47becbd1f9625b58f0419b7ec5fe779bd62a6ee046b5d9a27",
       "format2_vector": "one_col_rb_f0",
       "format1_defects": []
     },
@@ -226,7 +226,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "one_col_schema_f0",
       "format1_hash": "000001b7f25ba092def78ecd57c231765bac9d23a37ef04734462c1f50ec5880e7f204",
-      "format2_hash": "0000021e21972ae342e0d1df1e326a7b21effda3967fcbcdfa1e35b404878354093ad4",
+      "format2_hash": "0000028ff3df6a3c3249959db37063755324949df6b294b624131d395269f8d3f64528",
       "format2_vector": "one_col_schema_f0",
       "format1_defects": []
     },
@@ -234,7 +234,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "one_col_array_f0",
       "format1_hash": "00000109cb203c0cae27346ea2ce37d1245775ac99c8b26634677de56268ba01dc693c",
-      "format2_hash": "0000024c470976f10386fad05c0ef8ac4d3f82c4fd656c3ea6255ef8a21180ce53597a",
+      "format2_hash": "0000028e4c60ec932ba53b9f514d4f6953091bed36d7295ad1d4cdde10907b83bf550f",
       "format2_vector": "one_col_array_f0",
       "format1_defects": []
     },
@@ -242,7 +242,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "ext_struct_xy_rb_f0_im1",
       "format1_hash": "000001bccd1a055d1326bd7cd9d1f88da92cae6e250a2d10708e161afa86be068ccdfb",
-      "format2_hash": "000002ccfcb759239c88570778d931e777a1ca484076a3c8be9e3936f7ec934347000a",
+      "format2_hash": "000002ff9ec51dbf46006face1286f2ed8aa844b370c20cdbdc9fbfb12d31f8a87a796",
       "format2_vector": "ext_struct_xy_rb_f0_im1",
       "format1_defects": [
         "boolean_packing"
@@ -252,7 +252,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "ext_struct_yx_rb_f0_im1",
       "format1_hash": "000001bccd1a055d1326bd7cd9d1f88da92cae6e250a2d10708e161afa86be068ccdfb",
-      "format2_hash": "000002ccfcb759239c88570778d931e777a1ca484076a3c8be9e3936f7ec934347000a",
+      "format2_hash": "000002ff9ec51dbf46006face1286f2ed8aa844b370c20cdbdc9fbfb12d31f8a87a796",
       "format2_vector": "ext_struct_yx_rb_f0_im1",
       "format1_defects": [
         "boolean_packing"
@@ -262,7 +262,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "zero_cols_0rows_rb_f0",
       "format1_hash": "000001c74f3008fdd2f7c5ae5446ab2e522629f63346f68a4026b4f72b91b393475ff6",
-      "format2_hash": "000002b2a0b24f3e5df2eee53e0db16967b5727624ba316c984d3e5ba250495e0cc8e7",
+      "format2_hash": "00000250cb2fc7aaf1c32b7d195c543876c8333c0b15f85caf96b4ce43fe587f444d07",
       "format2_vector": "zero_cols_0rows_rb_f0",
       "format1_defects": []
     },
@@ -270,7 +270,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "zero_cols_3rows_rb_f0",
       "format1_hash": "000001c74f3008fdd2f7c5ae5446ab2e522629f63346f68a4026b4f72b91b393475ff6",
-      "format2_hash": "00000245bae18d1db53b328b187930c2ed6f652be046f8156f30565ef09b22c10c8a08",
+      "format2_hash": "000002d1c4267472a7b0df719325b9fea373625afa4c828dce1f56a106e14c09987068",
       "format2_vector": "zero_cols_3rows_rb_f0",
       "format1_defects": []
     },
@@ -278,7 +278,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_null_struct_rb_f0",
       "format1_hash": "00000103d480f6459069c661bb0e93923fe8cfe505cf8d7daf363bef0d9cd7552295c9",
-      "format2_hash": "000002db84efc10bb100fb89bc3dd8d36572cb411b2871732479f26eed388229c3b2af",
+      "format2_hash": "0000026630aa8326714cbd9cb8e539a9dc2aa9e966bc61cc43f4da30bb51a855c9cd06",
       "format2_vector": "nv_null_struct_rb_f0",
       "format1_defects": [
         "nullable_struct"
@@ -288,7 +288,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_null_fields_rb_f0",
       "format1_hash": "00000103d480f6459069c661bb0e93923fe8cfe505cf8d7daf363bef0d9cd7552295c9",
-      "format2_hash": "000002ae04d1306e82b99f8cfbc5c3d42d529b7f5e1e57eb728426c496781e93091027",
+      "format2_hash": "000002517a1bd090b9ddec71fb8656b6a5064b97e18ad760c14116ef1799cba4eb36fe",
       "format2_vector": "nv_null_fields_rb_f0",
       "format1_defects": [
         "nullable_struct"
@@ -298,7 +298,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_rows3_rb_f0",
       "format1_hash": "000001480a4649266dce9eb73e48072e37598caafe7be4cd92549920cfbbe2a7f9dd0a",
-      "format2_hash": "000002178ad205d340b789e89291b7cb467e21cd0efd09c240f625ef106db364881fbd",
+      "format2_hash": "000002da360587b0de86e244cd52b04693787639cadd6c59f11a8d7f688f839463dd4f",
       "format2_vector": "nv_rows3_rb_f0",
       "format1_defects": [
         "nullable_struct"
@@ -308,7 +308,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_rows2_rb_f0",
       "format1_hash": "000001480a4649266dce9eb73e48072e37598caafe7be4cd92549920cfbbe2a7f9dd0a",
-      "format2_hash": "000002ba8982cfb0a3a959a78134c6d90f9fb7ffacbb8a71a3764bc50dbd623ae0d7b7",
+      "format2_hash": "000002cf2404bcc0218a195c4a262cc022bf7c77f4806d41e8c4431e3cfd5cc97ee9a4",
       "format2_vector": "nv_rows2_rb_f0",
       "format1_defects": [
         "nullable_struct"
@@ -318,7 +318,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_list_list_1row_rb_f0",
       "format1_hash": "000001cdc413731107ace52443c76e11051f1ef8b1bd98b81bfafa1e4800917d813006",
-      "format2_hash": "00000281c6c806d1945038ecebdfb5b3afa115fb8322d74c682d4984e7c35b2fb8ac11",
+      "format2_hash": "0000022a14ec9cc1066b92f435f414832d0948a52d72dccfb2c4f35eea219da00c7c96",
       "format2_vector": "nv_list_list_1row_rb_f0",
       "format1_defects": [
         "list_of_nullable_list"
@@ -328,7 +328,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_list_list_2rows_rb_f0",
       "format1_hash": "000001cdc413731107ace52443c76e11051f1ef8b1bd98b81bfafa1e4800917d813006",
-      "format2_hash": "000002a2c92a16669aac9a5e1312db5966e75d3a15bfef192e651424462ec955fb6438",
+      "format2_hash": "0000021fae7750bc9e056286f3446edae67e8ad93c540edbd3290f6c4bf2d63882390d",
       "format2_vector": "nv_list_list_2rows_rb_f0",
       "format1_defects": [
         "list_of_nullable_list"
@@ -338,7 +338,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_list_null_elem_rb_f0",
       "format1_hash": "0000017d4c97792f67c22b08676bd80a9ba94f5630905facc4455b7e90de966b5286d6",
-      "format2_hash": "000002759eb8659b32aa8437b39c041effd8bbef2ae68d7a5d6c5deae8df2559df5a8b",
+      "format2_hash": "000002880943a6023e397289e89fb31d609807d68a56568133935693da686c53199eea",
       "format2_vector": "nv_list_null_elem_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -348,7 +348,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_list_null_fields_elem_rb_f0",
       "format1_hash": "0000017d4c97792f67c22b08676bd80a9ba94f5630905facc4455b7e90de966b5286d6",
-      "format2_hash": "00000262e139b737f1bcebd138ac4e9a6dbadb9a8e7a9c24d93bcf7db418693323619e",
+      "format2_hash": "00000276aeb72c9e3f36df94c629d354a68c357bf5306d86e2be7244de6c0a9f233c20",
       "format2_vector": "nv_list_null_fields_elem_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -358,7 +358,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_array_rows3_f0",
       "format1_hash": "0000015797829374325d96463f52c24c6d2749c861585b7c77914b431971dead0d861a",
-      "format2_hash": "0000025a437237556cf10c3516943f8c8137cd48a52cf16b1777262a0e36a2ec646c80",
+      "format2_hash": "00000281e68cbc71271d8bd4bd49ca0b4fc06ed9ee14d0a9b89e94c7b4d7f57a765fc2",
       "format2_vector": "nv_array_rows3_f0",
       "format1_defects": [
         "nullable_struct"
@@ -368,7 +368,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "nv_array_rows2_f0",
       "format1_hash": "0000015797829374325d96463f52c24c6d2749c861585b7c77914b431971dead0d861a",
-      "format2_hash": "000002e38a3d717443a885dd50d9f3cdf22d7cb1c69fa194a64a4168a384a7406e80e1",
+      "format2_hash": "0000026377ee1c5f0cf836051940feae161f2a199af2b37aa1fd0fe74c8c5debca90c5",
       "format2_vector": "nv_array_rows2_f0",
       "format1_defects": []
     },
@@ -376,7 +376,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "phys_dict_rb_f0",
       "format1_hash": "000001b20f5f8ba825da4b66187d9626335b6013ef9b2a6a7e4393ea877b9edcd7b66b",
-      "format2_hash": "0000026deab300e85823f54f1d8fe9c387b2ee7cabe25c115dfb5f45e76a4cc5746fa6",
+      "format2_hash": "0000023ae70135e4be8727ce6bcca431cd1b5aeae9ae669832af0604af9b3b02968067",
       "format2_vector": "phys_dict_rb_f0",
       "format1_defects": []
     },
@@ -384,7 +384,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "phys_utf8_rb_f0",
       "format1_hash": "000001b20f5f8ba825da4b66187d9626335b6013ef9b2a6a7e4393ea877b9edcd7b66b",
-      "format2_hash": "0000026deab300e85823f54f1d8fe9c387b2ee7cabe25c115dfb5f45e76a4cc5746fa6",
+      "format2_hash": "0000023ae70135e4be8727ce6bcca431cd1b5aeae9ae669832af0604af9b3b02968067",
       "format2_vector": "phys_utf8_rb_f0",
       "format1_defects": []
     },
@@ -392,7 +392,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "phys_large_utf8_rb_f0",
       "format1_hash": "000001b20f5f8ba825da4b66187d9626335b6013ef9b2a6a7e4393ea877b9edcd7b66b",
-      "format2_hash": "0000026deab300e85823f54f1d8fe9c387b2ee7cabe25c115dfb5f45e76a4cc5746fa6",
+      "format2_hash": "0000023ae70135e4be8727ce6bcca431cd1b5aeae9ae669832af0604af9b3b02968067",
       "format2_vector": "phys_large_utf8_rb_f0",
       "format1_defects": []
     },
@@ -400,7 +400,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "array_struct_xy_f0",
       "format1_hash": "0000014e329829b09545ca5b33545e37bb856b9e939568ed967b6dc7309674595ba0dd",
-      "format2_hash": "0000023810b1200c9ad4e72fb6aae772d29506f8ec83f4507ec19eaccb5aa8ccd750b4",
+      "format2_hash": "000002f757edfba8da05b7cb303dc6775504abb3291b4880ae27a5c10ab7e65c41a456",
       "format2_vector": "array_struct_xy_f0",
       "format1_defects": [
         "boolean_packing"
@@ -410,7 +410,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "array_struct_yx_f0",
       "format1_hash": "0000014e329829b09545ca5b33545e37bb856b9e939568ed967b6dc7309674595ba0dd",
-      "format2_hash": "0000023810b1200c9ad4e72fb6aae772d29506f8ec83f4507ec19eaccb5aa8ccd750b4",
+      "format2_hash": "000002f757edfba8da05b7cb303dc6775504abb3291b4880ae27a5c10ab7e65c41a456",
       "format2_vector": "array_struct_yx_f0",
       "format1_defects": [
         "boolean_packing"
@@ -420,7 +420,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "bool_1row_rb_f0",
       "format1_hash": "000001fdfad32e7d7dbc6dc064b22c955e4606083098ab660970559b57a58bab619a31",
-      "format2_hash": "000002ef402ce172daaef8d7b354c4a1f733117057a2da38cd0c1ae5f1900e891c34d4",
+      "format2_hash": "0000026c3a344f7fcda6c51ee4bd97ecf4c3e6dc702ec2045323c52ad911534cff00ed",
       "format2_vector": "bool_1row_rb_f0",
       "format1_defects": [
         "boolean_packing"
@@ -430,7 +430,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "bool_3rows_rb_f0",
       "format1_hash": "000001fdfad32e7d7dbc6dc064b22c955e4606083098ab660970559b57a58bab619a31",
-      "format2_hash": "0000024edc7f8dd7034021d850b6485a80dc9ab5867f804c6299ed3fd8c166989aea29",
+      "format2_hash": "000002c467967f693c01b3bbb0f924e190d94884dc5db908a61185960c78e69843bebb",
       "format2_vector": "bool_3rows_rb_f0",
       "format1_defects": [
         "boolean_packing"
@@ -440,7 +440,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "bool_array_1_f0",
       "format1_hash": "000001bfbf7b19b3c1de85d67ca1a1544c15adaf58ab9fe554ca2ad83967be3a24e005",
-      "format2_hash": "0000026ff0c8a2aea22b471ee082f0f9e66f30f9994b09ea2d3623c1355daf7ae74e88",
+      "format2_hash": "000002dee12b05ca7ae8846ba2ee678edf4c2bebedea94bc4835a0530a76b7107cb2e2",
       "format2_vector": "bool_array_1_f0",
       "format1_defects": [
         "boolean_packing"
@@ -450,7 +450,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "bool_array_2_f0",
       "format1_hash": "000001bfbf7b19b3c1de85d67ca1a1544c15adaf58ab9fe554ca2ad83967be3a24e005",
-      "format2_hash": "000002e7fd44616d2602d1ea7db25f770f0d4e0905f935b65c6ecd412b82fa7cf40121",
+      "format2_hash": "00000279d7cb82ab7366f2452bfd63a48e7750a32b174153e5c13fb80f2336adb2dbff",
       "format2_vector": "bool_array_2_f0",
       "format1_defects": [
         "boolean_packing"
@@ -460,7 +460,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "bool_nullable_rb_f0",
       "format1_hash": "0000012374ef8a63a8cfe593283ae0336f8d9ea5a84c534655acd6eff15636812d388b",
-      "format2_hash": "0000026e498ca56275a1ec0f864b549100f8bdba5de4b9b826aff1720a40b25b368d45",
+      "format2_hash": "0000025e764a1dd23398ed2bd55e5e230faf07f29f017df8f9b6d8a78eced72e838a92",
       "format2_vector": "bool_nullable_rb_f0",
       "format1_defects": [
         "boolean_packing"
@@ -470,7 +470,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "bool_nullable_stream_f0",
       "format1_hash": "000001185dc35a80c8f2e12d34ceaa7062f09b6edbba7131bd7298752debea7e9c9d04",
-      "format2_hash": "0000026e498ca56275a1ec0f864b549100f8bdba5de4b9b826aff1720a40b25b368d45",
+      "format2_hash": "0000025e764a1dd23398ed2bd55e5e230faf07f29f017df8f9b6d8a78eced72e838a92",
       "format2_vector": "bool_nullable_stream_f0",
       "format1_defects": [
         "boolean_packing"
@@ -480,7 +480,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "names_schema_f0",
       "format1_hash": "00000158f3ffc55d1fb210829f8ac71f1b4a29f45e70b120217fd17df22abb0eca1a9b",
-      "format2_hash": "000002423c1e37af8c6fa77dbb0c8df920f6af969fd6398a804fc2656e73488c0102ab",
+      "format2_hash": "00000266430e24680d87a4279fd531bb8c02340f72b05682da212f5d525b0f7d3e147d",
       "format2_vector": "names_schema_f0",
       "format1_defects": []
     },
@@ -488,7 +488,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "names_array_struct_f0",
       "format1_hash": "000001e445fa3cdc5fe37df7cb3de55cf94dcee2a8990bb8dd46fb5c3b00398f8cfb2c",
-      "format2_hash": "000002cf1133b1070ab1b15f56e2013e4c4fe7a560d94d359c07868c42e4cfadfbe728",
+      "format2_hash": "00000219e467d0280ccc83ad4c67e063997344cedd781f6cb4e449d03d713c989aa12b",
       "format2_vector": "names_array_struct_f0",
       "format1_defects": []
     },
@@ -496,7 +496,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "names_array_struct_int8_f0",
       "format1_hash": "000001e131c1f05f488566a32e4d387451a8998a54d2207416681782e7a2c0ff3affa9",
-      "format2_hash": "0000029bdeaab1cdeabaffbe83de8f6bc0f2b4698050d17d47ed3707705c490a3ca11e",
+      "format2_hash": "000002360ce1cbd543917fa1444b88470e60303ba415e829d29754bdc20d1f9be2c4a0",
       "format2_vector": "names_array_struct_int8_f0",
       "format1_defects": []
     },
@@ -504,7 +504,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "fsl_int_schema_f0",
       "format1_hash": "000001faa6e75b09b2788440c79a1e297c73c75a5cb4d36c9f9cad6e3062a33c91c696",
-      "format2_hash": "000002e04a62c05b99b0fce4b391ba58561f4a9df1e92319baaf3644496ad6e4209dcc",
+      "format2_hash": "0000022fe3f8d8fcba7e393f3c5808894db2f930a8bd8388e9d04b3763d369cc6eae88",
       "format2_vector": "fsl_int_schema_f0",
       "format1_defects": []
     },
@@ -512,7 +512,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "list_kv_ab_rb_f0",
       "format1_hash": "000001622d311ff5b38c734946fffc9088f1dc99bfe8e0cb04ccfda0e420aa8914f4dd",
-      "format2_hash": "000002a83e96153c214d6ed310666a91cc8c9e2dc8d885e8ef29eaa6d2fa3d2dee00b9",
+      "format2_hash": "000002fcc4a6000e54c88f15ce378526d2aaeb6257909dcda76889744ad3fe18e3d5e1",
       "format2_vector": "list_kv_ab_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -522,7 +522,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "list_kv_ba_rb_f0",
       "format1_hash": "0000015dd41853de5c821a2f13436e7d1886bb606be477024b795d0993cf00f55df2b5",
-      "format2_hash": "00000247a75ef3e08557f7535e36cdc15aa9da00acd0e4c7d776c4758f9297c8ed2b06",
+      "format2_hash": "0000024f30d74a4ecc5859895de78ae95fae3802012a4d6f1bd287c18dda362d11d54a",
       "format2_vector": "list_kv_ba_rb_f0",
       "format1_defects": [
         "list_of_nullable_struct"
@@ -532,7 +532,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_null_schema_f0",
       "format1_hash": "000001450e51629d5bf2b2ef7ab0639e64238f7598446f0dbd0716e3d7f4b64b8c640c",
-      "format2_hash": "000002d62f819d0655f1ca1c0fb2709da2c2e21f3ab1593a405c1063e2dcc22fa10af5",
+      "format2_hash": "000002ae91ac257762841aed12f8986a96ea10072d2e4573bb2cda0862d002bbe4e3b4",
       "format2_vector": "type_null_schema_f0",
       "format1_defects": []
     },
@@ -540,7 +540,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_boolean_schema_f0",
       "format1_hash": "000001f9913189cc32c79fb14c307c8eef776bfe6a5ac40a7ccc49a0461b5ee557e0d1",
-      "format2_hash": "000002bf1bb213a02678908892fe2ad319eb1805155337f8f72fc3266eaf99617183f2",
+      "format2_hash": "000002013cdd44a14ee692b7d98d8909d5e2230a0b0375f03e2f1d64c51518567393d5",
       "format2_vector": "type_boolean_schema_f0",
       "format1_defects": []
     },
@@ -548,7 +548,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_int8_schema_f0",
       "format1_hash": "0000012b83e283d49b73e9069da9861fc1741adb391ce8f592220935a64344ada102a8",
-      "format2_hash": "000002f2b11ea2df5836e3377ba522c83e8d4796b76e6b9af836c908eb97ca1d9c9ee9",
+      "format2_hash": "000002e8fa19e1f3e0f9ab96f3c77cfbe1b8a2eb42f0e41af3f9b61c76fd894636e82a",
       "format2_vector": "type_int8_schema_f0",
       "format1_defects": []
     },
@@ -556,7 +556,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_int16_schema_f0",
       "format1_hash": "000001880d3e13346e5b9ee77784fc268e1627cf77e8b3411e11b46f6454c3510e381e",
-      "format2_hash": "000002fc7961c4b03e7a2a604e0c653b487b48b1bd13b2e2bfa616625ccd54d4380e04",
+      "format2_hash": "0000028103d67a1b84d9305488727baf6a5f9662278a49cfccda2c441a9f6fca337cfe",
       "format2_vector": "type_int16_schema_f0",
       "format1_defects": []
     },
@@ -564,7 +564,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_int32_schema_f0",
       "format1_hash": "00000127e2d4e9ff00877d5f7d23ed3881633983fc7aef3b006a96fedb859d128c3989",
-      "format2_hash": "000002f48ea32296b9c2e0cf348606101abdc2dbc4a3101cce917da7fec025241b46ac",
+      "format2_hash": "0000021ce5d36566850439ffb338c1e4c5aae756e8250ffe681803328c75951f55914a",
       "format2_vector": "type_int32_schema_f0",
       "format1_defects": []
     },
@@ -572,7 +572,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_int64_schema_f0",
       "format1_hash": "000001b025613f15b5f393a4989ef73a15771a1102a55ef411a4b632aabade82a3d01b",
-      "format2_hash": "0000027a23f6870e469f67974b74770c0c4256977e36c80f4142071129c786faaeb546",
+      "format2_hash": "000002b4753897cdef0036ac4ae0397dd4de049e0644effb0acad9bd5c57ea606f7c7e",
       "format2_vector": "type_int64_schema_f0",
       "format1_defects": []
     },
@@ -580,7 +580,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_uint8_schema_f0",
       "format1_hash": "00000100824cb9155025aae789d5dd0df53c9c16c88deb0972fc9b1e863c39ec55acbd",
-      "format2_hash": "000002a5e423efe3ddad13f6c9d3da7093f44a9336879531fe36db98772ce70a23fc10",
+      "format2_hash": "000002722f2dbfd37702f6d2b38b5ee134eaa4d8d0c473f26a6fa9c9accdf5ff738bf0",
       "format2_vector": "type_uint8_schema_f0",
       "format1_defects": []
     },
@@ -588,7 +588,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_uint16_schema_f0",
       "format1_hash": "000001b0f78a84d6b3598e5526341cd4f4570bc0ec6e98718f4d5249b851c6152eabc7",
-      "format2_hash": "00000216568c9ca5484137a316794c1af7741ba2054d2352e728f2f260f5d27ca696b4",
+      "format2_hash": "000002ac3e91bd728f7101209ba7cda9f99e9ba4bdbdae19a7ec52a945377246041842",
       "format2_vector": "type_uint16_schema_f0",
       "format1_defects": []
     },
@@ -596,7 +596,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_uint32_schema_f0",
       "format1_hash": "000001351c5bba858bc19d1b0e76c645616c137ab578e680a168263de0c183d881ebfe",
-      "format2_hash": "0000023cbc740e1382c5c1b0c5d6c4f8700c3c3fc38aa1e027f7332850987a53622f65",
+      "format2_hash": "000002bdf9bea09e68f1e94c2903c635806055578a8e959f674ebb5fcc91d2950299cf",
       "format2_vector": "type_uint32_schema_f0",
       "format1_defects": []
     },
@@ -604,7 +604,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_uint64_schema_f0",
       "format1_hash": "0000013f0e525838f78941dd7ebf1cf53a38aab1ce76083120f046e3c7d5d3a1d36674",
-      "format2_hash": "000002b338597d9c1f743d2b822b3ed4632632596ccadcc3dd63a3c34a8c4750b2adad",
+      "format2_hash": "0000029d53ed8a06173c17c1d5c3ac7c05e664906f4c38705b6d42531535b85516196a",
       "format2_vector": "type_uint64_schema_f0",
       "format1_defects": []
     },
@@ -612,7 +612,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_float16_schema_f0",
       "format1_hash": "0000014da58ec28052f47317cbc02b5af025698cb2c541ca0c0296a0f37098e1bc8393",
-      "format2_hash": "000002d594fa2f108350ff54de3b6c52c9aaf7e0205a9470db2431963052029c704557",
+      "format2_hash": "000002fe84148cb5b19a35c8d7f0f74fb999dfbe73b39eb9d175acc56a68496bcae3c9",
       "format2_vector": "type_float16_schema_f0",
       "format1_defects": []
     },
@@ -620,7 +620,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_float32_schema_f0",
       "format1_hash": "000001b79ddc004ecda1cacf1ca4129c9339f87231e38b3feb324f37505fbb00448261",
-      "format2_hash": "0000020f83fab9cf3e29428d8a06c8ebf814ad97179430798696eca196deddd5785e64",
+      "format2_hash": "000002cd80a7aa2d0d65df7a9b49fd4553e7810379df991305ec129049e3706dd27490",
       "format2_vector": "type_float32_schema_f0",
       "format1_defects": []
     },
@@ -628,7 +628,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_float64_schema_f0",
       "format1_hash": "0000018a4b885963f8e74a322a01627a43ace66eff8b29f9bffaae78d75026d6c338f0",
-      "format2_hash": "0000028212ede094399bb7b21174e93890d671bcd092a21bbf13a7699f45e635ab6b85",
+      "format2_hash": "000002603514e8bc5a8e579d7fdb7e06bb05a7eaebaf38f91f474e2844dd34cdaa0747",
       "format2_vector": "type_float64_schema_f0",
       "format1_defects": []
     },
@@ -636,7 +636,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_date32_schema_f0",
       "format1_hash": "0000017067a187a25f7004d66cca4b06e7e3e319f7f71288a9fc42df603f092b6c7f4b",
-      "format2_hash": "0000024e1f6ad045cfba15f60e1d2e5f48194091885c578a9772e49fb108a8c53c3edd",
+      "format2_hash": "00000202c0525336a81e428a90c726eb51a62bd8753aa055f0aad2df8b472e42f2b5dd",
       "format2_vector": "type_date32_schema_f0",
       "format1_defects": []
     },
@@ -644,7 +644,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_date64_schema_f0",
       "format1_hash": "000001eafdd4283792f22e1655bf61378bdc53de9f32d3b34cba20ee33349b6d215d27",
-      "format2_hash": "00000247f383c084cb2540482ef193d29b2797cbfdc00647d0149bba4abf15b9d5e51d",
+      "format2_hash": "000002fedf19b8af467ee7acec8f738218feab196b07826821198b909bc82537e8f924",
       "format2_vector": "type_date64_schema_f0",
       "format1_defects": []
     },
@@ -652,7 +652,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_time32_s_schema_f0",
       "format1_hash": "000001fedd3327155f022a4dd129ad3ed5afca9999f932498d991cc8efbb8e020052a2",
-      "format2_hash": "000002ba4c1ac02ac91418da73d12294a484feda0527423664c059676c605847d6c18c",
+      "format2_hash": "000002fa87e7ebb1972366c69da6e6656c5ae10c89906a9110bfb2764346f0b49c5228",
       "format2_vector": "type_time32_s_schema_f0",
       "format1_defects": []
     },
@@ -660,7 +660,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_time32_ms_schema_f0",
       "format1_hash": "000001c2e1de3bcbf6a5a5faaec60dce7c65c5124061f0ccb97e7ef165a17a42b2fc4b",
-      "format2_hash": "00000240cb860fa8c49f36e13149eafe5e45bdae2c2f9be6fe6a571e85a76ddc223dd2",
+      "format2_hash": "000002e83f805720c95bd9f74201cea503c4a2b489dc84dc04dc1826aa81331cc774d1",
       "format2_vector": "type_time32_ms_schema_f0",
       "format1_defects": []
     },
@@ -668,7 +668,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_time64_us_schema_f0",
       "format1_hash": "000001228968561050acaeb788b5475feba508a6ea8234768429d0671bf0e62d58d71b",
-      "format2_hash": "000002a084f937c053322ca9690f6c1a40dd1675d7c010730c9fdcefa1911a5c6314a6",
+      "format2_hash": "000002d4b6344eb6e36da5864993f7884283fd9d5f81e2b5e2bf2ef7942beb98d41e9b",
       "format2_vector": "type_time64_us_schema_f0",
       "format1_defects": []
     },
@@ -676,7 +676,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_time64_ns_schema_f0",
       "format1_hash": "0000018b7675631dcdbdaf3dfa91e3f3286f7211cf2193dcae672411b09afe4050fe59",
-      "format2_hash": "0000029d6c2cda4d46a9522b83168856482f149953428bd0f51b08384b764f198424af",
+      "format2_hash": "000002c3d16ff0a20bd9e420a4a851018bb2e445ab4ae8973902b331a6312741ed7559",
       "format2_vector": "type_time64_ns_schema_f0",
       "format1_defects": []
     },
@@ -684,7 +684,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_timestamp_s_naive_schema_f0",
       "format1_hash": "0000019fe4c7746047294fd6a07264648cedf7f0e64f08a644d779c852d270dde089db",
-      "format2_hash": "000002410b6c31dbac2fabdb5893cf393be0fd7ce3ac603fa592b858608ba3582881ee",
+      "format2_hash": "000002a0bc2bf04f37e9838f02f8f948619c298300b9a8c0ed90a2d4aaa80627fa6209",
       "format2_vector": "type_timestamp_s_naive_schema_f0",
       "format1_defects": []
     },
@@ -692,7 +692,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_timestamp_ms_utc_schema_f0",
       "format1_hash": "00000196d90de77d3557403eb475d0f0d64774319117987aa1c588115c455666c597b5",
-      "format2_hash": "000002baca673fe3de658299ed83026512cf3980dd2c323a3fb9e304a206bbb9efe632",
+      "format2_hash": "000002f5a5aaa5002a1db4a752adf89927683d31f2896bd795cbb4385434051f5cc1c7",
       "format2_vector": "type_timestamp_ms_utc_schema_f0",
       "format1_defects": []
     },
@@ -700,7 +700,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_timestamp_us_offset_schema_f0",
       "format1_hash": "000001c87d3b92444ee5a6b5e4e2f3bc098236ba7bcc9524ffe6e58cd012c3092bb922",
-      "format2_hash": "000002a63969413486c42e01fb9638f418f943b1e2749df379401a6db6174ece6c1bbd",
+      "format2_hash": "000002a8e4e8a46be0e1eee3876ae9f8996463c26f2020f36bd02dd5d15d063b9517cc",
       "format2_vector": "type_timestamp_us_offset_schema_f0",
       "format1_defects": []
     },
@@ -708,7 +708,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_timestamp_ns_named_tz_schema_f0",
       "format1_hash": "000001940af673c638fc1ff9aefe02078d47ad1713ba21d3916a1a87bdb0ead51afc5e",
-      "format2_hash": "00000292879787e87c84632b13219bebcde6c59ed735eb58044f3d7df937ffcb234a9d",
+      "format2_hash": "00000257560dd4115945bb73829a8b42eb50c91441221b153e8e8af9cc741a98a1a9d2",
       "format2_vector": "type_timestamp_ns_named_tz_schema_f0",
       "format1_defects": []
     },
@@ -716,7 +716,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_duration_s_schema_f0",
       "format1_hash": "0000019ef92ec048bd73719517bcdd78f1a52e57dd8d3ebbba8c3dbe689bf3473c8454",
-      "format2_hash": "000002c326fa8a3ae288735a556905748c1db265771accb49a63570baf1e9d8547911f",
+      "format2_hash": "000002e37ba68db00a13fda1269115c93112e82f47e0001954736e0dbac6ec0478529a",
       "format2_vector": "type_duration_s_schema_f0",
       "format1_defects": []
     },
@@ -724,7 +724,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_duration_ms_schema_f0",
       "format1_hash": "0000015f844828d2b1cf182199ab026ac2903425f0f84898befe53f53b38a8468ae257",
-      "format2_hash": "000002b9bcfd0c6c9e97f81abe2b49da844b275f8712c81f8281b86e9943b3588c1aeb",
+      "format2_hash": "000002deafca82c59e247745cff3aa1be6df4f079b034bb74688a2941d8bd9a8eb43d1",
       "format2_vector": "type_duration_ms_schema_f0",
       "format1_defects": []
     },
@@ -732,7 +732,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_duration_us_schema_f0",
       "format1_hash": "000001bc8e82b752d5d898ae332e360b8325e742b6d7359b6b6aed59ff21578b53141e",
-      "format2_hash": "000002325457512731593cd507ce3e7b011b9b7cca01dbd89e4f8920fb5994cf1d9d4a",
+      "format2_hash": "000002da4cfb6ead4c47fb7f40c73df8ba0ccf616d931461f48dadfb5a018772576078",
       "format2_vector": "type_duration_us_schema_f0",
       "format1_defects": []
     },
@@ -740,7 +740,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_duration_ns_schema_f0",
       "format1_hash": "000001e881ee30b58bdaa77fbc333e13eb21a00d3ca4e96283f1eeb4062fb29995352f",
-      "format2_hash": "000002b73ed03cd62dd09e683c4059fbc97b46a742744f8720fb82aab81773efd787f1",
+      "format2_hash": "0000021140c59d69e5aff07c4c9fb5acede1eb2f93529ed40b42ea04d1fd873764be0d",
       "format2_vector": "type_duration_ns_schema_f0",
       "format1_defects": []
     },
@@ -748,7 +748,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_interval_year_month_schema_f0",
       "format1_hash": "000001edfdb7dd18d6d1f1726bd0a820e82c13ba013ca920bd3d93d08530782119785b",
-      "format2_hash": "0000027209e6136116fc005f13f750a66837a8452c92912e147a54904f45255a18a1d3",
+      "format2_hash": "00000244ddd18aa817bdda2931252ba87319aaebce9b5bd9ac1400f3bff958e6bfa92c",
       "format2_vector": "type_interval_year_month_schema_f0",
       "format1_defects": []
     },
@@ -756,7 +756,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_interval_day_time_schema_f0",
       "format1_hash": "000001ff900d6b57d11a3aed395b0a882a0cdf411450df8a497826e4cbdad57a41217f",
-      "format2_hash": "0000023aed3f6ad5f34d87f903ffb78bd76b8f289a61f8b60ee7902d9b981bbcc804c0",
+      "format2_hash": "000002d9e806587afcff2f7bf1e5bad572696f5fbfdb9ebf18813466549327b8d51211",
       "format2_vector": "type_interval_day_time_schema_f0",
       "format1_defects": []
     },
@@ -764,7 +764,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_interval_month_day_nano_schema_f0",
       "format1_hash": "000001b8ebd94791c839fcf2572f1abfe6584d39ff559624dc3362f6ff6a9b43bfd9b7",
-      "format2_hash": "000002a1ef89129cd30cf70f293c654a4f430bb84831156a0e26a82e2ce3b585a36297",
+      "format2_hash": "000002e8eb312e375f9c65f3b3d0d029b19f0eb41821c5efeca2a59c9e17a287a0d83b",
       "format2_vector": "type_interval_month_day_nano_schema_f0",
       "format1_defects": []
     },
@@ -772,7 +772,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_decimal32_schema_f0",
       "format1_hash": "000001dd88bf3c39e96145f03d8fc9054089eb4dd8c437d74b1d4aa1b25b8e351e5c75",
-      "format2_hash": "000002dd15d65f2ad53b58d6f4275e9e02284c6b2b85a9bcfd57c9329d3378fe01b916",
+      "format2_hash": "00000227ac504a2ceb17222240736fabb8a9bc473adf914921def7d552f85d324326f7",
       "format2_vector": "type_decimal32_schema_f0",
       "format1_defects": []
     },
@@ -780,7 +780,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_decimal64_negative_scale_schema_f0",
       "format1_hash": "000001e16e0018ba784be83994c7a94db3071ab9c5462566161105d4ef8128105ed816",
-      "format2_hash": "0000020b8bd50d5e34cc66422d123c8ecad9985eaa5aab934706793d797b10ffdd7ef1",
+      "format2_hash": "0000025307a5443dbf29dde69b92ea0a4cb4dd4edec402ab3f21f3757ca21ffb6f0ef4",
       "format2_vector": "type_decimal64_negative_scale_schema_f0",
       "format1_defects": []
     },
@@ -788,7 +788,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_decimal128_schema_f0",
       "format1_hash": "000001ebcc3afc437ac2f831005f29907440ae6d08ab647a04f974be15d44951326683",
-      "format2_hash": "00000230a8ad8ccebbb0f61cf11f600222fe8afda9bb33bb883b3a1dcbffd691626e83",
+      "format2_hash": "00000265fcc9e37a235725f68d94bd5a384603416c4893ca8c7e68f1b24cabb2a10f99",
       "format2_vector": "type_decimal128_schema_f0",
       "format1_defects": []
     },
@@ -796,7 +796,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_decimal256_schema_f0",
       "format1_hash": "0000017bf47db10e1322b3ebd6780afe01406dd3680654a3b77133f8139ebd4c987e04",
-      "format2_hash": "000002adaac773e79c05738edbf6511ca2e2b78e5fbca6ed34ce50cb30dd50638e3437",
+      "format2_hash": "000002fb41d9fcaf8a1e416d559fa0b0c066e578dbb3ab5056732559faceba7c12d205",
       "format2_vector": "type_decimal256_schema_f0",
       "format1_defects": []
     },
@@ -804,7 +804,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_fixed_size_binary_schema_f0",
       "format1_hash": "000001a1ed63688a1bfef27f1bb08ffbc85de0edc469fc74ca4a78b89d524c1524eaa4",
-      "format2_hash": "000002d7bb11b6df9b80954e3fd4bff19842697682f2092bd518e7866b51c4d82fab54",
+      "format2_hash": "000002f72c04377c44ba38abf0fc2b04cad73a66d97c290985810b594759b39e0e0751",
       "format2_vector": "type_fixed_size_binary_schema_f0",
       "format1_defects": []
     },
@@ -812,7 +812,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_utf8_schema_f0",
       "format1_hash": "000001a3d7da25cd2184dbb26c33361e651f15494198c62c060256714159fe9ff0b5f8",
-      "format2_hash": "0000022ce4aa5b52dc850cb13733a272ecbffd7f9ae5bed93225ecf44bcbfc4427c8d3",
+      "format2_hash": "00000215e01890e9dfccc493b47ce8370f56ac28e0a1e0c8219c32fc8d67abe1542e66",
       "format2_vector": "type_utf8_schema_f0",
       "format1_defects": []
     },
@@ -820,7 +820,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_large_utf8_schema_f0",
       "format1_hash": "000001a3d7da25cd2184dbb26c33361e651f15494198c62c060256714159fe9ff0b5f8",
-      "format2_hash": "0000022ce4aa5b52dc850cb13733a272ecbffd7f9ae5bed93225ecf44bcbfc4427c8d3",
+      "format2_hash": "00000215e01890e9dfccc493b47ce8370f56ac28e0a1e0c8219c32fc8d67abe1542e66",
       "format2_vector": "type_large_utf8_schema_f0",
       "format1_defects": []
     },
@@ -828,7 +828,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_binary_schema_f0",
       "format1_hash": "000001551df4389549b007c7e698ab71bddf84a9946cdf127716abc37606b3a8911da5",
-      "format2_hash": "000002f284a0be421bdb8d043b328bb957b34011915b605b6dc07454b5b7cad79dc53e",
+      "format2_hash": "000002daf27ff7489226e260129f148f6c415a8d403d6434fe4c30eb70a7b4bf14d0c8",
       "format2_vector": "type_binary_schema_f0",
       "format1_defects": []
     },
@@ -836,7 +836,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_large_binary_schema_f0",
       "format1_hash": "000001551df4389549b007c7e698ab71bddf84a9946cdf127716abc37606b3a8911da5",
-      "format2_hash": "000002f284a0be421bdb8d043b328bb957b34011915b605b6dc07454b5b7cad79dc53e",
+      "format2_hash": "000002daf27ff7489226e260129f148f6c415a8d403d6434fe4c30eb70a7b4bf14d0c8",
       "format2_vector": "type_large_binary_schema_f0",
       "format1_defects": []
     },
@@ -844,7 +844,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_utf8_view_schema_f0",
       "format1_hash": "000001c4f113df591f75ffe79c1da85c5000f0ade80eae214b97713872cab348800aa7",
-      "format2_hash": "00000227b6c1c19f55abb8f9c5397c44358179670b53e8cd0ac85c86a63efc077d3a45",
+      "format2_hash": "000002ae4524ad2af645eab4f9c6d0909c9361fd5b25f4381b6ef31aaf1edfcedf9ddf",
       "format2_vector": "type_utf8_view_schema_f0",
       "format1_defects": []
     },
@@ -852,7 +852,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "type_binary_view_schema_f0",
       "format1_hash": "000001d212dca06f49287359b6359167ac3cc02782572c4463bb552297ae03a347b856",
-      "format2_hash": "00000269474d2dcf14686b5e68081944c59dd48e9723ec46045ef79de008d9ee75a565",
+      "format2_hash": "000002f66721c03015a7ef24bb7d084e984c2e4e7e1246e9573dcbf0ef0819f3f0abd8",
       "format2_vector": "type_binary_view_schema_f0",
       "format1_defects": []
     },
@@ -860,7 +860,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_map_value_schema_f0_im1",
       "format1_hash": "0000018e90e39f63cff9891fa1536def277ab7c2545567c51cecf37e765e75f0609789",
-      "format2_hash": "000002f2ccfa54107bbf578a64ac6f09bf31d7c5eaab288c3b7003f8c0135d83928694",
+      "format2_hash": "000002e72a6e74a24550cd50f142e754901f4bd7aa2fbaf801ae1d8c1c7dbb49d6b83e",
       "format2_vector": "meta_map_value_schema_f0_im1",
       "format1_defects": []
     },
@@ -868,7 +868,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_map_key_schema_f0_im1",
       "format1_hash": "00000197b0e3e6528d52a065864a687be4a19b4197dfb62a4ca9915c6b7d3e6bd31ee7",
-      "format2_hash": "000002b509290043f950377512a8c5d20d712ae470307a40f7be188e2acc048d52a444",
+      "format2_hash": "0000025e79da0f495b82e17ec4f2a2fdf191a6f92357073a0232f0f55ad7014b1401f6",
       "format2_vector": "meta_map_key_schema_f0_im1",
       "format1_defects": []
     },
@@ -876,7 +876,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_map_entries_schema_f0_im1",
       "format1_hash": "00000138559b12d08a2cd6fc073ad2f98a22d75737b580905227d99207851c25e89951",
-      "format2_hash": "000002a2ea4c3e7aac3494e11cb4a863c257897c6fe24338111019718bb80f191e8f69",
+      "format2_hash": "000002e30b27b07b6518a7f089c4564e0bbdf34f6e566e83579764e8fc4873156b34c3",
       "format2_vector": "meta_map_entries_schema_f0_im1",
       "format1_defects": []
     },
@@ -884,7 +884,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_map_all_schema_f0_im1",
       "format1_hash": "0000017f5cbc6a8a7a9e6f8b06fdb33a8689f413b5034a80e41451cc7d3e50d648dbaf",
-      "format2_hash": "0000024e907e0c8e5ba102a32c4716e849d89221da426457b27f6fad566e7d5227c727",
+      "format2_hash": "000002b0b53567a6810a0b9d17db75277da500237eed72ae05e7da0154ef001072a36a",
       "format2_vector": "meta_map_all_schema_f0_im1",
       "format1_defects": []
     },
@@ -892,7 +892,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_struct_child_schema_f0_im1",
       "format1_hash": "0000013ad8bf07377e7c14cdf271b6626b203a28f2295391ef0e9ac21d40d99bd0473a",
-      "format2_hash": "0000021bad8bde5a431b6ffdc4b426a99a2a753e1f877876bfa4f0dcfe6acd8380d258",
+      "format2_hash": "000002f99bf8ec8a139a00a36a06178b72829b3cd4b5200576b48c8a8f7dc1ef5f00f3",
       "format2_vector": "meta_struct_child_schema_f0_im1",
       "format1_defects": []
     },
@@ -900,7 +900,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_list_element_schema_f0_im1",
       "format1_hash": "00000138cb63f6c736f44536dbc3c1cef7a81d6caa89a68a35db9ef4fcb04a82cfe91f",
-      "format2_hash": "0000022aa3f2d31d47e16368a06eef1caf2733b78453a3de28ee37db44e63f68ef0deb",
+      "format2_hash": "00000277f78b5887bf2face0b85767b991be1ce3da47b1cc4d1cdc334829087f4f1a8f",
       "format2_vector": "meta_list_element_schema_f0_im1",
       "format1_defects": []
     },
@@ -908,7 +908,7 @@
       "source": "released starfix 0.4.0 crate (reference vectors)",
       "id": "meta_fsl_element_schema_f0_im1",
       "format1_hash": "00000167f097bbffcd5ab67297252711a30106996ce8d0d7940e91ceab68b69c07023a",
-      "format2_hash": "0000023e3eb301b7a8196190729dcec01c5456493177faef4790e9433a61796acc78ce",
+      "format2_hash": "00000253583e73e2411cdfe9480e8ce880911d8b4d8fd64a190df43e5bcfe05dc31a0f",
       "format2_vector": "meta_fsl_element_schema_f0_im1",
       "format1_defects": []
     },
@@ -916,639 +916,639 @@
       "source": "tests/arrow_digester.rs",
       "id": "binary_array_hashing",
       "format1_hash": "0000018dc3a0e479d1335553546c8f23c36d75335cbd34805a6f96c5d5225b347fbc57",
-      "format2_hash": "000002ce0c8cc68b264f3040513d6fb5a94e4ec6b4b53a2baaad3cc0fd4d5a1b5e3f3d"
+      "format2_hash": "000002e52c6b710b5c6be2cada5b225f0d43d83f2b0a89f117f9210eff746ebcd3f294"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "boolean_array_hashing",
       "format1_hash": "00000185a9c99eba7bcfd9b14fd529b9534f2289319779270aa4a072f117cf90a6ac8b",
-      "format2_hash": "0000024100d139820e2b287fee67fbd7624e103a6ab7674b5e0170e933a896cc9ee41d"
+      "format2_hash": "0000024c5223c9cdc2fe10fb4362890cfc763e1bea4829a30fa6bfedc7bacad05f783a"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "decimal_array_hashing",
       "format1_hash": "0000014f015bd5c4b6ce6e939a8c890333f3e110c2c28ef8014aafd352f8373791e547",
-      "format2_hash": "000002e83147c84038cb72cb3cc8e24e651e0491028c449cfe7f2a9d51ded84391ca40"
+      "format2_hash": "0000021480fe62da952e0f819540738817488f0da864a59e70604f88f00f6daec3a7fb"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "duration_array_hashing",
       "format1_hash": "0000013540d23a4abf1dfbc939a9e5514be69e364cec466ef900fa35050dc3cf2994fa",
-      "format2_hash": "000002f4db00404adc309eaa3c23518b36b56a44659edc0a4c4dbbddea90449cf90413"
+      "format2_hash": "000002ac73fa834511e4de143e7f5da1f2b6bef168f25a6d47f7851dd977328eaf20cc"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "int32_array_hashing",
       "format1_hash": "0000018330f9b8796b9434cbf7bc028c18c58a2a739b980acf9995ce1e5d60b43b0138",
-      "format2_hash": "000002d1d8a0c525ec9d5b68cd7f3cc7c0ebf465c9159ae35a59010a18044e245e4f61"
+      "format2_hash": "00000264c8fe45cb550e25577276b2af8c1c9c125bc14b8439f5619c1f18c71d4d0078"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "list_array_hashing",
       "format1_hash": "000001dc359d563a1ed210eb271b314612ea8343f0a0b0955b9053a9eb47962d27163c",
-      "format2_hash": "000002e3c042074d4a197ca8b2f7e5aeae99b9cc9010a53b6c63120086d4e9688fd533"
+      "format2_hash": "000002baac87674321616f3c4b4ad559df2c5b2492a83ba54fa7e865a51ae56d8f498c"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "record_batch_hashing",
       "format1_hash": "0000019f5fa370d315a4b4f2314be7b7284a0549b70ad4e21e584fdebf441ad02f44f0",
-      "format2_hash": "000002cfdbea6ff7282f0edaf4d7ca6015565dec2c8eb05073aeb6452ff83414cb8a43"
+      "format2_hash": "0000020ba4ed542e67ebc311d160ab54a11f25630a6b5fdd99e5dfc90917cb1d31e968"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "schema",
       "format1_hash": "0000012ac1decf89ab7e337d5df56bafd330f7e9a761953c58c39d5a3a8c49f6dfd4ff",
-      "format2_hash": "000002b4d7f0bc024ebf3eed85a31c1168c1f3cf60d88adf54e912550cf907af25db94"
+      "format2_hash": "000002951008748ed8a893f5ea7b6506d3ea8cb8be815956cbdf5ea330ae6a11f49519"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "string_array_hashing",
       "format1_hash": "0000016255bde0141ebf26e08c31c96f6112e5e21d101ab8bb90d77f2c3eec02c62d3c",
-      "format2_hash": "000002445ec6b02f286788f52986673493d9d2c7d2efe4b4870fa780aeec77fbaa0385"
+      "format2_hash": "0000020580567a1ed9be7b4dbbc36046e635c7021fb1bda241310cd353a3de5a860bc2"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "time32_array_hashing",
       "format1_hash": "000001aba70469e596c735ec13c3d60a9db2d0e5515eb864f07ad5d24572b35f23eacc",
-      "format2_hash": "0000025ea1da45fe10e3034a18052542883c0c234353fc229ba1ab9423292d557fabe5"
+      "format2_hash": "0000026708f2d0b632bf3f324716cd32c7c41dd8b9bc75d326fb5ec3f3900201f08eb7"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "time64_array_hashing",
       "format1_hash": "000001c96d705b1278f9ffe1b31fb307408768f14d961c44028a1d0f778dd61786ee26",
-      "format2_hash": "0000025360527b27a5170c14a2f6e4493d940d29e27678d80899dd94655a4884a5589b"
+      "format2_hash": "0000022ddc0ab9c1cfc0fda9353d66612a504cb63d6ee509c4f56b961f33855f1a82a4"
     },
     {
       "source": "tests/arrow_digester.rs",
       "id": "timestamp_array_hashing",
       "format1_hash": "0000017cef6166a14741f94906bd3146ffa197d1b5756d594eb46304b678b21e44c40b",
-      "format2_hash": "00000252859a0dad006bac78dd1ba3fa17fde43bfa2af9cc95bdd08b6611da1691f012"
+      "format2_hash": "00000255a8e82e6e1862a461c70c393f105522ee7fd6f4ed889fd69d21ace4bb54622e"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "decimal_array_hashing",
+      "id": "decimal_array_hashing#2",
       "format1_hash": "000001dc08c7b9c583edecec36bc5dee21cd2edec9f402a651014fea5f8834d16ad737",
-      "format2_hash": "00000226d3b5c66b1fa3b3de097542369f89b2717f3026c778ce17d57817fbf2fec8f0"
+      "format2_hash": "000002efb97088aa7fc1adc578e6d68d0f2d2dbe5ef25b0999fcd7e7208ede6e7b2a41"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "duration_array_hashing",
+      "id": "duration_array_hashing#2",
       "format1_hash": "000001564a87e1e07898af07a4a212e3db83f911ac287134f28c772bf5fb4da683402c",
-      "format2_hash": "000002767dcb630f550d41da343f63fb308d1e2ce97e68306f988573178da666fb156f"
+      "format2_hash": "000002cfc3e82b4f82cf9a39f2f86fb495acb6f481b91643bd8f5591a2ed34f794ee9a"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "schema",
+      "id": "schema#2",
       "format1_hash": "0000011d2c77a01beb74029cb2a71fe52eac4ac3ef7b31b55df717fc8098dee73735cf",
-      "format2_hash": "000002b32e24cda163bcece18d19af32944a15142b99880e14a6552aab28c1da84e858"
+      "format2_hash": "000002808e6baa50d385bb8fc28d1a63b5eab6de57d73929e68f33d6422e2989d0a2a2"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#2",
       "format1_hash": "000001fd253a835218d5605ce8bb348699f973b93e29fbe21fe6e532468f988ece4ce5",
-      "format2_hash": "000002f6dcd4d91471e975d86257785c15f0d8e120a84b45f163378e913d10935f1ec9"
+      "format2_hash": "0000026b928249c5b3e8a99fff770aa7cff273da347a8dd5ee5c1647e7a03b41aeeac5"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "decimal_array_hashing",
+      "id": "decimal_array_hashing#3",
       "format1_hash": "0000011e3b33d28771b3593fd5dc4b68af8091a1ba9cd493ade374e7368e213bef244e",
-      "format2_hash": "0000026193b4a954e812702fc77e319e834483780ac424d0b54fa9bf7163c90a9ab163"
+      "format2_hash": "0000029c8ebfcade372b53f23d669d231eab0dd2dd96805263867e47af72c739e1b455"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "duration_array_hashing",
+      "id": "duration_array_hashing#3",
       "format1_hash": "0000017904faf3043cf870f0c139cba0282cdaf11c590aeb80f2a0d6b103893ba5da2a",
-      "format2_hash": "00000267a46b80b8577b61b24e665edbe71f78d6af7170305cbe0b348ca07a1b2874d9"
+      "format2_hash": "0000022c8e105be42590d0cd332abcf8330269689cf66767322d1ba799271c6346744d"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#3",
       "format1_hash": "0000013af741ca0fe5bd48d0bd39e1993c60e7c032f23c4cf4be6c11cc4b50ce56013e",
-      "format2_hash": "00000209c1c989349caa973563a880521cbcaaa4e62ccc77f380e69f0fc57c639b4bfa"
+      "format2_hash": "0000023277d54aec4f229bfd0f21e772c332d2d4851c8af07b3f36be29f655b91b6b48"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "duration_array_hashing",
+      "id": "duration_array_hashing#4",
       "format1_hash": "00000189a38c5a7adf4b19b3e0d467f042ab2389fed8ae5f1d2af8555dd6131478a49b",
-      "format2_hash": "00000265d49688aae1ade659148d969f4fd703fa688fd7e3dcbe3c00d5e7ef2ae50720"
+      "format2_hash": "00000257be9b6546267351273ab5c9bd7858c17b17b093f7f65a599bad8bde37ab5c9e"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#4",
       "format1_hash": "000001f5b86904b4b7f2c6a18c7c4febda142bf622e4d01752f42b8f832c0a68a4d9c0",
-      "format2_hash": "0000021d86082dfda0e2f0449320c2acd853756d79dc3080cf1ee14327c7c9f2201480"
+      "format2_hash": "0000022d542c28b882c3e78bd1758a04c628c829efb9c16e78ad4185cd97e45544e988"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#5",
       "format1_hash": "0000016ee5249d352c03cc820af39e98b7043993d467207cb6ca34c8d13cfacf141e30",
-      "format2_hash": "0000028fa5d6fbc775327e0c766cab77a00991dc87cf7ac7d45f875d049559b55cbb3e"
+      "format2_hash": "00000219b77ac863025bc3a0c519594e873846eaed63ed9d7c16763ad9eb36016623ed"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#6",
       "format1_hash": "000001ef46619d2be8259335ed0943f42ea3ced19ff6d75471a64b2f03aea89afa4842",
-      "format2_hash": "000002c0d0e86c4e7ff759ad83bf887cf5b20f2b662ceeeba5865ed1f5353b6b7a9445"
+      "format2_hash": "000002973baeb308b246159206a6072825f4cb786d05ddff11649199c93df22abdaac7"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#7",
       "format1_hash": "0000017e624eb2847f79f940d7123980b076aea1c1ecd3adaa34bdae24fa00f05afda3",
-      "format2_hash": "000002148a265e62ae6878931d8d3316c4aec43f50da2e688d83bfe62901c3703e6b4f"
+      "format2_hash": "000002fe90da5f713e78f96eed1bf834e6fe2f871aa2c7f28174d8a2dcb3134f5dc4cc"
     },
     {
       "source": "tests/arrow_digester.rs",
-      "id": "timestamp_array_hashing",
+      "id": "timestamp_array_hashing#8",
       "format1_hash": "000001f677ef0e42e9e40ea092471f82283212833ab6b4ff9bb45e86e88590f8d15796",
-      "format2_hash": "00000292c1b50fa17e537e6afb5903cce37b5b28b03088e6ec3e23c346d9adafb071a7"
+      "format2_hash": "00000275a347fae688071e8d3d94d6ff48800f3dbbd9d8fc629c871eb4e16dd3e59976"
     },
     {
       "source": "src/arrow_digester_core.rs (raw digest, no prefix)",
       "id": "nested_fields",
       "format1_hash": "9b52ad7430dea81b35f14a04d828b2424080fbc210570081c6e6cb62b6566c42",
-      "format2_hash": "8038c003912adbecc339cd6b1c1e9a62f59dc68a684c00cc1b29cff72d193361"
+      "format2_hash": "e87004b857524cdf72c644487132ae03f113a88662ca6ac32d90ab1a4d0c0c58"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestTemporalTypes::test_date64",
       "format1_hash": "00000106dde92a47a5a0db64ce2c83c1de96868b8f55868003fb6e894be0751d10beeb",
-      "format2_hash": "00000243d93d2e644621c13ea350b6ce991e5183713cce06cccc78fa67bd45f28bfec8",
+      "format2_hash": "00000273f2b0aeedb498d6980083f025b8e0c07c74c57c9130aabfed2af1b31e5ee0af",
       "format2_vector": "pylit_testtemporaltypes_test_date64"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestMultiTypeBatch::test_multi_type_schema_only",
       "format1_hash": "0000010e62b3f3317d25413b7a4dc6e7a8a6e7c73a73c513cdbe9f9b1f5e5ec56f0e94",
-      "format2_hash": "00000237415d17fd5904b31ed46c94418a47339c656e6270fb1a065479cf153d4641ee",
+      "format2_hash": "00000221f1240fabe97f742ddb3195193cf785f61e327b7d64ec7363bbbce399df7e50",
       "format2_vector": "pylit_testmultitypebatch_test_multi_type_schema_only"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestMultiTypeBatch::test_multi_type_record_batch",
       "format1_hash": "0000010f8bb471cb34975f20c4b221abff1a90b2d98f24217a2257e3298ee3d4e9f9c4",
-      "format2_hash": "000002915edae36a72a8337dd20f2536739344a71fb6d12cfbd7e15ba5813d9399f8ce",
+      "format2_hash": "000002cb129d9295971fe47548a28b3070f18a4a000d449aa6e612446c37e7a104bdb2",
       "format2_vector": "pylit_testmultitypebatch_test_multi_type_record_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_d_non_nullable_binary",
       "format1_hash": "0000010fbc627fc7ad9d5f2e96fec8fa57b56b364a04a8af7e374015a07b26bd1ac80d",
-      "format2_hash": "000002c1577257ed34403943a24dcf25bb9f89a4034cc197e7d6ae03d68d46aacfebb1",
+      "format2_hash": "0000020ee499da085a532f069ccfe218a9af0f2fa33ab8cc21b79991bdc36f5323f141",
       "format2_vector": "pylit_testspecexamples_test_example_d_non_nullable_binary"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestTemporalTypes::test_date32",
       "format1_hash": "000001103053df817a93502fae8bd8d052c57e48acc76fc65db9316c2425805f2f7ef6",
-      "format2_hash": "0000027ee217bff78ba6d2162a3db9a312cda38eab812fa04b2bdae45c44caef53310a",
+      "format2_hash": "00000248ddc5205e534b4a5dd91fb3ce5b5c4cddff659844e77de731435ab8eda086cc",
       "format2_vector": "pylit_testtemporaltypes_test_date32"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint8",
       "format1_hash": "00000130328e5fa11093ea36a10554afdb07fa718453f41a113dbdbdefc5baf06d1ffd",
-      "format2_hash": "000002d4b5b7d8d8cdff6578c2ab3548ac28820d55e4bae62546c06cfb783eb96c7e0d",
+      "format2_hash": "000002f5401303c3c8609dde1c1162a0a5388183231ae9d7aad98a5165ca6cb949e474",
       "format2_vector": "pylit_testprimitivetypes_test_uint8"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestTemporalTypes::test_time64_nanoseconds",
       "format1_hash": "0000013236ab3ffd9de453dc2a7613731108b132583249f2d42eb7a102dd430e66175f",
-      "format2_hash": "0000025ba5fbd24942a70134a20ba575e71d66d54d3144872745d3239864baf8378aa1",
+      "format2_hash": "0000020ec4f4365fc43e57f5a229faf87d5e90dbe3ff53f64844c7bae443bb5c35bf07",
       "format2_vector": "pylit_testtemporaltypes_test_time64_nanoseconds"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint16",
       "format1_hash": "00000133e15d7b6d806f8c121f9683e1f6b62674b0f48710f7f6dc3155262e0fc84357",
-      "format2_hash": "0000025c7c3b1ecd630160eb0cee63321bd7135b4eef454e147691b3c5877c219781fc",
+      "format2_hash": "0000023c4a18350b71b2498685b732bf86aafa7edc9b6aea24de50e6a764cb4f0a8ec6",
       "format2_vector": "pylit_testprimitivetypes_test_uint16"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint64",
       "format1_hash": "00000144997caad273e039ba4919a2f1db91f05b6546271121619bb1fc97d8757f180b",
-      "format2_hash": "00000200b680c62c236f5ff1b973b82177922da1b1de2565c2ab051fe41ac7ada7520a",
+      "format2_hash": "000002bab5700cfdadfbc1a63b32bbab4c8154ad9696f024e6965266b10714d18ba772",
       "format2_vector": "pylit_testprimitivetypes_test_uint64"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestStructTypes::test_struct_with_nullable_children",
       "format1_hash": "0000015f1992c5f9130aaa64aa1360e53ddd00b427855ae02e380f534a629353135680",
-      "format2_hash": "000002ae1910889fd81f51e1506c4d911e04df5ac428834f4acd3a8e91ae4a65809351",
+      "format2_hash": "00000223f577c71ad70b36baf8db3ae57304492642edeab6f98560180b624eb7127d40",
       "format2_vector": "pylit_teststructtypes_test_struct_with_nullable_children"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_int16",
       "format1_hash": "00000163dac968f9f62a036126abe3e53404b69a40f2cf02872a1fc970c7428c5869b4",
-      "format2_hash": "000002be4d10e5334ca6eddf6ef2a97068569ee8b4dbac275cfd025716bc845ad7fe73",
+      "format2_hash": "0000021193e13fb74196a3ba1e2848d8b371cbaec0145408be4c10dce5c7da3d6f0ef8",
       "format2_vector": "pylit_testprimitivetypes_test_int16"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_a_two_column_table",
       "format1_hash": "0000018020e47f4462f26b0bc73ad110ea0f9198c2745c04ce23335093d2b78ef51c88",
-      "format2_hash": "00000292eeae0418072b559ac1b864e6a7e249749582ab32239ffc9443a00dcc18946f",
+      "format2_hash": "000002d3ab7e2b2ff00fc12767f712e8e3f1e941d4616af2d44b3a5ded0675afd31207",
       "format2_vector": "pylit_testspecexamples_test_example_a_two_column_table"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_int64",
       "format1_hash": "000001950cf62cd41a3cfb936bcaeb2af16e4b9010e72e6201af4755c016b7b9466acf",
-      "format2_hash": "0000023aab6936af9bf10b02d01c46db095dd95e78d19b61cbdf5719f751f12a6a4d05",
+      "format2_hash": "00000273f6a64dd00ba1e2749c0ff21c64bb1984989efb7f94e37b188e6f0ea0ee3607",
       "format2_vector": "pylit_testprimitivetypes_test_int64"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_int8",
       "format1_hash": "0000019ab12c5c219df0b745b77bb592945dfd5a8d8bf6c20752cb601cc554bde708bc",
-      "format2_hash": "0000021fa6009005695174467a940479ad60dff4c4c25215b67eb6b9fbce06a39e9d7a",
+      "format2_hash": "0000024168dcfaf09c69c2fd848090fcff65c6e27c7a8575f419e6b5c011b28633c6ec",
       "format2_vector": "pylit_testprimitivetypes_test_int8"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_n_list_of_struct",
       "format1_hash": "0000019c9cc6230a42e646a475ec1c8125fe396dcace351d64ff6e63e8f53d329c4895",
-      "format2_hash": "00000287065f0798e1fac05078eded05303f6046343a29cd1315c3ae2dd60cffa40361",
+      "format2_hash": "000002a58f04b6bc45c95e5faa11155031bfb9dc8815187dde82b0f4d833cb8f376056",
       "format2_vector": "pylit_testspecexamples_test_example_n_list_of_struct"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestTemporalTypes::test_time32_milliseconds",
       "format1_hash": "000001abd6f51bd0ca68584a4ae73f4f9351cfe97fe6f3f85ed315f9b3628650a97564",
-      "format2_hash": "00000246464b1335534e9caa69343551ad1f7eefe77df8a8201468eb1f5f8a469892dd",
+      "format2_hash": "0000028211097939067b80d7b9d622b88201aedc86254255f02f513e3acbf8da34e04a",
       "format2_vector": "pylit_testtemporaltypes_test_time32_milliseconds"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_float64",
       "format1_hash": "000001b0e2b1cc3668a42dbc98d3b7246f7e8cdf2d5e6a38cc0510e463d36cbeecff0b",
-      "format2_hash": "0000028e4f1d81093e5dc9803b9ff7ba4272fbef115c7f5b79ce27ba1d607cec28abda",
+      "format2_hash": "000002f2dd5acce604d642d652fbbbc3bfb16807f36100aff5a84d1f6acb194e4d90e9",
       "format2_vector": "pylit_testprimitivetypes_test_float64"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_uint32",
       "format1_hash": "000001c3d60c88f4842be618c85a09d604cbc0d87d8ea27c164fc2acb387ca50bbfa2e",
-      "format2_hash": "0000025b3440e7326d5cf3dc08560b5db09d7c7099ff9578114eedf5e8721cc308c389",
+      "format2_hash": "000002aa9b7f8fdea28a5651544e73648faa19f22b87912a4b18ec121df884a65e3440",
       "format2_vector": "pylit_testprimitivetypes_test_uint32"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_i_empty_table",
       "format1_hash": "000001df8887d2ebb6968ba1dd994b1c663e0539f218f6045996a03dd20209c40d0922",
-      "format2_hash": "0000026bc41a0a4c6ef5d3b5168cac73a2961607896ad6f6801c632390662b48f03b84",
+      "format2_hash": "0000028aa5ce23c0faa5de71df6c33cb88194f8555ce4c2ddf8398ebd15e7933081798",
       "format2_vector": "pylit_testspecexamples_test_example_i_empty_table"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_k_struct_column",
       "format1_hash": "000001e3516302d68fd1fc4860fa4b7e0d4a6d60d500a9d7ccae79e445c5980021e4ec",
-      "format2_hash": "000002be47c5bd05462dc3c4bbf0f62e5c14c2797f5ac40126e455342b5ff0c24e53d0",
+      "format2_hash": "000002b9461e7b30083397b2a328415184d53e8c27d315af89e22163aae5a0da91866a",
       "format2_vector": "pylit_testspecexamples_test_example_k_struct_column"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_o_nested_struct",
       "format1_hash": "000001e732b8458782d9a331722698883617eec7cd1492028947b4ce3e97c7d6201550",
-      "format2_hash": "00000260e109b8c08b6265051d1f339801898ab5abc4dd6d874e628ef8bd6219492e0c",
+      "format2_hash": "000002ecebdb320ae446cd5347ec7cbff5272c36af957666f717c59df85cfd8410d5a4",
       "format2_vector": "pylit_testspecexamples_test_example_o_nested_struct"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_bool",
       "format1_hash": "000001e752bea45ed48352e104fb24919ea68b1af64281231aff3a52b51a5fcabe7fb1",
-      "format2_hash": "00000259cf85678c3695d3ed17046b5a42d629606ab496949b33e9c96f675514a7937f",
+      "format2_hash": "000002b4fe586ae0a97fcc8ae84e83110f8980bde7c74aed4c66b60321116994982aeb",
       "format2_vector": "pylit_testprimitivetypes_test_bool"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_f_utf8_equivalence",
       "format1_hash": "000001f14d076ffc02533c6560f867b86cde7e15b1a0ac5a892b53697a609191cf307f",
-      "format2_hash": "00000217476a036ab2e8fecbae7ec4587d41fb06aef8bf552cf8f0b368dc41857d4286",
+      "format2_hash": "000002644b2970be7606407afad7635d7f7111c2f668496e938bdff452604bd444065b",
       "format2_vector": "pylit_testspecexamples_test_example_f_utf8_equivalence"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestPrimitiveTypes::test_float32",
       "format1_hash": "000001f5c04a8a43027a04f68de9f71b99b3075459c9c296f68aecdc92bac8ef506baa",
-      "format2_hash": "0000022b6984cbc7c3f8087433f36e850b77185e90f4b8874d5cdf5b4835fd05ee1fd2",
+      "format2_hash": "00000279154d63290b405df71342d15c41dd9f288d5bd1dadae43f37950b85dcf74041",
       "format2_vector": "pylit_testprimitivetypes_test_float32"
     },
     {
       "source": "starfix-python tests/test_golden_parity.py",
       "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_e_column_order_independence",
       "format1_hash": "000001f68bf6319f8ec4aa938e52dd911974348289fbdfb9b5ebed5e14e239a6d8a3a9",
-      "format2_hash": "00000259305d2093f85b576989659d7bbdb725b33653d8b4cffd65049ba88ac7d1b5ae",
+      "format2_hash": "00000201b7c533b770a31fd7bc0fefa6252c2fa7100305f07f991502437cc1a5ba1d24",
       "format2_vector": "pylit_testspecexamples_test_example_e_column_order_independence"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestBinaryVariedSizes::test_binary_varied_sizes",
       "format1_hash": "0000010213a24d1014bb90e20f339fccab30ca699f2ca916d190f9a7f50077f5734b05",
-      "format2_hash": "000002148db3622e92806eff4feafa117c429c052588ccc7b9120b03f02ff7ef26f6a1",
+      "format2_hash": "0000020885790654a7ce21e6afdfeaa4ad99490e1871149892eda8acf4d2a403566410",
       "format2_vector": "pylit_testbinaryvariedsizes_test_binary_varied_sizes"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestAllNullArrays::test_all_null_int32",
       "format1_hash": "00000104fd65cf73bc1d8e787a6940b749777eddb28285d7bfc90e832212afb6fdea65",
-      "format2_hash": "000002047d4c739f64e9d20e876901a967f19b17e7c3f749e30342f03f798d51e04d33",
+      "format2_hash": "000002a51121a9cb745bbcd08ebba07ce33ef64dcb630c241d4112d27d15106e3889d7",
       "format2_vector": "pylit_testallnullarrays_test_all_null_int32"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListOfList::test_list_of_list_hash_array",
       "format1_hash": "0000010843e52522d6435df07140b616e2cce64d55fc0dd4ee798a1f8dab86edf7bedc",
-      "format2_hash": "00000223c18487aa7dcb5bfb673a0d69dc41ba597febefe1c241ff26ebc4679bbf31fa",
+      "format2_hash": "000002215978d8171df62a17e8b85524418ac182dc2b1f2132ab95b8a99922dfc9c725",
       "format2_vector": "pylit_testlistoflist_test_list_of_list_hash_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListOfStruct::test_list_of_struct_hash_array",
       "format1_hash": "0000010d5f9a58c3122935886c0de076b8a90400dc9a1b3885154c734ab4616c52b626",
-      "format2_hash": "0000028264b7ca05055fba21aca4d148535baf3012f3d651999744c16a51327d5fada2",
+      "format2_hash": "000002c1c713c7ee5c139a8799e83aff16049b6a6a935e3e3f8601e04db05c523e2d7b",
       "format2_vector": "pylit_testlistofstruct_test_list_of_struct_hash_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestRealisticBatch::test_realistic_batch",
       "format1_hash": "0000010d6dda2bffa3477ea97d880b38e018f8ae083e3059db77876b48e9a14a8f17ac",
-      "format2_hash": "000002d334ea76f2a30807791177def39034f19caf4e6bd142c23ec05cc192298893de",
+      "format2_hash": "000002e86fcf5b5a6b21b9f3f4a5f3eb6608c6e531ecabd95cbf365d01089d2a924619",
       "format2_vector": "pylit_testrealisticbatch_test_realistic_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestAllNullArrays::test_all_null_string",
       "format1_hash": "00000115a6af4eb6fdb3419afebadf58a9f184f0a1fffa09ffa56600237f501db71070",
-      "format2_hash": "000002879ade9f01775e3d97277fbd1ec3c48e0281c39847f96869d3a94dd3e8d355fc",
+      "format2_hash": "0000025a88292c68392ec7d5ac54666139cb4836c9267088dfabef093e7981c322df38",
       "format2_vector": "pylit_testallnullarrays_test_all_null_string"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestSingleElementArrays::test_single_bool_false",
       "format1_hash": "00000117655fca3764c8082b61b9de7186594bdcc58b86934176bea4b12d95becc54df",
-      "format2_hash": "00000240973c422a2b514e91f409638b9caa9b490e84022e4c85cc7ebc438b08603155",
+      "format2_hash": "0000023753cbe1173b2b0f1b81ce9de03a7c0a1ba1f5431dabbdbeef99172dd357bb29",
       "format2_vector": "pylit_testsingleelementarrays_test_single_bool_false"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestRealisticBatch::test_realistic_schema",
       "format1_hash": "0000011c85d47bb95c90c6aa05b8ab930cfbb369136fffd8e120cee5d94dd84ed3c356",
-      "format2_hash": "00000254036eae7a3edfdcd5960c95be8600f4db97f52b8100c47c4a92d79f8b444792",
+      "format2_hash": "000002b4caaae1356e990fdb4b8ed43bf8f67bcdc3ee2f094da6e0f71575dc52ec31c9",
       "format2_vector": "pylit_testrealisticbatch_test_realistic_schema"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestThreeLevelStruct::test_three_level_struct_hash_array",
       "format1_hash": "0000011dc18344fc9e0c026561c3a38ca128e5afa90d7b66df2cffac51a18bf106d0d0",
-      "format2_hash": "000002c390050372191220b574a0f88980a7cdf8a7982c25c3d5c6d2352e744e200b26",
+      "format2_hash": "000002db3095dc0093c38b3aa668aee0f1805fc815542685d5d065008dc621512a8096",
       "format2_vector": "pylit_testthreelevelstruct_test_three_level_struct_hash_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestNullableStructHashArray::test_nullable_struct_hash_array",
       "format1_hash": "0000011ea07bf87d5b03b132e46a169df25352cb2e3c5a5f8b067138e0bd2a2023e6d5",
-      "format2_hash": "0000021cff2f979e54cd49abdd8d43a19929b0e023ea98a78b7c45700c0d4de7fb5d21",
+      "format2_hash": "000002f5c5e7555a574364d953e7ebeb45dbc9f232e5707133dd088420924300ae3c58",
       "format2_vector": "pylit_testnullablestructhasharray_test_nullable_struct_hash_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestMixedStructListBatch::test_mixed_struct_list_schema",
       "format1_hash": "0000011eb0482c51f8fb95dfae3c5ae83253a1e695dcf546fe5a3b6d75df172c5c2a45",
-      "format2_hash": "000002fb461efa00640c67b76df00f79bc3428908daaba4ac1232368eb43bf96e616da",
+      "format2_hash": "0000029f1118411cb35c292b7950a626469bd8cb987faa8c114d6509f09f32ec816cb8",
       "format2_vector": "pylit_testmixedstructlistbatch_test_mixed_struct_list_schema"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestStructEmptyBatch::test_struct_empty_batch",
       "format1_hash": "00000120a2341ffaf6b2413ebdb36aa062aec7c9468e946cbbba353b1ab5c5f6d1a773",
-      "format2_hash": "0000028a33a2eeedd0ab0c78292441615250f4e2dd5d37da6d1bd98ed43ee003ea1f93",
+      "format2_hash": "000002aaafa89ee39b32668aeb6f65c56501061b7194257ea88f14c3be0eca314f1d0d",
       "format2_vector": "pylit_teststructemptybatch_test_struct_empty_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestBatchAllNullColumn::test_batch_all_null_column",
       "format1_hash": "000001266d1fd64c44cf1f18ccc395bd2c712459e43807095d78115ff78497cd7ec494",
-      "format2_hash": "0000023f845b906c1a04b464b662ae67a64229b9790930e69de6cc72d395e4ee8b4752",
+      "format2_hash": "000002dca3ee7298f6495f2263e45eb2c876c9dc78f5b7462357f3be5f5d6579214e94",
       "format2_vector": "pylit_testbatchallnullcolumn_test_batch_all_null_column"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestMixedStructListBatch::test_mixed_struct_list_batch",
       "format1_hash": "00000128fd142d16920be401eb33abf71143977164eb8952a7da20ae6673a8d1d3707a",
-      "format2_hash": "000002fb371b308310a0003de7e0175d54abb92e3792573fb3afbd322e35b544ee87b0",
+      "format2_hash": "00000227eb7540623891a51b93eb1f133f461cd3231bc03f3d5f36957b452a477b912c",
       "format2_vector": "pylit_testmixedstructlistbatch_test_mixed_struct_list_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListStructNullableInnerField::test_nullable_inner_field",
       "format1_hash": "0000012c2b1c1d5b4c3dc46ed5335834dbf0d7386c38e607a398a2897fdaf1df387e1c",
-      "format2_hash": "000002880d5a883711e8de86c09cd3bdc4a2da0390e9ae93947c5de4d42675f1033f5a",
+      "format2_hash": "0000023e818d98ed740fcd8240f4fdb39e4c53581b071c9ab6200a27924c186414f178",
       "format2_vector": "pylit_testliststructnullableinnerfield_test_nullable_inner_field"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestStructWithListChild::test_struct_with_list_child_schema",
       "format1_hash": "000001310788c527cc1f9b997d616ada011d9c3790a22d17dcc4e4cf0f043539f4c0ed",
-      "format2_hash": "0000025fcffef6ce20bf6df0f21b8943b4b11045662c09d8d0770b8fa842d662a013f2",
+      "format2_hash": "00000231878b42f48260f2ba82a63298760afe8d214504d3b97a7019ff9a83eba48682",
       "format2_vector": "pylit_teststructwithlistchild_test_struct_with_list_child_schema"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestNullableStructBatch::test_nullable_struct_batch",
       "format1_hash": "000001374a7e10ae3d1b9b46aa33f43988d5015290286e7236a3acbcd028462016e048",
-      "format2_hash": "0000022f9448c97edd56a482426bafca4eccd64ccbec8640970e98f0425ffc0dc95a0b",
+      "format2_hash": "00000201b1aee1103d35dad74cda3c5a1c01e1aa5468beb02cc3cda5c1cb6c317f2d90",
       "format2_vector": "pylit_testnullablestructbatch_test_nullable_struct_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListOfList::test_list_of_list_schema",
       "format1_hash": "00000141016034ea375b62e02305da3756a08f63bdfa572a285858a15b1d6d0bb66330",
-      "format2_hash": "000002021a0c07c4ba2f2c8c3185b66e0010ca100b17294188249024aee83cdcca6835",
+      "format2_hash": "0000023014336b70e541ea20913795de44594938a32b325f17b5f03ed6ebf09859a95a",
       "format2_vector": "pylit_testlistoflist_test_list_of_list_schema"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestSingleElementArrays::test_single_string",
       "format1_hash": "0000014db35cf6860dda66df959cd2b4882a4cddaa6d17e74cf389e71c5553e4cceadb",
-      "format2_hash": "00000204f74cfa9c23214afb9bc7a19fd6815b1c87115bbd295fbd47078e1b90814648",
+      "format2_hash": "00000229b25b121cf4b425c068c2ac17b1952497cf7015668b73a62f925a078fa69d67",
       "format2_vector": "pylit_testsingleelementarrays_test_single_string"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestNonNullableList::test_list_non_nullable",
       "format1_hash": "00000150f18fb7ba1d34afe3f1b721a1ce10d1466dd55c228119449703ccf5ab771a5b",
-      "format2_hash": "000002153518ab6f2ec6777784fcf99acfd96dbf8d2941929284676875ae5d1bad1b96",
+      "format2_hash": "000002c60a39367e08f911e8d99db430267db89ca41e4cef6e87ac01520422354684a6",
       "format2_vector": "pylit_testnonnullablelist_test_list_non_nullable"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestEmptyArrays::test_empty_int32_array",
       "format1_hash": "0000015b41cb9aa8a4c79da8859ae00ce976d8184bdf5426060292b69717c6f28ed38a",
-      "format2_hash": "0000023d78a36c387f0a44f74de1ccfde1cf2d8c0fc078b4d1f47d16e5810cffd3be7f",
+      "format2_hash": "000002b87ccbba66f376281848a40936e3b3697d877c78ec651aa4151939d9f3af2277",
       "format2_vector": "pylit_testemptyarrays_test_empty_int32_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListOfList::test_list_of_list_batch",
       "format1_hash": "000001644acff58777778402bb96ee8aa5e8fac1b3ffe7c58fe3a27860d0e93581ed10",
-      "format2_hash": "000002d4a91c629161ff8126db429572a4cd20c19ffa1d1f31db8c6eec0489d668216f",
+      "format2_hash": "0000024354ac4eb6cef06e975af9b4a9f110e6baf409446897e122849553b159e6dc27",
       "format2_vector": "pylit_testlistoflist_test_list_of_list_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListStructNullableInnerField::test_non_nullable_inner_field",
       "format1_hash": "000001713fa0e500c9aebea61039b30371fd84c0dff8cd3b96b4266978658bf73e4d8c",
-      "format2_hash": "000002d7423b057587e976fe344330d7b29694dd4a709d66cf4217ed8d8e1ccc69a39f",
+      "format2_hash": "0000021a7aa4df873b7627617a5ce9a234a8849202508afc27eda81af271d8b12bf592",
       "format2_vector": "pylit_testliststructnullableinnerfield_test_non_nullable_inner_field"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestSchema4LevelNestedStruct::test_schema_4_level_nested_struct",
       "format1_hash": "0000017e33cfc98b4338141e1d5dae0eef992e2c22ff89fbb9be054f7fae96f1b8577e",
-      "format2_hash": "0000023b39cd00c1b1edbe305fcdddaf7e954d288584bfc8e08752098b408920c81162",
+      "format2_hash": "000002a07f8d13692700d7b2cad515d343a2a1ce4b3dd7deac50316102a43638b496d2",
       "format2_vector": "pylit_testschema4levelnestedstruct_test_schema_4_level_nested_struct"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestSchemaListOfStructWithList::test_schema_list_of_struct_with_list",
       "format1_hash": "0000017f5258ff48e85b2a63cd1a29590ff3bfca39bf718365200ad74a8232bb654ec6",
-      "format2_hash": "0000029ed92e6613925ec60e34390bae6bf243e8ceac257139e08b62fd7fdd759c85eb",
+      "format2_hash": "000002a6a3ef288f2975f6a75b0336b2b7d69ffb4a2d129046710b7184d1eb76a45fe2",
       "format2_vector": "pylit_testschemalistofstructwithlist_test_schema_list_of_struct_with_list"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestEmptyBatchComplexSchema::test_empty_batch_complex_schema",
       "format1_hash": "000001837b0cc525983aca21f8979b3c2ed7c77d22728fb3b9a56df6ed4aee540dfa83",
-      "format2_hash": "000002f6f2c584b8001599fb6a07e4e30663a931be6b269c552f7b98d717536fbcccfd",
+      "format2_hash": "000002a157d896c73e72632c68cabed99b8351ca116199217e209552f9bfaf70721cff",
       "format2_vector": "pylit_testemptybatchcomplexschema_test_empty_batch_complex_schema"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestNullableListStructNullableChildren::test_nullable_list_struct_nullable_children_batch",
       "format1_hash": "0000018a03ac4fd279a17240cb084cef23b1dbda814a60dba70f2147cb468f9c44af96",
-      "format2_hash": "000002b5fde83bc94e02aa663fe4c1aad59a5280c6f0d487decd0b66801abe35d43104",
+      "format2_hash": "000002411fa81d41e904d832eceea8e2041fc96bda4e4dc58e72b76380e086d400a008",
       "format2_vector": "pylit_testnullableliststructnullablechildren_test_nullable_list_struct_nullable_children_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestFloatSpecialValues::test_float64_special_values",
       "format1_hash": "000001947acf002083724864f155cf2857b1c9107749f6c8bfec13ea84c20fa9f20b5a",
-      "format2_hash": "0000027660de0bf00761a94c7aa2c6550cce417d9c14e5476ae787e24d555236a973bc",
+      "format2_hash": "000002b8e0f66c036e26098ba55673ee856b1b23fb6dcb9acfb63207cf8ad6fadc34dd",
       "format2_vector": "pylit_testfloatspecialvalues_test_float64_special_values"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestEmptyBatchComplexSchema::test_empty_batch_complex_schema_hash",
       "format1_hash": "00000194e104ebfea3ba38467c883d05a71884f8a1d0eace1c0dcfb00ab2d1203aa654",
-      "format2_hash": "000002985afdc0c320fdd4641d7bb5cb3eebec474dac7c2aa5679eceba6c53e24186fe",
+      "format2_hash": "00000286ebe427c00dea251c527cc286dc591efea4d6787cb3b40d3330a476b74f6d6c",
       "format2_vector": "pylit_testemptybatchcomplexschema_test_empty_batch_complex_schema_hash"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestStructMixedTypes::test_struct_mixed_types_hash_array",
       "format1_hash": "0000019f925992104e467b68e68e7dfa64ac7d39c82b002cb8c06f1c5bec19156107a3",
-      "format2_hash": "0000024e525a6930337eb2b8ce95fe8af77f0afd021b3e5513d9d4d0cddae8acc5e590",
+      "format2_hash": "00000269c3b3a491ea942d3067cfdf07b67a35bd708e4ee05c45cc302190016ab4a9f7",
       "format2_vector": "pylit_teststructmixedtypes_test_struct_mixed_types_hash_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestEmptyArrays::test_empty_bool_array",
       "format1_hash": "000001b93f053f60f756b3d47a304889daa8011b9d09b4c83efbfe10ca7f073d59d4ea",
-      "format2_hash": "0000020a3aed926ea2ae4c757b1505aa0c887ff47d1af823b1acc601036a4310ede4b4",
+      "format2_hash": "000002754d4bf287e5b460d403a8468e526e92a738921b2aa8dbab8cc8a3450bcac203",
       "format2_vector": "pylit_testemptyarrays_test_empty_bool_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestListOfStruct::test_nullable_list_of_struct_hash_array",
       "format1_hash": "000001bb51997ac0fe67d4b08c5ced13b763c0ff5a532c9f9c8932fa2a4dd96fe57ea8",
-      "format2_hash": "000002fa2beb54d6af22cf565ee84f090ad7b3d097a2381302adb44f6067f56e63a7ca",
+      "format2_hash": "000002cd3cde5a0df63e3a6889556920e248890a882572450350a03da90f67f37e9f90",
       "format2_vector": "pylit_testlistofstruct_test_nullable_list_of_struct_hash_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestStructFieldOrderIndependence::test_struct_3field_order_independence",
       "format1_hash": "000001c3c2f4d6414b062973fa8277701f8e0689f7656405d03cd7fef1e1ef7c05ac25",
-      "format2_hash": "000002df24f48f927ab26711c1db497b5892eae8779a146bdd9eae7784d49f01593283",
+      "format2_hash": "0000025560faf3d3f3ce308ad2c7129f24f42589e7b25f0c6dc70ddd2aa45f7464111a",
       "format2_vector": "pylit_teststructfieldorderindependence_test_struct_3field_order_independence"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestUnicodeStrings::test_unicode_string_array",
       "format1_hash": "000001d3f64ee0c7dac33e00445c2dd3edbb4b14cf61608682e4aae20d034dcaa3af40",
-      "format2_hash": "000002f996fdd3ff03ad6faefd5ad734dc7c06d8719ec05794db6b5acae5ff694f5486",
+      "format2_hash": "0000029f656d188a338cc277592a06b5710796016037efc7fc7cb5746e65bfadd752b4",
       "format2_vector": "pylit_testunicodestrings_test_unicode_string_array"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestNestedNullableInnerStruct::test_nested_nullable_inner_struct",
       "format1_hash": "000001d43e8fb43a96546aa158c8defdcf186e1f15e42cf12fb2439902374d320f503c",
-      "format2_hash": "000002e046c146668f0f34a7a9d212d17df6dfc55adad063b1e60b0256fb4b2fdec820",
+      "format2_hash": "00000236f16a0a8179aefeb33f440a83a7d32aad8993c022796eab539de2e1d63521b8",
       "format2_vector": "pylit_testnestednullableinnerstruct_test_nested_nullable_inner_struct"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestLargeSchema::test_large_schema_12_fields",
       "format1_hash": "000001d4b6edc1304b0e981460aefa31813af93631c46558569a5ba8d5613cdbd722bd",
-      "format2_hash": "0000021bd0ecec5be7d78beaa0f9af537a44d47b1a7fa9035d0f7fd0050a435b3d277d",
+      "format2_hash": "000002a89c186dbf815b7192ed4ac574196d1e0203db10d53dd7d16fbe12fbbdbb651e",
       "format2_vector": "pylit_testlargeschema_test_large_schema_12_fields"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestMultiBatchStruct::test_multi_batch_struct",
       "format1_hash": "000001d6b36c3858d63ed06e99de401b83e6255070da784f2d88c376b15e53bacbe86c",
-      "format2_hash": "0000023aa02f66b4e83360ebc47d3c74f6dd9c3ed9fde617a8218bfaaa48817f3f2da2",
+      "format2_hash": "0000025d4b5b129c220a3171a616f1ff060a00fdb3647a34434f4d83e9d0a68502c334",
       "format2_vector": "pylit_testmultibatchstruct_test_multi_batch_struct"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestSingleElementArrays::test_single_int64",
       "format1_hash": "000001e1cb4b7821c4238f0c53befd313280ff45a74b301e7044957b01a701108c5b7f",
-      "format2_hash": "000002ae4689b3dd6b1e4371f832a8df5b1aee55482f8fc995866e09adf37e3a80b770",
+      "format2_hash": "000002ac6614ba2b81b9238b2888b17d9ccb5eb46a7ea3285c22a1b1ad25997d726e7b",
       "format2_vector": "pylit_testsingleelementarrays_test_single_int64"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestStructWithListChild::test_struct_with_list_child_batch",
       "format1_hash": "000001e4173182e5596f68ac3a1013caea1fc4aa3003ebc5c434bdab8db83c9173635d",
-      "format2_hash": "000002a8d980079fe57b52e69f297f5614ec02e45fdb53fdabc08cf05caa92c6064a83",
+      "format2_hash": "0000027699b386e4e56ce34d2a38f748566a75c36c62ca8f5fa36180f0ea8809ac528c",
       "format2_vector": "pylit_teststructwithlistchild_test_struct_with_list_child_batch"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestThreeLevelStruct::test_three_level_struct_schema",
       "format1_hash": "000001f5e018be18625769644d2f10aa06d52a50df75ade8872248f7dc4b296ce997f7",
-      "format2_hash": "0000024884c452f6c13da2080e1e9213a74a9dab3b12a0f710e9721d74a12881971bb8",
+      "format2_hash": "000002613ec04c0f0d49d1eff685ac3ffc3ee80a47ddb2121860f9845ac0d3a33fe7b2",
       "format2_vector": "pylit_testthreelevelstruct_test_three_level_struct_schema"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestBooleanArrays::test_bool_17_elements",
       "format1_hash": "000001f8ad377be621fd278f5590c7cab06ca42e2b4ed6867d363f9fbf28f6f3d7582a",
-      "format2_hash": "000002f8e53d6dd8d7337e07b15dc8dc83d0636c3a1007d936ffa058279d614c08b068",
+      "format2_hash": "000002d8e326d69087a22ebe44e971f2673272ad044e99927c9c4cfcf1cf26f1e7dcf2",
       "format2_vector": "pylit_testbooleanarrays_test_bool_17_elements"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestMultiBatchList::test_multi_batch_list",
       "format1_hash": "000001fcf529d339593cb8537af4c1ed7d02aae69cfbbd2608b02e811035edb6ba4ec3",
-      "format2_hash": "000002a13b117b286d47ac47a1f53af3dfacb479530fb59152da40b8213429ec310519",
+      "format2_hash": "00000248df16aca0c1f681b8b02cd0c859b3073c238101a6893bfa44d9f536a9819870",
       "format2_vector": "pylit_testmultibatchlist_test_multi_batch_list"
     },
     {
       "source": "starfix-python tests/test_golden_parity_r2.py",
       "id": "tests/test_golden_parity_r2.py::TestThreeLevelStruct::test_three_level_struct_batch",
       "format1_hash": "000001fdd123a2cceb977b1448eaba26039de58f3a782244bf1cff70a6742e2f6f220a",
-      "format2_hash": "000002009faf5f41303751117910475f04c0c6685450681ca6f45daf01446040b984db",
+      "format2_hash": "000002207e061a060534d98724ad2beabd1cd5d1350e5614104815a6a6c0ef13d8935c",
       "format2_vector": "pylit_testthreelevelstruct_test_three_level_struct_batch"
     },
     {
       "source": "starfix-python tests/test_metadata_hashing.py",
-      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_a_two_column_table",
+      "id": "tests/test_golden_parity.py::TestSpecExamples::test_example_a_two_column_table#2",
       "format1_hash": "0000018020e47f4462f26b0bc73ad110ea0f9198c2745c04ce23335093d2b78ef51c88",
-      "format2_hash": "00000292eeae0418072b559ac1b864e6a7e249749582ab32239ffc9443a00dcc18946f",
+      "format2_hash": "000002d3ab7e2b2ff00fc12767f712e8e3f1e941d4616af2d44b3a5ded0675afd31207",
       "format2_vector": "pylit_testspecexamples_test_example_a_two_column_table_2"
     }
   ]

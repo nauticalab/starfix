@@ -36,13 +36,13 @@ use std::sync::Arc;
 use std::{fs, io, slice};
 
 use arrow::array::{
-    Array as _, ArrayRef, BooleanArray, DictionaryArray, FixedSizeBinaryArray, Int32Array,
-    Int32Builder, Int8Array, LargeListArray, LargeStringArray, ListArray, ListBuilder, RecordBatch,
-    RecordBatchOptions, StringArray, StructArray,
+    make_array, Array as _, ArrayData, ArrayRef, BooleanArray, DictionaryArray,
+    FixedSizeBinaryArray, Int32Array, Int32Builder, Int8Array, LargeListArray, LargeStringArray,
+    ListArray, ListBuilder, RecordBatch, RecordBatchOptions, StringArray, StructArray,
 };
-use arrow::buffer::{NullBuffer, OffsetBuffer};
+use arrow::buffer::{Buffer, NullBuffer, OffsetBuffer};
 use arrow::compute::cast;
-use arrow::datatypes::Int32Type;
+use arrow::datatypes::{Int32Type, Int8Type};
 use arrow_ipc::reader::StreamReader;
 use arrow_ipc::writer::StreamWriter;
 use arrow_schema::{DataType, Field, Fields, IntervalUnit, Schema, SchemaRef, TimeUnit};
@@ -173,6 +173,11 @@ impl Builder {
         assert!(
             self.vectors.iter().all(|v| v.id != id),
             "duplicate vector id {id}"
+        );
+        assert_eq!(
+            round_trip_hash(method, &ipc, config),
+            hash,
+            "vector {id} does not survive its IPC encoding"
         );
         self.vectors.push(GoldenVector {
             id: id.to_owned(),
@@ -1196,6 +1201,7 @@ fn build() -> Builder {
     add_format1_metadata_names_and_extensions(&mut gen);
     add_review_coverage(&mut gen);
     add_python_literal_inputs(&mut gen);
+    add_entry_points_and_late_review_coverage(&mut gen);
 
     gen
 }
@@ -2466,6 +2472,288 @@ fn add_python_literal_inputs(gen: &mut Builder) {
             &input,
         );
     }
+}
+
+/// Hash of a vector as a consumer sees it: decoded from its IPC stream (without validation, as
+/// some vectors are deliberately outside what arrow-rs validates).
+fn round_trip_hash(method: &str, ipc: &str, config: HasherConfig) -> Vec<u8> {
+    let bytes = BASE64_STANDARD.decode(ipc).unwrap();
+    #[expect(unsafe_code, reason = "Decoding vectors arrow-rs would not validate")]
+    // SAFETY: the stream was just written by arrow-rs from arrays with consistent buffers; only
+    // the nullability rule for hidden list items may be relaxed.
+    let reader = unsafe {
+        StreamReader::try_new(Cursor::new(bytes), None)
+            .unwrap()
+            .with_skip_validation(true)
+    };
+    let schema = reader.schema();
+    let batches: Vec<RecordBatch> = reader.map(Result::unwrap).collect();
+    match method {
+        "hash_schema" => ArrowDigester::hash_schema(&schema, config),
+        "hash_record_batch" => ArrowDigester::hash_record_batch(batches.first().unwrap(), config),
+        "hash_array" => ArrowDigester::hash_array_with_config(
+            batches.first().unwrap().column(0).as_ref(),
+            config,
+        ),
+        _ => {
+            let mut digester = ArrowDigester::new(&schema, config);
+            for b in &batches {
+                digester.update(b);
+            }
+            digester.finalize()
+        }
+    }
+}
+
+/// `FixedSizeBinary(0)` with `n` rows and optional validity.
+fn zero_width(n: usize, valid: Option<Vec<bool>>) -> ArrayRef {
+    let data = ArrayData::builder(DataType::FixedSizeBinary(0))
+        .len(n)
+        .add_buffer(Buffer::from(Vec::<u8>::new()))
+        .nulls(valid.map(NullBuffer::from))
+        .build()
+        .unwrap();
+    make_array(data)
+}
+
+/// Group 27: the `hash_array` root (always nullable), `FixedSizeBinary(0)`, dictionaries of lists,
+/// and nulls hidden under null list values of a non-nullable element. (Nested dictionaries are
+/// tested in Rust only: arrow-rs cannot round-trip them through IPC.)
+#[expect(
+    clippy::too_many_lines,
+    reason = "fixture definitions are long but linear"
+)]
+fn add_entry_points_and_late_review_coverage(gen: &mut Builder) {
+    let col = |name: &str, array: ArrayRef, nullable: bool| {
+        batch(
+            vec![Field::new(name, array.data_type().clone(), nullable)],
+            vec![array],
+        )
+    };
+
+    // 27a. hash_array: the root is always nullable, so a validity buffer without nulls is
+    // irrelevant and a null still counts.
+    {
+        let values: ArrayRef = Arc::new(Int32Array::from(vec![1, 2, 3]));
+        let all_valid: ArrayRef = Arc::new(Int32Array::new(
+            vec![1, 2, 3].into(),
+            Some(NullBuffer::from(vec![true, true, true])),
+        ));
+        let with_null: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), None, Some(3)]));
+        gen.add(
+            "root_int32_no_validity_array_f0",
+            "hash_array Int32 [1, 2, 3] without a validity buffer (the root is always nullable)",
+            0x00,
+            false,
+            &Input::Array(values),
+        );
+        gen.add(
+            "root_int32_all_valid_array_f0",
+            "hash_array Int32 [1, 2, 3] with an all-valid validity buffer",
+            0x00,
+            false,
+            &Input::Array(all_valid),
+        );
+        gen.add(
+            "root_int32_with_null_array_f0",
+            "hash_array Int32 [1, null, 3]",
+            0x00,
+            false,
+            &Input::Array(with_null),
+        );
+        gen.relate(
+            "equal",
+            &[
+                "root_int32_no_validity_array_f0",
+                "root_int32_all_valid_array_f0",
+            ],
+            "the hash_array root is always nullable: a validity buffer without nulls changes nothing",
+        );
+        gen.relate(
+            "different",
+            &[
+                "root_int32_no_validity_array_f0",
+                "root_int32_with_null_array_f0",
+            ],
+            "a null in the root array counts",
+        );
+    }
+
+    // 27b. FixedSizeBinary(0): no value bytes, but validity and the row count count.
+    {
+        gen.add(
+            "fsb0_nullable_rb_f0",
+            "z: FixedSizeBinary(0)? rows [b\"\", null, b\"\"]",
+            0x00,
+            false,
+            &Input::Batch(col("z", zero_width(3, Some(vec![true, false, true])), true)),
+        );
+        gen.add(
+            "fsb0_1row_rb_f0",
+            "z: FixedSizeBinary(0) one row [b\"\"]",
+            0x00,
+            false,
+            &Input::Batch(col("z", zero_width(1, None), false)),
+        );
+        gen.add(
+            "fsb0_5rows_rb_f0",
+            "z: FixedSizeBinary(0) five rows of b\"\"",
+            0x00,
+            false,
+            &Input::Batch(col("z", zero_width(5, None), false)),
+        );
+        gen.add(
+            "fsb0_nullable_array_f0",
+            "hash_array FixedSizeBinary(0) [b\"\", null, b\"\"]",
+            0x00,
+            false,
+            &Input::Array(zero_width(3, Some(vec![true, false, true]))),
+        );
+        gen.add(
+            "fsb0_array_f0",
+            "hash_array FixedSizeBinary(0) [b\"\", b\"\", b\"\"]",
+            0x00,
+            false,
+            &Input::Array(zero_width(3, None)),
+        );
+        gen.relate(
+            "different",
+            &["fsb0_1row_rb_f0", "fsb0_5rows_rb_f0"],
+            "zero-width values still count rows",
+        );
+        gen.relate(
+            "different",
+            &["fsb0_nullable_array_f0", "fsb0_array_f0"],
+            "zero-width values still count nulls",
+        );
+    }
+
+    // 27c. A dictionary of lists hashes as the decoded list.
+    {
+        let plain: ArrayRef = Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, true)),
+            OffsetBuffer::from_lengths(vec![2, 1, 2]),
+            Arc::new(Int32Array::from(vec![1, 2, 3, 1, 2])),
+            None,
+        ));
+        let dict_values: ArrayRef = Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, true)),
+            OffsetBuffer::from_lengths(vec![2, 1]),
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            None,
+        ));
+        let dict: ArrayRef = Arc::new(
+            DictionaryArray::<Int8Type>::try_new(Int8Array::from(vec![0, 1, 0]), dict_values)
+                .unwrap(),
+        );
+        gen.add(
+            "dict_of_list_rb_f0",
+            "c: Dictionary<Int8, List<Int32?>> keys [0, 1, 0] over [[1, 2], [3]]",
+            0x00,
+            false,
+            &Input::Batch(col("c", Arc::clone(&dict), false)),
+        );
+        gen.add(
+            "plain_list_rb_f0",
+            "c: List<Int32?> [[1, 2], [3], [1, 2]]",
+            0x00,
+            false,
+            &Input::Batch(col("c", Arc::clone(&plain), false)),
+        );
+        gen.add(
+            "dict_of_list_array_f0",
+            "hash_array of the dictionary of lists",
+            0x00,
+            false,
+            &Input::Array(dict),
+        );
+        gen.add(
+            "plain_list_array_f0",
+            "hash_array of the plain list",
+            0x00,
+            false,
+            &Input::Array(plain),
+        );
+        gen.relate(
+            "equal",
+            &["dict_of_list_rb_f0", "plain_list_rb_f0"],
+            "a dictionary of lists is its decoded list",
+        );
+        gen.relate(
+            "equal",
+            &["dict_of_list_array_f0", "plain_list_array_f0"],
+            "a dictionary of lists is its decoded list (hash_array)",
+        );
+    }
+
+    // 27d. Nulls hidden under a null list value of a non-nullable element are not elements.
+    for large in [false, true] {
+        let kind = if large { "large_list" } else { "list" };
+        let hidden = hidden_null_list(large, true);
+        let clean = hidden_null_list(large, false);
+        let ty = if large { "LargeList" } else { "List" };
+        gen.add(
+            &format!("hidden_null_{kind}_rb_f0"),
+            &format!(
+                "l: {ty}<Int32 non-null>? rows [[1], null, [4]]; the null row's slot covers a null item"
+            ),
+            0x00,
+            false,
+            &Input::Batch(col("l", hidden, true)),
+        );
+        gen.add(
+            &format!("clean_{kind}_rb_f0"),
+            &format!(
+                "l: {ty}<Int32 non-null>? rows [[1], null, [4]]; the null row's slot is empty"
+            ),
+            0x00,
+            false,
+            &Input::Batch(col("l", clean, true)),
+        );
+    }
+    gen.relate(
+        "equal",
+        &[
+            "hidden_null_list_rb_f0",
+            "clean_list_rb_f0",
+            "hidden_null_large_list_rb_f0",
+            "clean_large_list_rb_f0",
+        ],
+        "items under a null list value are not visited, for List and LargeList alike",
+    );
+}
+
+/// `List` or `LargeList` with a non-nullable `Int32` item and rows `[[1], null, [4]]`; with
+/// `hidden`, the null row's slot covers a null item (pyarrow can produce such arrays; arrow-rs
+/// does not validate them, so they are built unchecked).
+fn hidden_null_list(large: bool, hidden: bool) -> ArrayRef {
+    let item = Arc::new(Field::new("item", DataType::Int32, false));
+    let values: ArrayRef = if hidden {
+        Arc::new(Int32Array::from(vec![Some(1), None, Some(4)]))
+    } else {
+        Arc::new(Int32Array::from(vec![1, 4]))
+    };
+    let ends: Vec<i64> = if hidden {
+        vec![0, 1, 2, 3]
+    } else {
+        vec![0, 1, 1, 2]
+    };
+    let (dt, offsets) = if large {
+        (DataType::LargeList(item), Buffer::from_vec(ends))
+    } else {
+        let small: Vec<i32> = ends.iter().map(|&e| i32::try_from(e).unwrap()).collect();
+        (DataType::List(item), Buffer::from_vec(small))
+    };
+    let builder = ArrayData::builder(dt)
+        .len(3)
+        .add_buffer(offsets)
+        .add_child_data(values.to_data())
+        .nulls(Some(NullBuffer::from(vec![true, false, true])));
+    #[expect(unsafe_code, reason = "Building an array arrow-rs would not validate")]
+    // SAFETY: offsets, child length and validity are consistent; only the nullability rule for
+    // hidden items is relaxed, which the hasher does not rely on.
+    let data = unsafe { builder.build_unchecked() };
+    make_array(data)
 }
 
 #[expect(clippy::panic, reason = "CLI tool — the append-only guard aborts")]

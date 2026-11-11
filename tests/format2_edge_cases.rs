@@ -264,4 +264,239 @@ mod tests {
             ArrowDigester::hash_array(&plain)
         );
     }
+
+    fn plain_list() -> ArrayRef {
+        Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, true)),
+            OffsetBuffer::from_lengths(vec![2, 1, 2]),
+            Arc::new(Int32Array::from(vec![1, 2, 3, 1, 2])),
+            None,
+        ))
+    }
+
+    /// Dictionary<Int8, List<Int32>> with keys [0, 1, 0] over [[1, 2], [3]].
+    fn dict_of_list() -> ArrayRef {
+        use arrow::array::{DictionaryArray, Int8Array};
+        use arrow::datatypes::Int8Type;
+        let values: ArrayRef = Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Int32, true)),
+            OffsetBuffer::from_lengths(vec![2, 1]),
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            None,
+        ));
+        Arc::new(
+            DictionaryArray::<Int8Type>::try_new(Int8Array::from(vec![0, 1, 0]), values).unwrap(),
+        )
+    }
+
+    #[test]
+    fn dictionary_of_list_equals_plain_list() {
+        let col = |a: ArrayRef| rb(vec![Field::new("c", a.data_type().clone(), false)], vec![a]);
+        assert_eq!(
+            ArrowDigester::hash_record_batch(&col(dict_of_list()), HasherConfig::default()),
+            ArrowDigester::hash_record_batch(&col(plain_list()), HasherConfig::default())
+        );
+        assert_eq!(
+            ArrowDigester::hash_array(dict_of_list().as_ref()),
+            ArrowDigester::hash_array(plain_list().as_ref())
+        );
+        let in_struct = |a: ArrayRef| {
+            let s = StructArray::new(
+                Fields::from(vec![Field::new("d", a.data_type().clone(), false)]),
+                vec![a],
+                None,
+            );
+            rb(
+                vec![Field::new("s", s.data_type().clone(), false)],
+                vec![Arc::new(s)],
+            )
+        };
+        assert_eq!(
+            ArrowDigester::hash_record_batch(&in_struct(dict_of_list()), HasherConfig::default()),
+            ArrowDigester::hash_record_batch(&in_struct(plain_list()), HasherConfig::default())
+        );
+    }
+
+    #[test]
+    fn nested_dictionary_resolves_recursively() {
+        use arrow::array::{DictionaryArray, Int8Array, StringArray};
+        use arrow::datatypes::Int8Type;
+        let inner = DictionaryArray::<Int8Type>::try_new(
+            Int8Array::from(vec![1, 0]),
+            Arc::new(StringArray::from(vec!["x", "y"])),
+        )
+        .unwrap();
+        let outer = DictionaryArray::<Int8Type>::try_new(
+            Int8Array::from(vec![Some(0), Some(1), None, Some(0)]),
+            Arc::new(inner),
+        )
+        .unwrap();
+        let plain = StringArray::from(vec![Some("y"), Some("x"), None, Some("y")]);
+        let col = |a: ArrayRef| rb(vec![Field::new("c", a.data_type().clone(), true)], vec![a]);
+        assert_eq!(
+            ArrowDigester::hash_record_batch(
+                &col(Arc::new(outer.clone())),
+                HasherConfig::default()
+            ),
+            ArrowDigester::hash_record_batch(
+                &col(Arc::new(plain.clone())),
+                HasherConfig::default()
+            )
+        );
+        assert_eq!(
+            ArrowDigester::hash_array(&outer),
+            ArrowDigester::hash_array(&plain)
+        );
+    }
+
+    /// `FixedSizeBinary(0)` with `n` rows and optional validity.
+    fn zero_width(n: usize, valid: Option<Vec<bool>>) -> ArrayRef {
+        use arrow::array::{make_array, ArrayData};
+        use arrow::buffer::Buffer;
+        let data = ArrayData::builder(DataType::FixedSizeBinary(0))
+            .len(n)
+            .add_buffer(Buffer::from(Vec::<u8>::new()))
+            .nulls(valid.map(NullBuffer::from))
+            .build()
+            .unwrap();
+        make_array(data)
+    }
+
+    #[test]
+    fn zero_width_fixed_size_binary() {
+        let with_nulls = zero_width(3, Some(vec![true, false, true]));
+        let b = rb(
+            vec![Field::new("z", DataType::FixedSizeBinary(0), true)],
+            vec![Arc::clone(&with_nulls)],
+        );
+        assert!(!panics(|| {
+            ArrowDigester::hash_record_batch(&b, HasherConfig::default());
+        }));
+        assert!(!panics(|| {
+            ArrowDigester::hash_array(with_nulls.as_ref());
+        }));
+        // the row count still counts
+        let col = |n: usize| {
+            rb(
+                vec![Field::new("z", DataType::FixedSizeBinary(0), false)],
+                vec![zero_width(n, None)],
+            )
+        };
+        assert_ne!(
+            ArrowDigester::hash_record_batch(&col(1), HasherConfig::default()),
+            ArrowDigester::hash_record_batch(&col(5), HasherConfig::default())
+        );
+    }
+
+    /// `List` or `LargeList` with a non-nullable `Int32` item and rows `[[1], null, [4]]`; with
+    /// `hidden`, the null row's slot covers a null item.
+    fn list_with_hidden_null(large: bool, hidden: bool) -> RecordBatch {
+        use arrow::array::{make_array, ArrayData};
+        use arrow::buffer::Buffer;
+        let item = Arc::new(Field::new("item", DataType::Int32, false));
+        let values: ArrayRef = if hidden {
+            Arc::new(Int32Array::from(vec![Some(1), None, Some(4)]))
+        } else {
+            Arc::new(Int32Array::from(vec![1, 4]))
+        };
+        let ends: Vec<i64> = if hidden {
+            vec![0, 1, 2, 3]
+        } else {
+            vec![0, 1, 1, 2]
+        };
+        let (dt, offsets) = if large {
+            (DataType::LargeList(item), Buffer::from_vec(ends))
+        } else {
+            let small: Vec<i32> = ends.iter().map(|&e| i32::try_from(e).unwrap()).collect();
+            (DataType::List(item), Buffer::from_vec(small))
+        };
+        let builder = ArrayData::builder(dt)
+            .len(3)
+            .add_buffer(offsets)
+            .add_child_data(values.to_data())
+            .nulls(Some(NullBuffer::from(vec![true, false, true])));
+        // arrow-rs refuses a null under a null list value of a non-nullable item, but pyarrow
+        // can produce such arrays (they reach starfix over the C data interface).
+        #[expect(unsafe_code, reason = "Building an array arrow-rs would not validate")]
+        // SAFETY: offsets, child length and validity are consistent; only the nullability rule
+        // for hidden items is relaxed, which the hasher does not rely on.
+        let data = unsafe { builder.build_unchecked() };
+        let col = make_array(data);
+        rb(
+            vec![Field::new("l", col.data_type().clone(), true)],
+            vec![col],
+        )
+    }
+
+    /// `List` or `LargeList` with a non-nullable `Int32` item and rows `[[1, null], [4]]`: the
+    /// null item lies under a valid list value, so it is a real element.
+    fn list_with_visible_null(large: bool) -> RecordBatch {
+        use arrow::array::{make_array, ArrayData};
+        use arrow::buffer::Buffer;
+        let item = Arc::new(Field::new("item", DataType::Int32, false));
+        let values = Int32Array::from(vec![Some(1), None, Some(4)]);
+        let ends: Vec<i64> = vec![0, 2, 3];
+        let (dt, offsets) = if large {
+            (DataType::LargeList(item), Buffer::from_vec(ends))
+        } else {
+            let small: Vec<i32> = ends.iter().map(|&e| i32::try_from(e).unwrap()).collect();
+            (DataType::List(item), Buffer::from_vec(small))
+        };
+        let builder = ArrayData::builder(dt)
+            .len(2)
+            .add_buffer(offsets)
+            .add_child_data(values.to_data());
+        #[expect(unsafe_code, reason = "Building an array arrow-rs would not validate")]
+        // SAFETY: offsets, child length and validity are consistent; only the nullability rule
+        // is broken, which is what the hasher must reject.
+        let data = unsafe { builder.build_unchecked() };
+        let col = make_array(data);
+        rb(
+            vec![Field::new("l", col.data_type().clone(), true)],
+            vec![col],
+        )
+    }
+
+    #[test]
+    fn visible_null_under_valid_list_value_is_rejected() {
+        for large in [false, true] {
+            let b = list_with_visible_null(large);
+            assert!(
+                panics(|| {
+                    ArrowDigester::hash_record_batch(&b, HasherConfig::default());
+                }),
+                "large {large}: record batch"
+            );
+            let col = Arc::clone(b.column(0));
+            assert!(
+                panics(|| {
+                    ArrowDigester::hash_array(col.as_ref());
+                }),
+                "large {large}: hash_array"
+            );
+        }
+    }
+
+    #[test]
+    fn hidden_nulls_under_null_list_values_are_not_elements() {
+        for large in [false, true] {
+            let hidden = list_with_hidden_null(large, true);
+            let clean = list_with_hidden_null(large, false);
+            assert_eq!(
+                ArrowDigester::hash_record_batch(&hidden, HasherConfig::default()),
+                ArrowDigester::hash_record_batch(&clean, HasherConfig::default()),
+                "large {large}"
+            );
+        }
+        assert_eq!(
+            ArrowDigester::hash_record_batch(
+                &list_with_hidden_null(false, true),
+                HasherConfig::default()
+            ),
+            ArrowDigester::hash_record_batch(
+                &list_with_hidden_null(true, true),
+                HasherConfig::default()
+            )
+        );
+    }
 }

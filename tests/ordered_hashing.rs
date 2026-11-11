@@ -38,11 +38,17 @@ mod tests {
         }
     }
 
-    /// Format-2 header (byte-layout spec Section 1).
+    /// Format-2 header of a schema digest (byte-layout spec Section 1).
     fn tag(flags: u8) -> Vec<u8> {
+        header(b'S', flags)
+    }
+
+    /// Format-2 header with an explicit entry-point kind (`S`, `R` or `A`).
+    fn header(kind: u8, flags: u8) -> Vec<u8> {
         let mut t = vec![0x00_u8];
         t.extend_from_slice(b"starfix");
         t.extend_from_slice(&VERSION);
+        t.push(kind);
         t.push(flags);
         t
     }
@@ -210,6 +216,7 @@ mod tests {
         let schema_digest = sha(&[&tag(0x01), json.as_bytes()]);
         // row count, then entries in path order: "a", "b"
         let expected = versioned(&sha(&[
+            &header(b'R', 0x01),
             &schema_digest,
             &1_u64.to_le_bytes(),
             &sha(&[&6_i32.to_le_bytes()]),
@@ -323,9 +330,11 @@ mod tests {
         ]);
         let json = r#"{"Struct":[{"data_type":"Int32","name":"z","nullable":false},{"data_type":"Int32","name":"a","nullable":false}]}"#;
         let expected = versioned(&sha(&[
-            &tag(0x02),
+            &header(b'A', 0x02),
             json.as_bytes(),
-            &1_u64.to_le_bytes(),          // array length
+            &1_u64.to_le_bytes(), // array length
+            &1_u64.to_le_bytes(), // entry "": the root is always nullable, validity [1]
+            &[0b1],
             &sha(&[&2_i32.to_le_bytes()]), // entry "a"
             &sha(&[&1_i32.to_le_bytes()]), // entry "z"
         ]));
@@ -818,6 +827,7 @@ mod tests {
         let json = r#"{"c":{"data_type":{"LargeList":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}},"nullable":false}}"#;
         let schema_digest = sha(&[&tag(0), json.as_bytes()]);
         let expected = versioned(&sha(&[
+            &header(b'R', 0),
             &schema_digest,
             &1_u64.to_le_bytes(), // row count
             // entry "c": list node, lengths [2]
@@ -846,6 +856,7 @@ mod tests {
         let json = r#"{"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}}"#;
         let schema_digest = sha(&[&tag(0), json.as_bytes()]);
         let expected = versioned(&sha(&[
+            &header(b'R', 0),
             &schema_digest,
             &3_u64.to_le_bytes(), // row count
             // entry "s": validity-only, struct bits [0, 1, 1]
@@ -954,6 +965,7 @@ mod tests {
         let b = bool_batch(true, vec![Some(true), None, Some(false)]);
         let json = r#"{"b":{"data_type":"Boolean","nullable":true}}"#;
         let expected = versioned(&sha(&[
+            &header(b'R', 0),
             &sha(&[&tag(0), json.as_bytes()]),
             &3_u64.to_le_bytes(), // row count
             &3_u64.to_le_bytes(),
@@ -965,9 +977,11 @@ mod tests {
         // hash_array, non-nullable [true, false, true]
         let a = BooleanArray::from(vec![true, false, true]);
         let expected_array = versioned(&sha(&[
-            &tag(0),
+            &header(b'A', 0),
             br#""Boolean""#,
             &3_u64.to_le_bytes(), // array length
+            &3_u64.to_le_bytes(), // entry "": the root is always nullable, validity [1, 1, 1]
+            &[0b111],
             &sha(&[&[0x01, 0x00, 0x01]]),
         ]));
         assert_eq!(

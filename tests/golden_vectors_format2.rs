@@ -62,9 +62,22 @@ mod tests {
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("failed to parse fixture: {e}"))
     }
 
-    fn decode_ipc(ipc_b64: &str) -> (SchemaRef, Vec<RecordBatch>) {
-        let bytes = STANDARD.decode(ipc_b64).unwrap();
-        let reader = StreamReader::try_new(Cursor::new(bytes), None).unwrap();
+    /// Vectors holding nulls under null list values of a non-nullable element: valid for pyarrow,
+    /// but arrow-rs's IPC validation rejects them, so they are decoded without it.
+    const UNVALIDATED_VECTORS: [&str; 2] =
+        ["hidden_null_list_rb_f0", "hidden_null_large_list_rb_f0"];
+
+    fn decode_ipc(v: &GoldenVector) -> (SchemaRef, Vec<RecordBatch>) {
+        let bytes = STANDARD.decode(&v.ipc_b64).unwrap();
+        let skip = UNVALIDATED_VECTORS.contains(&v.id.as_str());
+        #[expect(unsafe_code, reason = "Decoding vectors arrow-rs would not validate")]
+        // SAFETY: only the nullability rule for hidden list items is relaxed; offsets and buffer
+        // lengths were written by arrow-rs from consistent arrays.
+        let reader = unsafe {
+            StreamReader::try_new(Cursor::new(bytes), None)
+                .unwrap()
+                .with_skip_validation(skip)
+        };
         let schema = reader.schema();
         let batches = reader.map(|b| b.expect("IPC batch")).collect();
         (schema, batches)
@@ -76,7 +89,7 @@ mod tests {
             ordered_columns: v.ordered_columns,
             ordered_struct_fields: v.ordered_struct_fields,
         };
-        let (schema, batches) = decode_ipc(&v.ipc_b64);
+        let (schema, batches) = decode_ipc(v);
         let one_batch = || {
             assert_eq!(batches.len(), 1, "vector '{}': expected one batch", v.id);
             batches.first().expect("one batch")
@@ -162,7 +175,7 @@ mod tests {
                 && !v.ordered_columns
                 && !v.ordered_struct_fields
         }) {
-            let (_, batches) = decode_ipc(&v.ipc_b64);
+            let (_, batches) = decode_ipc(v);
             let b = batches.first().expect("one batch");
             assert_eq!(
                 encode(ArrowDigester::hash_array(b.column(0).as_ref())),
@@ -198,7 +211,9 @@ mod tests {
         let by_id: HashMap<&str, &GoldenVector> =
             fixture.vectors.iter().map(|v| (v.id.as_str(), v)).collect();
         assert!(!map.entries.is_empty());
+        let mut ids = HashSet::new();
         for e in &map.entries {
+            assert!(ids.insert(e.id.as_str()), "duplicate id {}", e.id);
             assert_ne!(
                 e.format1_hash, e.format2_hash,
                 "{}: every value moves",
@@ -240,7 +255,7 @@ mod tests {
             let config = legacy::HasherConfig {
                 include_metadata: v.include_metadata,
             };
-            let (schema, batches) = decode_ipc(&v.ipc_b64);
+            let (schema, batches) = decode_ipc(v);
             let hash = match v.method.as_str() {
                 "hash_schema" => legacy::ArrowDigester::hash_schema(&schema, config),
                 "hash_record_batch" | "hash_stream" => {

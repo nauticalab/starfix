@@ -11,8 +11,8 @@ use std::{
 
 use arrow::{
     array::{
-        Array, ArrayRef, BooleanArray, LargeBinaryArray, LargeListArray, LargeStringArray,
-        RecordBatch, StructArray,
+        Array, ArrayRef, BooleanArray, GenericListArray, LargeBinaryArray, LargeListArray,
+        LargeStringArray, ListArray, OffsetSizeTrait, RecordBatch, StructArray,
     },
     buffer::NullBuffer,
     compute::{cast, concat},
@@ -41,14 +41,23 @@ const fn option_flags(config: HasherConfig) -> u8 {
     (config.ordered_columns as u8) | ((config.ordered_struct_fields as u8) << 1_u8)
 }
 
-/// `0x00 "starfix" || format version (3 bytes) || flags` — the first input of every schema
-/// digest and every `hash_array` digest, in every mode.
-fn header(flags: u8) -> Vec<u8> {
+/// `0x00 "starfix" || format version (3 bytes) || entry-point kind || flags` — the first input
+/// of every digest, in every mode (13 bytes).
+fn header(kind: u8, flags: u8) -> Vec<u8> {
     let mut h = HEADER_MAGIC.to_vec();
     h.extend_from_slice(&VERSION_BYTES);
+    h.push(kind);
     h.push(flags);
     h
 }
+
+/// Entry-point kind byte of the header (byte-layout spec Section 1): the schema digest (used by
+/// `hash_schema` and inside every record-batch / stream hash) ...
+const KIND_SCHEMA: u8 = b'S';
+/// ... the final digest of a record batch or stream ...
+const KIND_RECORD_BATCH: u8 = b'R';
+/// ... and `hash_array`.
+const KIND_ARRAY: u8 = b'A';
 
 #[derive(Clone)]
 struct DigestBufferType<D: Digest> {
@@ -277,18 +286,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// `hash_array` with options (byte-layout spec Section 4). `include_metadata` has no effect.
     pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
         let flags = option_flags(config);
-        // Resolve dictionary arrays to their plain value type
-        let (effective_type, resolved_array);
-        let effective_array: &dyn Array =
-            if let DataType::Dictionary(_, value_type) = array.data_type() {
-                resolved_array = cast(array, value_type.as_ref())
-                    .expect("Failed to cast dictionary to plain array");
-                effective_type = value_type.as_ref().clone();
-                resolved_array.as_ref()
-            } else {
-                effective_type = array.data_type().clone();
-                array
-            };
+        let effective_type = array.data_type().clone();
+        let effective_array = array;
 
         // Normalize to canonical large types
         let normalized_type = normalize_data_type(&effective_type);
@@ -297,7 +296,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         Self::validate_data_type(&normalized_type);
 
         let mut final_digest = D::new();
-        final_digest.update(header(flags));
+        final_digest.update(header(KIND_ARRAY, flags));
 
         // Use canonical type serialization for metadata (data_type_to_value also normalizes,
         // but we pass the already-normalized type for consistency)
@@ -312,17 +311,13 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
         // Build BTreeMap entries from the type tree (same decomposition as record-batch path)
         let mut fields = BTreeMap::new();
-        Self::extract_type_entries(
-            &effective_type,
-            effective_array.is_nullable(),
-            "",
-            &mut fields,
-        );
+        // The root is always nullable: its validity is always written (byte-layout spec Section 4)
+        Self::extract_type_entries(&effective_type, true, "", &mut fields);
 
         // Traverse and populate entries
         Self::traverse_and_update(
             &effective_type,
-            effective_array.is_nullable(),
+            true,
             effective_array,
             "",
             None,
@@ -350,7 +345,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
         // Finalize all the sub digest and combine them into a single digest
         let mut final_digest = D::new();
 
-        // digest the schema first, then the number of rows
+        // header, the schema digest, then the number of rows
+        final_digest.update(header(KIND_RECORD_BATCH, option_flags(self.config)));
         final_digest.update(&self.schema_digest);
         final_digest.update(self.row_count.to_le_bytes());
 
@@ -544,7 +540,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         Self::validate_schema_paths(schema);
         let normalized = normalize_schema(schema);
         let mut hasher = D::new();
-        hasher.update(header(flags));
+        hasher.update(header(KIND_SCHEMA, flags));
         hasher.update(Self::canonical_schema_json(&normalized, config));
         if include_metadata {
             Self::update_metadata_hash(&mut hasher, &normalized);
@@ -603,13 +599,13 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// Metadata of the fields nested in `data_type`, keyed by node path (byte-layout spec
     /// Section 2.3): struct child `join(path, name)`, list element `path/`, map key and value
     /// `path//key` and `path//value` (fixed names; the map's entries field contributes nothing).
+    /// The schema is normalized first, so dictionaries have already been replaced by their values.
     fn collect_type_metadata(
         data_type: &DataType,
         path: &str,
         result: &mut BTreeMap<String, BTreeMap<String, String>>,
     ) {
         match data_type {
-            DataType::Dictionary(_, value) => Self::collect_type_metadata(value, path, result),
             DataType::Struct(children) => {
                 for child in children {
                     let child_path = Self::construct_field_name_hierarchy(path, child.name());
@@ -765,14 +761,17 @@ impl<D: Digest> ArrowDigesterCore<D> {
                 cast_array = cast(array, &normalized_type).expect("cast Binary");
                 (&normalized_type, cast_array.as_ref())
             }
-            DataType::List(field) => {
-                normalized_type = DataType::LargeList(Arc::clone(field));
-                cast_array = cast(array, &normalized_type).expect("cast List");
-                (&normalized_type, cast_array.as_ref())
-            }
+            // A dictionary is its decoded values, resolved recursively (nested dictionaries)
             DataType::Dictionary(_, value_type) => {
-                cast_array = cast(array, value_type.as_ref()).expect("cast Dict");
-                (value_type.as_ref(), cast_array.as_ref())
+                let decoded = cast(array, value_type.as_ref()).expect("decode dictionary");
+                return Self::traverse_and_update(
+                    value_type,
+                    nullable,
+                    decoded.as_ref(),
+                    path,
+                    ancestor_struct_nulls,
+                    fields,
+                );
             }
             _ => (data_type, array),
         };
@@ -790,10 +789,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
                     fields,
                 );
             }
-            DataType::Struct(struct_fields) => {
+            DataType::Struct(_) => {
                 Self::traverse_struct(
                     effective_array,
-                    struct_fields,
                     nullable,
                     path,
                     ancestor_struct_nulls,
@@ -815,6 +813,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     /// A list node: [validity] and the lengths of its valid elements go into its own entry; the
     /// items of all valid elements are then traversed once, as the element node at `path/`.
+    /// `List` and `LargeList` are traversed alike, without casting (byte-layout spec Section 3.2):
+    /// only the items of valid list values are visited, so nulls hidden under null list values
+    /// (or outside the offsets) are never seen.
     fn traverse_list(
         array: &dyn Array,
         value_field: &Field,
@@ -823,10 +824,41 @@ impl<D: Digest> ArrowDigesterCore<D> {
         ancestor_struct_nulls: Option<&NullBuffer>,
         fields: &mut BTreeMap<String, DigestBufferType<D>>,
     ) {
-        let list_array = array
-            .as_any()
-            .downcast_ref::<LargeListArray>()
-            .expect("downcast to LargeListArray");
+        if let Some(list) = array.as_any().downcast_ref::<ListArray>() {
+            Self::traverse_list_of(
+                list,
+                value_field,
+                nullable,
+                path,
+                ancestor_struct_nulls,
+                fields,
+            );
+        } else {
+            let list = array
+                .as_any()
+                .downcast_ref::<LargeListArray>()
+                .expect("downcast to LargeListArray");
+            Self::traverse_list_of(
+                list,
+                value_field,
+                nullable,
+                path,
+                ancestor_struct_nulls,
+                fields,
+            );
+        }
+    }
+
+    fn traverse_list_of<O>(
+        list_array: &GenericListArray<O>,
+        value_field: &Field,
+        nullable: bool,
+        path: &str,
+        ancestor_struct_nulls: Option<&NullBuffer>,
+        fields: &mut BTreeMap<String, DigestBufferType<D>>,
+    ) where
+        O: OffsetSizeTrait,
+    {
         Self::assert_nulls_allowed(nullable, list_array.nulls(), ancestor_struct_nulls);
 
         let effective_nulls = Self::combine_nulls(list_array.nulls(), ancestor_struct_nulls);
@@ -887,9 +919,11 @@ impl<D: Digest> ArrowDigesterCore<D> {
         );
     }
 
-    fn offset_at(offsets: &[i64], i: usize) -> usize {
-        usize::try_from(*offsets.get(i).expect("offset index in range"))
-            .expect("non-negative list offset")
+    fn offset_at<O>(offsets: &[O], i: usize) -> usize
+    where
+        O: OffsetSizeTrait,
+    {
+        offsets.get(i).expect("offset index in range").as_usize()
     }
 
     /// Push one validity bit per element: `validity`, or all valid when absent.
@@ -927,7 +961,6 @@ impl<D: Digest> ArrowDigesterCore<D> {
 
     fn traverse_struct(
         array: &dyn Array,
-        _struct_fields: &arrow_schema::Fields,
         nullable: bool,
         path: &str,
         ancestor_struct_nulls: Option<&NullBuffer>,
@@ -1103,6 +1136,9 @@ impl<D: Digest> ArrowDigesterCore<D> {
         element_size: usize,
         data: &mut D,
     ) {
+        if element_size == 0 {
+            return; // zero-width values (FixedSizeBinary(0)) contribute no bytes
+        }
         let array_data = array.to_data();
         let start = array_data
             .offset()
@@ -1540,7 +1576,7 @@ mod tests {
             encode(digester.finalize()),
             // format 2 (ITL-898); format 1 value was
             // 9b52ad7430dea81b35f14a04d828b2424080fbc210570081c6e6cb62b6566c42
-            "8038c003912adbecc339cd6b1c1e9a62f59dc68a684c00cc1b29cff72d193361"
+            "e87004b857524cdf72c644487132ae03f113a88662ca6ac32d90ab1a4d0c0c58"
         );
     }
 
@@ -2911,13 +2947,14 @@ mod tests {
         // "x//b/h"  → values [100, 200, 300, 400, 500] as i32 LE
 
         let mut schema_hasher = Sha256::new();
-        schema_hasher.update(super::header(0));
+        schema_hasher.update(super::header(super::KIND_SCHEMA, 0));
         schema_hasher.update(
             ArrowDigesterCore::<Sha256>::serialized_schema(&normalize_schema(&schema)).as_bytes(),
         );
         let schema_digest = schema_hasher.finalize();
 
         let mut final_digest = Sha256::new();
+        final_digest.update(super::header(super::KIND_RECORD_BATCH, 0));
         final_digest.update(schema_digest);
         final_digest.update(3_u64.to_le_bytes()); // row count
 

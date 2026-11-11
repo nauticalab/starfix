@@ -22,10 +22,16 @@ mod tests {
 
     const PREFIX: [u8; 3] = [0, 0, 2];
 
-    fn header(flags: u8) -> Vec<u8> {
+    /// Entry-point kinds: schema digest, record-batch / stream final digest, `hash_array`.
+    const SCHEMA: u8 = b'S';
+    const BATCH: u8 = b'R';
+    const ARRAY: u8 = b'A';
+
+    fn header(kind: u8, flags: u8) -> Vec<u8> {
         let mut h = vec![0x00_u8];
         h.extend_from_slice(b"starfix");
         h.extend_from_slice(&PREFIX);
+        h.push(kind);
         h.push(flags);
         h
     }
@@ -68,7 +74,7 @@ mod tests {
         let json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
         assert_eq!(
             ArrowDigester::hash_schema(&schema, HasherConfig::default()),
-            out(&sha(&[&header(0), json.as_bytes()]))
+            out(&sha(&[&header(SCHEMA, 0), json.as_bytes()]))
         );
         let ordered = HasherConfig {
             ordered_columns: true,
@@ -77,7 +83,7 @@ mod tests {
         let ordered_json = r#"[{"data_type":"Int32","name":"v","nullable":false}]"#;
         assert_eq!(
             ArrowDigester::hash_schema(&schema, ordered),
-            out(&sha(&[&header(1), ordered_json.as_bytes()]))
+            out(&sha(&[&header(SCHEMA, 1), ordered_json.as_bytes()]))
         );
     }
 
@@ -95,8 +101,9 @@ mod tests {
             ],
         );
         let json = r#"{"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"LargeUtf8","nullable":true}}"#;
-        let schema_digest = sha(&[&header(0), json.as_bytes()]);
+        let schema_digest = sha(&[&header(SCHEMA, 0), json.as_bytes()]);
         let expected = out(&sha(&[
+            &header(BATCH, 0),
             &schema_digest,
             &2_u64.to_le_bytes(), // row count
             // entry "a": values
@@ -128,7 +135,8 @@ mod tests {
         );
         let json = r#"{"c":{"data_type":{"LargeList":{"data_type":"Int32","nullable":true}},"nullable":true}}"#;
         let expected = out(&sha(&[
-            &sha(&[&header(0), json.as_bytes()]),
+            &header(BATCH, 0),
+            &sha(&[&header(SCHEMA, 0), json.as_bytes()]),
             &3_u64.to_le_bytes(),
             // entry "c": validity [1, 0, 1], lengths of valid rows [2, 0]
             &3_u64.to_le_bytes(),
@@ -159,7 +167,8 @@ mod tests {
         );
         let json = r#"{"s":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":true}]},"nullable":true}}"#;
         let expected = out(&sha(&[
-            &sha(&[&header(0), json.as_bytes()]),
+            &header(BATCH, 0),
+            &sha(&[&header(SCHEMA, 0), json.as_bytes()]),
             &3_u64.to_le_bytes(),
             &3_u64.to_le_bytes(), // "s": [0, 1, 1]
             &[0b110],
@@ -177,7 +186,7 @@ mod tests {
     fn boolean_one_byte_per_valid_value() {
         let a = BooleanArray::from(vec![Some(true), None, Some(false)]);
         let expected = out(&sha(&[
-            &header(0),
+            &header(ARRAY, 0),
             br#""Boolean""#,
             &3_u64.to_le_bytes(), // array length
             &3_u64.to_le_bytes(), // entry "": validity [1, 0, 1]
@@ -191,9 +200,12 @@ mod tests {
     fn hash_array_non_nullable() {
         let a = Int32Array::from(vec![1, 2, 3]);
         let expected = out(&sha(&[
-            &header(0),
+            &header(ARRAY, 0),
             br#""Int32""#,
             &3_u64.to_le_bytes(),
+            // the root is always nullable: validity [1, 1, 1]
+            &3_u64.to_le_bytes(),
+            &[0b111],
             &sha(&[
                 &1_i32.to_le_bytes(),
                 &2_i32.to_le_bytes(),
@@ -216,7 +228,11 @@ mod tests {
         };
         assert_eq!(
             ArrowDigester::hash_record_batch(&zero_cols(3), HasherConfig::default()),
-            out(&sha(&[&sha(&[&header(0), b"{}"]), &3_u64.to_le_bytes()]))
+            out(&sha(&[
+                &header(BATCH, 0),
+                &sha(&[&header(SCHEMA, 0), b"{}"]),
+                &3_u64.to_le_bytes()
+            ]))
         );
         assert_ne!(
             ArrowDigester::hash_record_batch(&zero_cols(0), HasherConfig::default()),
@@ -264,7 +280,7 @@ mod tests {
         let standard = map_schema("entries", "key", "value", false);
         assert_eq!(
             ArrowDigester::hash_schema(&standard, HasherConfig::default()),
-            out(&sha(&[&header(0), json.as_bytes()]))
+            out(&sha(&[&header(SCHEMA, 0), json.as_bytes()]))
         );
         // names of the entries/key/value fields and the entries metadata are not hashed
         let custom = map_schema("kv", "k", "v", true);
@@ -278,7 +294,11 @@ mod tests {
         let phase2 = r#"{"fields":{"m//value":{"unit":"kg"}}}"#;
         assert_eq!(
             ArrowDigester::hash_schema(&standard, with_metadata()),
-            out(&sha(&[&header(0), json.as_bytes(), phase2.as_bytes()]))
+            out(&sha(&[
+                &header(SCHEMA, 0),
+                json.as_bytes(),
+                phase2.as_bytes()
+            ]))
         );
     }
 
@@ -315,7 +335,11 @@ mod tests {
         let phase2 = r#"{"fields":{"/a":{"u":"m"}}}"#;
         assert_eq!(
             ArrowDigester::hash_schema(&schema, with_metadata()),
-            out(&sha(&[&header(0), json.as_bytes(), phase2.as_bytes()]))
+            out(&sha(&[
+                &header(SCHEMA, 0),
+                json.as_bytes(),
+                phase2.as_bytes()
+            ]))
         );
     }
 
@@ -330,7 +354,11 @@ mod tests {
         let phase2 = r#"{"fields":{"u":{"ARROW:extension:metadata":"","ARROW:extension:name":"arrow.uuid"}}}"#;
         assert_eq!(
             ArrowDigester::hash_schema(&schema, with_metadata()),
-            out(&sha(&[&header(0), json.as_bytes(), phase2.as_bytes()]))
+            out(&sha(&[
+                &header(SCHEMA, 0),
+                json.as_bytes(),
+                phase2.as_bytes()
+            ]))
         );
     }
 
@@ -441,7 +469,8 @@ mod tests {
         );
         let json = r#"{"l":{"data_type":{"LargeList":{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":false}]},"nullable":true}},"nullable":false}}"#;
         let expected = out(&sha(&[
-            &sha(&[&header(0), json.as_bytes()]),
+            &header(BATCH, 0),
+            &sha(&[&header(SCHEMA, 0), json.as_bytes()]),
             &1_u64.to_le_bytes(),
             // entry "l": lengths [2]
             &sha(&[&2_u64.to_le_bytes()]),

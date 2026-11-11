@@ -25,11 +25,13 @@ mod tests {
     /// Hash format 2 (byte-layout spec Section 1).
     const VERSION: [u8; 3] = [0x00, 0x00, 0x02];
 
-    /// Format-2 header with no options: `0x00 "starfix" 00 00 02 00`.
-    fn header() -> Vec<u8> {
+    /// Format-2 header with no options: `0x00 "starfix" 00 00 02 <kind> 00`, where `kind` is
+    /// `S` (schema digest), `R` (record batch / stream) or `A` (`hash_array`).
+    fn header(kind: u8) -> Vec<u8> {
         let mut h = vec![0x00_u8];
         h.extend_from_slice(b"starfix");
         h.extend_from_slice(&VERSION);
+        h.push(kind);
         h.push(0x00);
         h
     }
@@ -69,7 +71,8 @@ mod tests {
 
         // ── Step 1: Schema digest ────────────────────────────────────────
         let schema_json = r#"{"age":{"data_type":"Int32","nullable":false},"name":{"data_type":"LargeUtf8","nullable":true}}"#;
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         // Verify the library agrees on schema hash
         assert_eq!(
@@ -109,6 +112,7 @@ mod tests {
         let mut final_digest = Sha256::new();
 
         // Schema
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(2_u64.to_le_bytes()); // row count
 
@@ -159,7 +163,7 @@ mod tests {
 
         // ── Final combination ────────────────────────────────────────────
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json);
         final_digest.update(4_u64.to_le_bytes()); // array length
                                                   // Nullable finalization
@@ -199,9 +203,12 @@ mod tests {
 
         // ── Final (non-nullable) ─────────────────────────────────────────
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json);
         final_digest.update(3_u64.to_le_bytes()); // array length
+                                                  // the root is always nullable: validity entry ""
+        final_digest.update(3_u64.to_le_bytes());
+        final_digest.update([0b111_u8]);
         final_digest.update(data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -238,9 +245,12 @@ mod tests {
 
         // ── Final (non-nullable) ─────────────────────────────────────────
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json);
         final_digest.update(2_u64.to_le_bytes()); // array length
+                                                  // the root is always nullable: validity entry ""
+        final_digest.update(2_u64.to_le_bytes());
+        final_digest.update([0b11_u8]);
         final_digest.update(data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -284,7 +294,8 @@ mod tests {
 
         // ── Manual computation ───────────────────────────────────────────
         let schema_json = r#"{"x":{"data_type":"Int32","nullable":false},"y":{"data_type":"Boolean","nullable":true}}"#;
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         // Field "x" (Int32, non-nullable): value 10
         let mut x_data = Sha256::new();
@@ -303,6 +314,7 @@ mod tests {
 
         // Final combination: schema, then fields alphabetically (x, y)
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(1_u64.to_le_bytes()); // row count
                                                   // x (non-nullable)
@@ -348,9 +360,12 @@ mod tests {
         let data_finalized = data_digest.finalize();
 
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json);
         final_digest.update(1_u64.to_le_bytes()); // array length
+                                                  // the root is always nullable: validity entry ""
+        final_digest.update(1_u64.to_le_bytes());
+        final_digest.update([0b1_u8]);
         final_digest.update(data_finalized);
 
         let expected = with_version(final_digest.finalize().to_vec());
@@ -397,7 +412,7 @@ mod tests {
 
         // ── Final (nullable) ─────────────────────────────────────────────
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json);
         final_digest.update(4_u64.to_le_bytes()); // array length
         final_digest.update(bit_count.to_le_bytes());
@@ -447,7 +462,7 @@ mod tests {
 
         // ── Final (nullable) ─────────────────────────────────────────────
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json);
         final_digest.update(4_u64.to_le_bytes()); // array length
         final_digest.update(bit_count.to_le_bytes());
@@ -478,7 +493,8 @@ mod tests {
 
         // ── Schema digest ────────────────────────────────────────────────
         let schema_json = r#"{"a":{"data_type":"Int32","nullable":false},"b":{"data_type":"Boolean","nullable":true}}"#;
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         // ── Field "a" (Int32, non-nullable): no data fed ─────────────────
         // data_digest = SHA-256() with no updates → SHA-256 of empty input
@@ -493,6 +509,7 @@ mod tests {
 
         // ── Final ────────────────────────────────────────────────────────
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(0_u64.to_le_bytes()); // row count
                                                   // Field "a" (non-nullable)
@@ -558,7 +575,8 @@ mod tests {
 
         // ── Manual computation ───────────────────────────────────────────
         let schema_json = r#"{"v":{"data_type":"Int32","nullable":false}}"#;
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         // Field "v": data is [1, 2, 3] as i32 LE — accumulated across batches
         // The digester is streaming, so it updates the same SHA-256 state:
@@ -572,6 +590,7 @@ mod tests {
         let v_finalized = v_data.finalize();
 
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(3_u64.to_le_bytes()); // row count
         final_digest.update(v_finalized);
@@ -632,7 +651,8 @@ mod tests {
         // "person" has data_type: {"Struct": [{"data_type": "Int32", "name": "age", "nullable": false},
         //                                     {"data_type": "LargeUtf8", "name": "name", "nullable": false}]}
         let schema_json = r#"{"person":{"data_type":{"Struct":[{"data_type":"Int32","name":"age","nullable":false},{"data_type":"LargeUtf8","name":"name","nullable":false}]},"nullable":false}}"#;
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         assert_eq!(
             ArrowDigester::hash_schema(&schema, HasherConfig::default()),
@@ -659,6 +679,7 @@ mod tests {
         // ── Step 4: Final combination ────────────────────────────────────
         // Fields alphabetically: "person/age", "person/name"
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(2_u64.to_le_bytes()); // row count
                                                   // "person/age" (non-nullable): just data digest
@@ -727,9 +748,12 @@ mod tests {
         // type_json → finalize_digest("a") → finalize_digest("b")
         // Each entry: non-nullable → no null_bits, no structural, just data.finalize()
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json.as_bytes());
         final_digest.update(2_u64.to_le_bytes()); // array length
+                                                  // the root is always nullable: validity entry ""
+        final_digest.update(2_u64.to_le_bytes());
+        final_digest.update([0b11_u8]);
         final_digest.update(data_a.finalize());
         final_digest.update(data_b.finalize());
 
@@ -811,7 +835,7 @@ mod tests {
         // type_json → finalize_digest("a") → finalize_digest("b")
         // Each entry: non-nullable → no null_bits, no structural, just data.finalize()
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json.as_bytes());
         final_digest.update(3_u64.to_le_bytes()); // array length
         final_digest.update(struct_bit_count.to_le_bytes());
@@ -895,7 +919,8 @@ mod tests {
         // Canonical: element type has no name (element_type_to_value drops "item")
         // The inner struct's data_type is {"Struct": [sorted children]}
         let schema_json = r#"{"items":{"data_type":{"LargeList":{"data_type":{"Struct":[{"data_type":"Int32","name":"id","nullable":false},{"data_type":"LargeUtf8","name":"label","nullable":false}]},"nullable":false}},"nullable":true}}"#;
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         assert_eq!(
             ArrowDigester::hash_schema(&schema, HasherConfig::default()),
@@ -913,6 +938,7 @@ mod tests {
 
         // ── Step 3: Final combination ────────────────────────────────────
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(2_u64.to_le_bytes()); // row count
 
@@ -1022,7 +1048,8 @@ mod tests {
             r#"]},"name":"nested","nullable":false}"#,
             r#"]},"nullable":false}}"#
         );
-        let schema_digest = Sha256::digest([header(), schema_json.as_bytes().to_vec()].concat());
+        let schema_digest =
+            Sha256::digest([header(b'S'), schema_json.as_bytes().to_vec()].concat());
 
         assert_eq!(
             ArrowDigester::hash_schema(&schema, HasherConfig::default()),
@@ -1050,6 +1077,7 @@ mod tests {
         // ── Step 3: Final combination ────────────────────────────────────
         // schema_digest → "s/a" → "s/nested/p" → "s/nested/q"
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(1_u64.to_le_bytes()); // row count
         final_digest.update(data_sa_finalized); // "s/a" (non-nullable, data-only)
@@ -1141,7 +1169,7 @@ mod tests {
             r#"]},"nullable":false}}"#
         );
         let expected_schema_digest =
-            Sha256::digest([header(), canonical_json.as_bytes().to_vec()].concat());
+            Sha256::digest([header(b'S'), canonical_json.as_bytes().to_vec()].concat());
         let expected = with_version(expected_schema_digest.to_vec());
 
         // ── Both schemas must produce that same hash ──────────────────────
@@ -1195,7 +1223,7 @@ mod tests {
         let meta_doc_json = r#"{"fields":{"v":{"unit":"meters"}}}"#;
 
         let mut schema_hasher = Sha256::new();
-        schema_hasher.update(header()); // format-2 header
+        schema_hasher.update(header(b'S')); // format-2 header
         schema_hasher.update(structure_json.as_bytes()); // Phase 1
         schema_hasher.update(meta_doc_json.as_bytes()); // Phase 2
 
@@ -1244,7 +1272,7 @@ mod tests {
         let meta_doc_json = r#"{"schema":{"source":"sensor-1"}}"#;
 
         let mut schema_hasher = Sha256::new();
-        schema_hasher.update(header()); // format-2 header
+        schema_hasher.update(header(b'S')); // format-2 header
         schema_hasher.update(structure_json.as_bytes()); // Phase 1
         schema_hasher.update(meta_doc_json.as_bytes()); // Phase 2
 
@@ -1298,7 +1326,7 @@ mod tests {
         let meta_doc_json = r#"{"fields":{"score":{"unit":"points"}}}"#;
 
         let mut schema_hasher = Sha256::new();
-        schema_hasher.update(header()); // format-2 header
+        schema_hasher.update(header(b'S')); // format-2 header
         schema_hasher.update(structure_json.as_bytes()); // Phase 1
         schema_hasher.update(meta_doc_json.as_bytes()); // Phase 2
         let schema_digest = schema_hasher.finalize();
@@ -1312,6 +1340,7 @@ mod tests {
 
         // ── Final combination ────────────────────────────────────────────
         let mut final_digest = Sha256::new();
+        final_digest.update(header(b'R'));
         final_digest.update(schema_digest);
         final_digest.update(2_u64.to_le_bytes()); // row count
         final_digest.update(score_data_finalized); // "score" (non-nullable, data-only)
@@ -1398,9 +1427,12 @@ mod tests {
         // ── Step 3: Final combination ────────────────────────────────────
         // type_json → "inner/x" (non-nullable) → "inner/y" (non-nullable)
         let mut final_digest = Sha256::new();
-        final_digest.update(header());
+        final_digest.update(header(b'A'));
         final_digest.update(type_json.as_bytes());
         final_digest.update(2_u64.to_le_bytes()); // array length
+                                                  // the root is always nullable: validity entry ""
+        final_digest.update(2_u64.to_le_bytes());
+        final_digest.update([0b11_u8]);
         final_digest.update(data_x_finalized); // "inner/x"
         final_digest.update(data_y_finalized); // "inner/y"
 
