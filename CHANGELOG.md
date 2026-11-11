@@ -45,10 +45,10 @@ These inputs collided, or hashed differently depending on batch boundaries, in f
   with zero rows; a non-nullable field with unmasked nulls is rejected.
 - With `include_metadata`, an extension field without `ARROW:extension:metadata` hashes like one
   with an empty value.
+- `emit_golden_metadata` is removed; `tests/golden/include_metadata_v0.3.json` is kept as the
+  historical format-1 record.
 
 ### Fixed
 
 - A panic when hashing a Boolean under a nullable struct at a byte-aligned array offset ≥ 8
   (present since 0.4).
-- `emit_golden_metadata` is removed; `tests/golden/include_metadata_v0.3.json` is kept as the
-  historical format-1 record.
