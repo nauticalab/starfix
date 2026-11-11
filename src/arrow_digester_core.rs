@@ -18,6 +18,8 @@ use arrow_schema::Field;
 use bitvec::prelude::*;
 use digest::Digest;
 
+use crate::HasherConfig;
+
 const DELIMITER_FOR_NESTED_FIELD: &str = "/";
 
 #[derive(Clone)]
@@ -135,17 +137,30 @@ pub struct ArrowDigesterCore<D: Digest> {
     schema_digest: Vec<u8>,
     schema_equality_key: String,
     fields_digest_buffer: BTreeMap<String, DigestBufferType<D>>,
-    include_metadata: bool,
+    config: HasherConfig,
 }
 
 impl<D: Digest> ArrowDigesterCore<D> {
-    /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
+    /// Test shim: v0.4.0 constructor taking only `include_metadata`.
+    #[cfg(test)]
     pub fn new(schema: &Schema, include_metadata: bool) -> Self {
+        Self::new_with_config(
+            schema,
+            HasherConfig {
+                include_metadata,
+                ..HasherConfig::default()
+            },
+        )
+    }
+
+    /// Create a new instance of `ArrowDigesterCore` with the schema, which will be enforced through each update.
+    pub fn new_with_config(schema: &Schema, config: HasherConfig) -> Self {
+        let include_metadata = config.include_metadata;
         // Normalize the schema to canonical large types (metadata is preserved by normalize_schema)
         let normalized = normalize_schema(schema);
 
         // Hash the schema — hash_schema normalizes internally, so passing the original here is equivalent
-        let schema_digest = Self::hash_schema(schema, include_metadata);
+        let schema_digest = Self::hash_schema_with_config(schema, config);
 
         // Build the equality key used in update() to enforce schema identity
         let schema_equality_key = Self::build_schema_equality_key(&normalized, include_metadata);
@@ -160,7 +175,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
             schema_digest,
             schema_equality_key,
             fields_digest_buffer,
-            include_metadata,
+            config,
         }
     }
 
@@ -174,7 +189,7 @@ impl<D: Digest> ArrowDigesterCore<D> {
         //
         // Metadata path (include_metadata = true): normalize first (normalize_schema preserves
         // metadata), then build the full equality key that includes the metadata JSON.
-        if self.include_metadata {
+        if self.config.include_metadata {
             let rb_normalized = normalize_schema(&rb_schema);
             let rb_equality_key = Self::build_schema_equality_key(&rb_normalized, true);
             assert!(
@@ -216,7 +231,12 @@ impl<D: Digest> ArrowDigesterCore<D> {
     ///
     /// This function will panic if JSON serialization of the data type fails.
     ///
+    #[cfg(test)]
     pub fn hash_array(array: &dyn Array) -> Vec<u8> {
+        Self::hash_array_with_config(array, HasherConfig::default())
+    }
+
+    pub fn hash_array_with_config(array: &dyn Array, _config: HasherConfig) -> Vec<u8> {
         // Resolve dictionary arrays to their plain value type
         let (effective_type, resolved_array);
         let effective_array: &dyn Array =
@@ -272,8 +292,8 @@ impl<D: Digest> ArrowDigesterCore<D> {
     }
 
     /// Hash a record batch directly without needing to create an `ArrowDigester` instance on the user side.
-    pub fn hash_record_batch(record_batch: &RecordBatch, include_metadata: bool) -> Vec<u8> {
-        let mut digester = Self::new(record_batch.schema().as_ref(), include_metadata);
+    pub fn hash_record_batch(record_batch: &RecordBatch, config: HasherConfig) -> Vec<u8> {
+        let mut digester = Self::new_with_config(record_batch.schema().as_ref(), config);
         digester.update(record_batch);
         digester.finalize()
     }
@@ -416,7 +436,20 @@ impl<D: Digest> ArrowDigesterCore<D> {
     /// preserving the empty-metadata invariant.
     ///
     /// `normalize_schema` preserves metadata, so the normalized schema is used for both phases.
+    #[cfg(test)]
     pub fn hash_schema(schema: &Schema, include_metadata: bool) -> Vec<u8> {
+        Self::hash_schema_with_config(
+            schema,
+            HasherConfig {
+                include_metadata,
+                ..HasherConfig::default()
+            },
+        )
+    }
+
+    /// Hash the schema (see `hash_schema` docs above for the two phases).
+    pub fn hash_schema_with_config(schema: &Schema, config: HasherConfig) -> Vec<u8> {
+        let include_metadata = config.include_metadata;
         let normalized = normalize_schema(schema);
         let mut hasher = D::new();
         hasher.update(Self::serialized_schema(&normalized));

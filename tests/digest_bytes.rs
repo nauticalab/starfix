@@ -1139,6 +1139,7 @@ mod tests {
             .with_metadata([("unit".to_owned(), "meters".to_owned())].into())]);
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         // ── Phase 1: structure ───────────────────────────────────────────
@@ -1186,6 +1187,7 @@ mod tests {
         );
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         // ── Phase 1: structure ───────────────────────────────────────────
@@ -1241,6 +1243,7 @@ mod tests {
         .unwrap();
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         // ── Schema hash (Phase 1 + Phase 2) ─────────────────────────────

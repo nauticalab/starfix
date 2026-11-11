@@ -68,7 +68,10 @@ fn schema_to_ipc_b64(schema: &Schema) -> String {
 }
 
 fn hash_schema_hex(schema: &Schema, include_metadata: bool) -> String {
-    let config = HasherConfig { include_metadata };
+    let config = HasherConfig {
+        include_metadata,
+        ..HasherConfig::default()
+    };
     hex::encode(ArrowDigester::hash_schema(schema, config))
 }
 

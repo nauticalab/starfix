@@ -2053,6 +2053,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
@@ -2071,6 +2072,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
@@ -2103,6 +2105,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_eq!(
             encode(ArrowDigester::hash_schema(&schema_a, config)),
@@ -2119,6 +2122,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         // ── Field metadata (two fields, keys shuffled per field) ──────────
@@ -2162,6 +2166,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let make_schema = |keys: [(&str, &str); 3]| {
@@ -2191,6 +2196,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let make_schema = |child_keys: [(&str, &str); 2],
@@ -2245,6 +2251,7 @@ mod tests {
         // Swapping the values between fields must produce a different hash.
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let schema_ab = Schema::new(vec![
@@ -2281,7 +2288,8 @@ mod tests {
             encode(ArrowDigester::hash_schema(
                 &schema,
                 HasherConfig {
-                    include_metadata: true
+                    include_metadata: true,
+                    ..HasherConfig::default()
                 }
             )),
         );
@@ -2309,6 +2317,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         let hash_with = ArrowDigester::hash_schema(&schema_with_meta, config);
         let hash_without = ArrowDigester::hash_schema(&schema_no_meta, config);
@@ -2326,6 +2335,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_large, config)),
@@ -2346,6 +2356,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_field_meta, config)),
@@ -2378,6 +2389,7 @@ mod tests {
         )]);
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_eq!(
             encode(ArrowDigester::hash_schema(&schema_item, config)),
@@ -2404,6 +2416,7 @@ mod tests {
         )]);
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),
@@ -2437,6 +2450,7 @@ mod tests {
 
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
         assert_ne!(
             encode(ArrowDigester::hash_schema(&schema_no_meta, config)),

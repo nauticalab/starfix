@@ -81,6 +81,7 @@ mod tests {
             let (schema, maybe_batch) = decode_ipc(&vector.ipc_b64);
             let config = HasherConfig {
                 include_metadata: vector.include_metadata,
+                ..HasherConfig::default()
             };
 
             let result = match vector.method.as_str() {
@@ -120,12 +121,14 @@ mod tests {
             &schema,
             HasherConfig {
                 include_metadata: false,
+                ..HasherConfig::default()
             },
         ));
         let hash_true = encode(ArrowDigester::hash_schema(
             &schema,
             HasherConfig {
                 include_metadata: true,
+                ..HasherConfig::default()
             },
         ));
 
@@ -160,6 +163,7 @@ mod tests {
         let (schema_s, _) = decode_ipc(&shuffled.ipc_b64);
         let config = HasherConfig {
             include_metadata: true,
+            ..HasherConfig::default()
         };
 
         let hash_c = encode(ArrowDigester::hash_schema(&schema_c, config));
