@@ -7,6 +7,7 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "Okay in test")]
 
     use std::collections::HashMap;
+    use std::fs;
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::Arc;
 
@@ -66,6 +67,38 @@ mod tests {
             include_metadata: true,
             ..HasherConfig::default()
         }
+    }
+
+    /// Every format-2 hash printed in the spec is asserted by a test in this file, so a stale
+    /// printed value cannot ship.
+    #[test]
+    fn every_printed_spec_hash_is_pinned_here() {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let spec = fs::read_to_string(format!("{root}/docs/byte-layout-spec.md")).unwrap();
+        let this = fs::read_to_string(format!("{root}/tests/format2_bytes.rs")).unwrap();
+        let mut printed = 0_usize;
+        let bytes = spec.as_bytes();
+        let mut i = 0_usize;
+        while let Some(pos) = spec.get(i..).and_then(|rest| rest.find("000002")) {
+            let start = i.checked_add(pos).unwrap();
+            let end = start.checked_add(70).unwrap();
+            let is_hash = spec.get(start..end).is_some_and(|h| {
+                h.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            }) && bytes.get(end).is_none_or(|b| !b.is_ascii_hexdigit());
+            if is_hash {
+                let hash = spec.get(start..end).unwrap();
+                assert!(
+                    this.contains(&format!("\"{hash}\"")),
+                    "spec prints {hash}, which no test here asserts"
+                );
+                printed = printed.checked_add(1).unwrap();
+                i = end;
+            } else {
+                i = start.checked_add(1).unwrap();
+            }
+        }
+        assert_eq!(printed, 5, "printed format-2 hashes in the spec");
     }
 
     /// The hashes printed in the spec outside Section 9 (Section 2.1 and the JSON text rules);
