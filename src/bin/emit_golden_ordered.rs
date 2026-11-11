@@ -1324,6 +1324,106 @@ fn build() -> Builder {
         );
     }
 
+    // 12. Names: non-ASCII, control characters, quotes, a non-colliding '/'; container schemas.
+    {
+        let names = Arc::new(Schema::new(vec![
+            Field::new("é", DataType::Int32, false),
+            Field::new("名前", DataType::Utf8, true),
+            Field::new("a\nb\u{1b}\t\"q\"\\", DataType::Int32, false),
+            Field::new("km/h", DataType::Float64, false),
+        ]));
+        for flags in [0x00_u8, 0x01, 0x07] {
+            gen.add(
+                &format!("names_schema_f{flags}"),
+                "Column names: non-ASCII, CJK, control characters and quotes, and 'km/h' (a '/' that aliases nothing)",
+                flags,
+                false,
+                &Input::Schema(Arc::clone(&names)),
+            );
+            let s = StructArray::from(vec![(
+                Arc::new(Field::new("é", DataType::Int32, false)),
+                Arc::new(Int32Array::from(vec![1])) as ArrayRef,
+            )]);
+            gen.add(
+                &format!("names_array_struct_f{flags}"),
+                "hash_array of Struct<é: Int32> [{é: 1}] (type JSON keeps non-ASCII raw)",
+                flags,
+                false,
+                &Input::Array(Arc::new(s)),
+            );
+        }
+        let fsl_int = Arc::new(Schema::new(vec![Field::new(
+            "f",
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Int32, true)), 2),
+            false,
+        )]));
+        for flags in [0x00_u8, 0x01] {
+            gen.add(
+                &format!("fsl_int_schema_f{flags}"),
+                "f: FixedSizeList<Int32?, 2> (schema only)",
+                flags,
+                false,
+                &Input::Schema(Arc::clone(&fsl_int)),
+            );
+        }
+    }
+
+    // 13. List element order is never ignored, even for list<struct<key, value>>.
+    {
+        let kv = |reverse: bool| {
+            let mut keys = vec!["a", "b"];
+            let mut values = vec![1, 2];
+            if reverse {
+                keys.reverse();
+                values.reverse();
+            }
+            let st = StructArray::from(vec![
+                (
+                    Arc::new(Field::new("key", DataType::Utf8, false)),
+                    Arc::new(StringArray::from(keys)) as ArrayRef,
+                ),
+                (
+                    Arc::new(Field::new("value", DataType::Int32, false)),
+                    Arc::new(Int32Array::from(values)) as ArrayRef,
+                ),
+            ]);
+            let item = Arc::new(Field::new("item", st.data_type().clone(), true));
+            let col: ArrayRef = Arc::new(ListArray::new(
+                item,
+                OffsetBuffer::<i32>::from_lengths([2]),
+                Arc::new(st),
+                None,
+            ));
+            batch(
+                vec![Field::new("kv", col.data_type().clone(), false)],
+                vec![col],
+            )
+        };
+        for flags in 0x00_u8..=0x07 {
+            let a = format!("list_kv_ab_rb_f{flags}");
+            let b = format!("list_kv_ba_rb_f{flags}");
+            gen.add(
+                &a,
+                "kv: List<Struct<key: Utf8, value: Int32>> one row [{a,1},{b,2}]",
+                flags,
+                false,
+                &Input::Batch(kv(false)),
+            );
+            gen.add(
+                &b,
+                "Same elements in reverse order [{b,2},{a,1}]",
+                flags,
+                false,
+                &Input::Batch(kv(true)),
+            );
+            gen.relate(
+                "different",
+                &[&a, &b],
+                "list element order is part of the hash in every mode (starfix never sorts lists)",
+            );
+        }
+    }
+
     gen
 }
 

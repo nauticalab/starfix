@@ -928,6 +928,26 @@ mod tests {
         );
     }
 
+    // ── JSON text rules (byte-layout spec Section 2.1) ──────────────────────
+
+    #[test]
+    fn json_escaping_is_serde_json() {
+        // default mode = v0.4.0 bytes; non-ASCII raw, short escapes, lowercase \u00xx
+        let schema = Schema::new(vec![
+            Field::new("é", DataType::Int32, false),
+            Field::new(
+                "a\nb\u{1b}\u{8}\u{c}\r\t\u{7f}\"\\/",
+                DataType::Int32,
+                false,
+            ),
+        ]);
+        let json = "{\"a\\nb\\u001b\\b\\f\\r\\t\u{7f}\\\"\\\\/\":{\"data_type\":\"Int32\",\"nullable\":false},\"é\":{\"data_type\":\"Int32\",\"nullable\":false}}";
+        assert_eq!(
+            ArrowDigester::hash_schema(&schema, cfg(0)),
+            versioned(&sha(&[json.as_bytes()]))
+        );
+    }
+
     // ── invariants that hold in every mode ─────────────────────────────────
 
     #[test]

@@ -4,6 +4,16 @@ This document describes the **exact byte-level serialization** used by Starfix t
 
 All multi-byte integers use **little-endian** byte order unless explicitly stated otherwise.
 
+**Ordering principle.** By default starfix ignores exactly two orders: the order of the
+top-level columns and the order of struct fields (at every depth). It sorts or reorders nothing
+else: row order, list element order (also for `list<struct<key, value>>`), and the logical values
+of dictionary-encoded arrays are hashed as given. The two ignored orders can be made part of the
+hash with `ordered_columns` and `ordered_struct_fields` (Section 9). The only other
+canonicalizations are not orderings of data: metadata keys (unordered maps) are sorted when
+`include_metadata` is on; the canonical JSON's own object keys are sorted; physically different
+but logically equal types are unified (Section 2.1); the Arrow-internal list element field name
+is omitted.
+
 Sections 1–8 specify the **default** layout. The opt-in options `ordered_columns`,
 `ordered_struct_fields` and `nested_validity` (v0.5) are specified in **Section 9**; with all of
 them off, Section 9 does not apply.
@@ -64,6 +74,47 @@ Each child object: `{"data_type": ..., "name": "<field_name>", "nullable": <bool
 {"LargeList": {"data_type": ..., "nullable": <bool>}}
 ```
 Note: the Arrow-internal field name (typically `"item"`) is **omitted** — only `data_type` and `nullable` are included.
+
+**Fixed-size list elements** omit the element field name, like lists, and carry the size:
+```json
+{"FixedSizeList": [{"data_type": ..., "nullable": <bool>}, <size as JSON integer>]}
+```
+
+**Map types** keep the entries field **with** its name, and the map's `sorted` flag as given:
+```json
+{"Map": [{"data_type": <entries struct type>, "name": "<entries field name>", "nullable": <bool>}, <sorted: true|false>]}
+```
+The entries struct is serialized like any struct (its children, normally `key` and `value`, keep
+their names; by default sorted by name). Example, `m: Map<Utf8, Struct<z: Int32, a: Int32>>`
+nullable (arrow-rs default names `entries`, `key`, `value`; `sorted = false`):
+```
+{"m":{"data_type":{"Map":[{"data_type":{"Struct":[{"data_type":"LargeUtf8","name":"key","nullable":false},{"data_type":{"Struct":[{"data_type":"Int32","name":"a","nullable":false},{"data_type":"Int32","name":"z","nullable":false}]},"name":"value","nullable":true}]},"name":"entries","nullable":false},false]},"nullable":true}}
+hash_schema = 000001edad0efdc8086afa34e6633ee4213d2ed803cbd8849e7d062f882f698bdcf897
+```
+`f: FixedSizeList<Int32 nullable, 2>` non-nullable:
+```
+{"f":{"data_type":{"FixedSizeList":[{"data_type":"Int32","nullable":true},2]},"nullable":false}}
+hash_schema = 000001faa6e75b09b2788440c79a1e297c73c75a5cb4d36c9f9cad6e3062a33c91c696
+```
+(Map and fixed-size list *data* hashing is not supported; only their schemas hash.)
+
+#### JSON text rules
+
+All JSON fed to a digest (Phase 1 schema JSON, `hash_array` type JSON, Phase 2 metadata JSON) is
+produced by `serde_json::to_string`:
+
+* compact: no whitespace; `,` and `:` without spaces;
+* object keys sorted by their UTF-8 bytes (equivalently by Unicode code point);
+* strings in UTF-8 with **non-ASCII characters written raw** (never `\uXXXX`); escaped are only
+  `"` → `\"`, `\` → `\\`, U+0008 → `\b`, U+0009 → `\t`, U+000A → `\n`, U+000C → `\f`, U+000D → `\r`,
+  and every other U+0000–U+001F → `\u00xx` with **lowercase** hex; `/` and U+007F are not escaped;
+* integers in decimal, booleans `true` / `false`.
+
+For example a column named `é` serializes its key as the two bytes `c3 a9`, and a column named
+`a<LF>b<U+001B>` as `"a\nb\u001b"`. The same rules apply to `hash_array`:
+`hash_array` of `StructArray [{é: 1}]` (child `é: Int32` non-nullable) feeds the type JSON
+`{"Struct":[{"data_type":"Int32","name":"é","nullable":false}]}` with `é` raw, giving
+`000001e445fa3cdc5fe37df7cb3de55cf94dcee2a8990bb8dd46fb5c3b00398f8cfb2c`.
 
 **Primitive types** use Arrow's built-in serde:
 - `"Int32"`, `"Boolean"`, `"Float64"`, `"LargeBinary"`, `"LargeUtf8"`, etc.
@@ -1496,6 +1547,9 @@ walk(type, p):
         ep = p + "/"; claim(ep); walk(e.type, ep)
 ```
 
+For `Map(e, _)`, `e` is the entries field (a struct), so a map column `m` claims `m`, `m/`,
+`m//key` and `m//value`.
+
 This rejects duplicate column names, duplicate field names within a struct (at any depth), and
 names containing `/` that alias another node (a column `"a/b"` next to a struct column `a` with
 child `b`; a column `"x/"` next to a list column `x`). A `/` that aliases nothing (`"km/h"`) is
@@ -1507,10 +1561,20 @@ hash depend on how rows are split into batches and letting different tables coll
 
 ### 9.7 Streaming
 
-The digester keeps the Phase 1 JSON of Section 9.3 for its `flags` (plus, with `include_metadata`,
-the metadata key, Section 2.2.1). Every batch given to `update` must produce the same key with
-the same `flags`, and must pass Section 9.6; otherwise it is rejected ("Record batch schema does
-not match ArrowDigester schema"; Python `ValueError`). Hence:
+Every batch given to `update` is checked against the schema the digester was created with. The
+batch is accepted iff
+
+1. its Phase 1 JSON under the digester's `flags` (Section 9.3; with `flags == 0`, Section 2.1)
+   equals the digester's, and
+2. when `include_metadata` is on: its Phase 2 metadata document (Section 2.2.1) equals the
+   digester's, or both have none; and
+3. when `flags != 0`: it passes Section 9.6.
+
+Otherwise it is rejected (Rust panics with "Record batch schema does not match ArrowDigester
+schema"; Python raises `ValueError`). With `flags == 0` and `include_metadata` off this is exactly
+the v0.4.0 check (Phase 1 JSON equality only). Because the Phase 1 JSON is canonical, a batch
+whose types differ only physically (`Utf8` vs `LargeUtf8`, dictionary vs plain, `List` vs
+`LargeList`) is accepted. Hence:
 
 * `ordered_columns`: a batch with the same columns in a different order is rejected. Without it,
   such a batch is accepted (as in the default).
