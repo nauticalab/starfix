@@ -388,9 +388,10 @@ final = SHA-256(
 )
 ```
 
-**Example 4 — list of nullable struct.** `l: List<Struct<a: Int32> nullable>` non-null, one row
+**Example 4 — list of nullable struct.** `l: List<Struct<a: Int32 non-null> nullable>` non-null, one row
 `[null, {a: 4}]`: entries `"l"` = `SHA-256(02 00 00 00 00 00 00 00)` (lengths), `"l/"` =
-`02 00 00 00 00 00 00 00  02` (validity [0,1]), `"l//a"` = `SHA-256(04 00 00 00)`.
+`02 00 00 00 00 00 00 00  02` (validity [0,1]), `"l//a"` = `SHA-256(04 00 00 00)` (no validity
+because `a` is non-nullable; the value under the null element is skipped).
 
 **Example 5 — `hash_array`.** `Int32Array [1, 2, 3]`:
 
