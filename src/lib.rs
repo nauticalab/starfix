@@ -61,8 +61,8 @@ impl ArrowDigester {
     /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
     ///   names, or a name containing `/` that aliases a nested field);
     /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
-    /// - the schema contains a type whose data is not supported (`Null`, `FixedSizeList`, `Map`,
-    ///   `Interval`, `Utf8View`, `BinaryView`).
+    /// - the schema contains a type whose data is not supported (`Null`, `Map`, `Interval`,
+    ///   `Utf8View`, `BinaryView`).
     pub fn new(schema: &Schema, config: HasherConfig) -> Self {
         Self {
             digester: ArrowDigesterCore::<Sha256>::new_with_config(schema, config),
@@ -112,8 +112,8 @@ impl ArrowDigester {
     /// Panics if
     /// - the array's type has two fields at the same path, or contains a `ListView`,
     ///   `LargeListView`, `Union` or `RunEndEncoded` type;
-    /// - the array's type contains a type whose data is not supported (`Null`, `FixedSizeList`,
-    ///   `Map`, `Interval`, `Utf8View`, `BinaryView`);
+    /// - the array's type contains a type whose data is not supported (`Null`, `Map`,
+    ///   `Interval`, `Utf8View`, `BinaryView`);
     /// - a non-nullable field inside the array holds a null at an element that no enclosing null
     ///   struct masks.
     pub fn hash_array_with_config(array: &dyn Array, config: HasherConfig) -> Vec<u8> {
@@ -130,8 +130,8 @@ impl ArrowDigester {
     /// - the schema has two fields at the same path (duplicate column names, duplicate struct field
     ///   names, or a name containing `/` that aliases a nested field);
     /// - the schema contains a `ListView`, `LargeListView`, `Union` or `RunEndEncoded` type;
-    /// - the schema contains a type whose data is not supported (`Null`, `FixedSizeList`, `Map`,
-    ///   `Interval`, `Utf8View`, `BinaryView`), whatever the number of rows;
+    /// - the schema contains a type whose data is not supported (`Null`, `Map`, `Interval`,
+    ///   `Utf8View`, `BinaryView`), whatever the number of rows;
     /// - a non-nullable field holds a null at an element that no enclosing null struct masks.
     pub fn hash_record_batch(record_batch: &RecordBatch, config: HasherConfig) -> Vec<u8> {
         Self::prepend_version_bytes(ArrowDigesterCore::<Sha256>::hash_record_batch(
